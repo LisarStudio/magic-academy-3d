@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LISAR — Castle Adventure</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/examples/jsm/loaders/GLTFLoader.js": "https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js"
+        }
+      }
+    </script>
+    <script type="module" crossorigin src="/magic-academy-3d/assets/index-DGQNLlNy.js"></script>
+    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-m6N-pkYu.css">
+  </head>
+  <body>
+    <div id="app">
+      <!-- 3D Canvas -->
+      <canvas id="game-canvas"></canvas>
+
+      <!-- UI Overlay -->
+      <div id="ui-overlay">
+        <!-- Damage Flash Screen Overlay -->
+        <div id="damage-flash" class="damage-flash-screen hidden"></div>
+
+        <!-- Fade to Black Overlay -->
+        <div id="screen-fade" class="screen-fade-overlay hidden"></div>
+
+        <!-- Reticle / Crosshair -->
+        <div id="reticle" class="crosshair-container hidden">
+          <div class="crosshair-dot"></div>
+          <div class="crosshair-ring"></div>
+        </div>
+
+        <!-- Objectives & Status HUD Top Left -->
+        <div id="hud-top-left" class="hud-panel hidden megaman-hud">
+          <div class="megaman-portrait">
+            <img src="/magic-academy-3d/assets/characters/lisar_portrait.png" alt="Lisar" />
+          </div>
+          <div class="status-bars megaman-bars">
+            <div class="bar-container hp-bar">
+              <span class="bar-label">HP</span>
+              <div class="bar-bg segmented"><div id="hp-bar-fill" class="bar-fill hp-fill" style="width: 100%;"></div></div>
+            </div>
+            <div class="bar-container mp-bar">
+              <span class="bar-label">MP</span>
+              <div class="bar-bg segmented"><div id="mp-bar-fill" class="bar-fill mp-fill" style="width: 100%;"></div></div>
+            </div>
+          </div>
+        </div>
+        
+        <div id="objective-container" class="hud-panel hidden">
+          <div class="hud-title">OBJETIVO</div>
+          <div id="objective-text">Sigue al profesor por el corredor</div>
+        </div>
+
+        <!-- Collectibles HUD Top Right -->
+        <div id="hud-top-right" class="hud-panel hidden">
+        <div id="coin-counter-container" class="hud-item card-counter hidden">
+            <div class="icon-coin"></div>
+            <span id="coin-count" style="margin-left: 8px; font-weight: bold; color: gold; text-shadow: 1px 1px 2px black;">0 / 33</span>
+            <!-- Gekko quest-complete indicator: shown only when coins >= 33 -->
+            <div id="gekko-quest-complete" class="gekko-quest-badge hidden">
+              <img src="/assets/characters/gekko_portrait.png" alt="Gekko" class="gekko-badge-portrait" onerror="this.style.display='none'" />
+              <span class="gekko-badge-icon">✓</span>
+              <span class="gekko-badge-text">¡Ve a ver a Gekko!</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Spell Hotbar Bottom Center -->
+        <div id="spell-hotbar" class="spell-hotbar-container hidden">
+          <div id="slot-spell-1" class="spell-slot active">
+            <span class="slot-key">1</span>
+            <span class="slot-icon">💫</span>
+            <span class="slot-name">Force Blast</span>
+          </div>
+          <div id="slot-spell-2" class="spell-slot">
+            <span class="slot-key">2</span>
+            <span class="slot-icon">🔑</span>
+            <span class="slot-name">Unlock</span>
+          </div>
+          <div id="slot-spell-3" class="spell-slot">
+            <span class="slot-key">3</span>
+            <span class="slot-icon">💡</span>
+            <span class="slot-name">Light</span>
+          </div>
+        </div>
+
+        <!-- Subtitles Bottom Center -->
+        <div id="subtitle-box" class="subtitle-container hidden">
+          <div id="subtitle-speaker" class="subtitle-speaker">Profesor</div>
+          <div id="subtitle-text" class="subtitle-text">Bienvenido a la antigua academia de magia...</div>
+          <div class="subtitle-skip-hint">Presiona ESPACIO o ESC para omitir</div>
+        </div>
+
+        <!-- NPC Cinematic Dialogue Bubble -->
+        <div id="dialogue-bubble" class="dialogue-bubble-container hidden">
+          <div id="dialogue-speaker" class="dialogue-speaker">Gekko</div>
+          <div id="dialogue-text" class="dialogue-text">...</div>
+          <div class="dialogue-continue-hint">Presiona ENTER para omitir</div>
+        </div>
+
+        <!-- Interaction Prompt -->
+        <div id="interaction-prompt" class="interaction-hint hidden">
+          <span class="key-badge">E</span> <span id="interaction-label">Interactuar</span>
+        </div>
+
+        <!-- Tutorial Hints Overlay -->
+        <div id="tutorial-overlay" class="tutorial-box hidden">
+          <div id="tutorial-title">CONTROLES</div>
+          <div id="tutorial-content">
+            <div class="ctrl-row"><span>WASD</span> Movimiento</div>
+            <div class="ctrl-row"><span>Shift</span> Correr</div>
+            <div class="ctrl-row"><span>Espacio</span> Saltar</div>
+            <div class="ctrl-row"><span>Click Izquierdo</span> Lanzar hechizo</div>
+            <div class="ctrl-row"><span>1 / 2</span> Cambiar hechizo</div>
+            <div class="ctrl-row"><span>Mouse</span> Mover cámara</div>
+          </div>
+        </div>
+
+        <!-- Debug Overlay -->
+        <div id="debug-overlay" class="debug-panel hidden">
+          <div class="debug-header">DEBUG MODE [F3]</div>
+          <div>FPS: <span id="debug-fps">60</span></div>
+          <div>POS: <span id="debug-pos">0.0, 0.0, 0.0</span></div>
+          <div>ESTADO: <span id="debug-state">IDLE</span></div>
+          <div>ANIM: <span id="debug-anim">Idle</span></div>
+          <div>CHECKPOINT: <span id="debug-checkpoint">0</span></div>
+        </div>
+
+        <!-- Level Complete Screen -->
+        <div id="victory-screen" class="modal-screen hidden">
+          <div class="modal-card">
+            <h1 class="victory-title">¡NIVEL COMPLETADO!</h1>
+            <p class="victory-subtitle">Has demostrado gran destreza mágica en tu primer día.</p>
+            
+            <div class="stats-grid">
+              <div class="stat-item">
+                <span class="stat-label">Cartas Mágicas Encontradas:</span>
+                <span id="victory-cards" class="stat-value">3 / 3</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Tiempo Total:</span>
+                <span id="victory-time" class="stat-value">02:45</span>
+              </div>
+            </div>
+
+            <div class="modal-actions">
+              <button id="btn-replay" class="btn-magic">REPETIR NIVEL</button>
+              <button id="btn-continue" class="btn-magic primary">CONTINUAR</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Pointer Lock Screen -->
+        <div id="start-screen" class="modal-screen">
+          <div class="modal-card start-card">
+            <h1 class="game-title">LISAR</h1>
+            <p class="game-subtitle">Castle Adventure — Vertical Slice 3D</p>
+
+            <button id="btn-start" class="btn-magic primary large">HAZ CLICK PARA JUGAR</button>
+            <div class="start-hint">Usa Mouse para la cámara, WASD para moverte y 1/2 para hechizos</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </body>
+</html>
