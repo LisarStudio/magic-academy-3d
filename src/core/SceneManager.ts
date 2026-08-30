@@ -51,8 +51,8 @@ export class SceneManager {
     this.dirLight = new THREE.DirectionalLight(0x7588c4, 1.8); // Stronger for dramatic shadows
     this.dirLight.position.set(20, 40, -10);
     this.dirLight.castShadow = true;
-    this.dirLight.shadow.mapSize.width = 4096;
-    this.dirLight.shadow.mapSize.height = 4096;
+    this.dirLight.shadow.mapSize.width = 2048;
+    this.dirLight.shadow.mapSize.height = 2048;
     this.dirLight.shadow.camera.near = 0.5;
     this.dirLight.shadow.camera.far = 150;
     this.dirLight.shadow.radius = 3; // Soft shadow edges

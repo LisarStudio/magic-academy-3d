@@ -805,52 +805,58 @@ export class LevelToyStory {
     // 2. Central Castle / Main Building (visible from almost everywhere)
 
 
-    // ── Castle: 26w × 26d × 15h, centered at (0, 0, -40) ──
+    // ── Castle: 28w × 28d × 15h Monumental Imperial Palace, centered at (0, 0, -40) ──
     const castleCenterZ = -40;
 
-    // Castle Base / Ground Floor (Open structure with columns)
-    const castleGroundFloor = new THREE.Mesh(new THREE.BoxGeometry(26, 0.4, 26), floorMat);
+    // Castle Base / Ground Floor Foundation
+    const castleGroundFloor = new THREE.Mesh(new THREE.BoxGeometry(28, 0.4, 28), floorMat);
     castleGroundFloor.position.set(0, 0.1, castleCenterZ);
     castleGroundFloor.receiveShadow = true;
     scene.add(castleGroundFloor);
     this.levelColliders.push(castleGroundFloor);
 
-    // Castle Walls (Outer structure)
-    const wallHeight = 5;
-    const castleLeftWall = new THREE.Mesh(new THREE.BoxGeometry(0.6, wallHeight, 26), stoneMat);
-    castleLeftWall.position.set(-13, wallHeight / 2, castleCenterZ);
-    const castleRightWall = new THREE.Mesh(new THREE.BoxGeometry(0.6, wallHeight, 26), stoneMat);
-    castleRightWall.position.set(13, wallHeight / 2, castleCenterZ);
-    const castleBackWall = new THREE.Mesh(new THREE.BoxGeometry(26, wallHeight, 0.6), stoneMat);
-    castleBackWall.position.set(0, wallHeight / 2, castleCenterZ - 13);
+    // Front Grand Entrance Staircase (z = -23 to z = -27)
+    for (let s = 0; s < 5; s++) {
+      const stepW = 8.0 - s * 0.4;
+      const step = new THREE.Mesh(new THREE.BoxGeometry(stepW, 0.35, 1.2), stoneMat);
+      step.position.set(0, s * 0.25 + 0.15, -23.5 - s * 0.9);
+      scene.add(step);
+      this.levelColliders.push(step);
+    }
+
+    // Outer Fortress Walls (Left, Right, Back)
+    const wallHeight = 5.0;
+    const castleLeftWall = new THREE.Mesh(new THREE.BoxGeometry(0.6, wallHeight, 28), stoneMat);
+    castleLeftWall.position.set(-14, wallHeight / 2, castleCenterZ);
+    const castleRightWall = new THREE.Mesh(new THREE.BoxGeometry(0.6, wallHeight, 28), stoneMat);
+    castleRightWall.position.set(14, wallHeight / 2, castleCenterZ);
+    const castleBackWall = new THREE.Mesh(new THREE.BoxGeometry(28, wallHeight, 0.6), stoneMat);
+    castleBackWall.position.set(0, wallHeight / 2, castleCenterZ - 14);
     scene.add(castleLeftWall, castleRightWall, castleBackWall);
     this.levelColliders.push(castleLeftWall, castleRightWall, castleBackWall);
 
-    // Entrance arches / Front pillars
-    const pLeft = new THREE.Mesh(new THREE.BoxGeometry(2, wallHeight, 2), stoneMat);
-    pLeft.position.set(-6, wallHeight / 2, castleCenterZ + 13);
-    const pRight = new THREE.Mesh(new THREE.BoxGeometry(2, wallHeight, 2), stoneMat);
-    pRight.position.set(6, wallHeight / 2, castleCenterZ + 13);
+    // Front Façade Monumental Pillars
+    const pLeft = new THREE.Mesh(new THREE.BoxGeometry(2.5, wallHeight, 2.5), stoneMat);
+    pLeft.position.set(-8, wallHeight / 2, castleCenterZ + 14);
+    const pRight = new THREE.Mesh(new THREE.BoxGeometry(2.5, wallHeight, 2.5), stoneMat);
+    pRight.position.set(8, wallHeight / 2, castleCenterZ + 14);
     scene.add(pLeft, pRight);
     this.levelColliders.push(pLeft, pRight);
 
-    // Castle Second Floor - split into back room floor and right balcony floor to leave the left staircase open
-    // Back Sanctum floor (all width, back depth)
-    const secondFloorBack = new THREE.Mesh(new THREE.BoxGeometry(26, 0.4, 12), floorMat);
-    secondFloorBack.position.set(0, 5, castleCenterZ - 7); // z: -41 to -53
+    // Castle Second Floor Balcony & Sanctum Floor (y = 5.0)
+    const secondFloorBack = new THREE.Mesh(new THREE.BoxGeometry(28, 0.4, 14), floorMat);
+    secondFloorBack.position.set(0, 5.0, castleCenterZ - 7);
     secondFloorBack.receiveShadow = true;
     scene.add(secondFloorBack);
     this.levelColliders.push(secondFloorBack);
 
-    // Right side walkway/balcony floor (x from -1 to 8, z from -27 to -41)
-    const secondFloorRight = new THREE.Mesh(new THREE.BoxGeometry(9, 0.4, 14), floorMat);
-    secondFloorRight.position.set(3.5, 5, castleCenterZ + 6); // z: -27 to -41
-    secondFloorRight.receiveShadow = true;
-    scene.add(secondFloorRight);
-    this.levelColliders.push(secondFloorRight);
+    const secondFloorFront = new THREE.Mesh(new THREE.BoxGeometry(12, 0.4, 14), floorMat);
+    secondFloorFront.position.set(4, 5.0, castleCenterZ + 7);
+    secondFloorFront.receiveShadow = true;
+    scene.add(secondFloorFront);
+    this.levelColliders.push(secondFloorFront);
 
     // Second Floor Interior Room (Library/Sanctum) side walls
-    // Wide open illuminated entryway in the middle (x: -7 to +7) so the staircase leads directly into the sanctum
     const roomWallL = new THREE.Mesh(new THREE.BoxGeometry(6, 3, 0.6), stoneMat);
     roomWallL.position.set(-13, 6.5, castleCenterZ - 5);
     const roomWallR = new THREE.Mesh(new THREE.BoxGeometry(6, 3, 0.6), stoneMat);
@@ -859,42 +865,35 @@ export class LevelToyStory {
     this.levelColliders.push(roomWallL, roomWallR);
 
     // Inside Castle Staircase (connecting ground floor y=0.1 to second floor y=5)
-    // Starts at z = -30, goes back to z = -44, rising to y = 5.0
     const stepCount = 14;
     for (let i = 0; i < stepCount; i++) {
       const t = i / (stepCount - 1);
       const stepY = 0.1 + t * 4.9;
       const stepZ = -30 - t * 14;
-      const step = new THREE.Mesh(new THREE.BoxGeometry(4, 0.4, 1.5), stoneMat);
+      const step = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.4, 1.5), stoneMat);
       step.position.set(-8, stepY, stepZ);
       step.castShadow = true;
       step.receiveShadow = true;
       scene.add(step);
-      // NOTE: We do NOT push steps to levelColliders to avoid stair step collision jitter
     }
 
-    // Single invisible collider ramp for smooth staircase walking
-    // Staircase runs from (y=0.1, z=-30) to (y=5.0, z=-44)
-    // Rise=4.9, Run=14, Angle=atan(4.9/14)≈19.3°
-    // In Three.js: positive rotation.x tips the +Z edge DOWN and -Z edge UP
-    // We want +Z (z=-30) at ground level and -Z (z=-44) at second floor → positive rotation.x
-    const stairRampLength = Math.hypot(14, 4.9) + 2.0; // Extra length to overlap floor surfaces
+    const stairRampLength = Math.hypot(14, 4.9) + 2.0;
     const stairsCollider = new THREE.Mesh(
-      new THREE.BoxGeometry(4.2, 0.35, stairRampLength), // Thicker for reliable raycast hits
+      new THREE.BoxGeometry(4.6, 0.35, stairRampLength),
       new THREE.MeshBasicMaterial({ visible: false })
     );
     stairsCollider.position.set(-8, 2.55, -37);
-    stairsCollider.rotation.x = Math.atan(4.9 / 14); // Positive: +Z side (z=-30) is LOW, -Z side (z=-44) is HIGH
+    stairsCollider.rotation.x = Math.atan(4.9 / 14);
     scene.add(stairsCollider);
     this.levelColliders.push(stairsCollider);
 
-    // Second Floor Guardrails & Columns
-    const guardrailL = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.2, 26), stoneMat);
-    guardrailL.position.set(-12.8, 5.6, castleCenterZ);
-    const guardrailR = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.2, 26), stoneMat);
-    guardrailR.position.set(12.8, 5.6, castleCenterZ);
-    const guardrailB = new THREE.Mesh(new THREE.BoxGeometry(26, 1.2, 0.4), stoneMat);
-    guardrailB.position.set(0, 5.6, castleCenterZ - 12.8);
+    // Second Floor Guardrails
+    const guardrailL = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.2, 28), stoneMat);
+    guardrailL.position.set(-13.8, 5.6, castleCenterZ);
+    const guardrailR = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.2, 28), stoneMat);
+    guardrailR.position.set(13.8, 5.6, castleCenterZ);
+    const guardrailB = new THREE.Mesh(new THREE.BoxGeometry(28, 1.2, 0.4), stoneMat);
+    guardrailB.position.set(0, 5.6, castleCenterZ - 13.8);
     scene.add(guardrailL, guardrailR, guardrailB);
     this.levelColliders.push(guardrailL, guardrailR, guardrailB);
 
@@ -907,26 +906,11 @@ export class LevelToyStory {
     scene.add(highTower);
     this.levelColliders.push(highTower);
 
-    // Tower Roof/Platform at y = 10.0
+    // Tower Roof/Platform at y = 10.2
     const towerRoof = new THREE.Mesh(new THREE.CylinderGeometry(6.4, 6.4, 0.4, 12), floorMat);
     towerRoof.position.set(0, 10.2, castleCenterZ - 4);
     scene.add(towerRoof);
     this.levelColliders.push(towerRoof);
-
-    // 3. Logical Connections (Ramps, Platforms, Elevators)
-    // Long Outer Ramp wrapping around the castle left side
-    const rampWidth = 3;
-    const rampLength = 22;
-    const rampHeight = 5;
-    const rampMat = new THREE.MeshStandardMaterial({ map: stoneTex, roughness: 0.85 });
-    
-    const castleRamp = new THREE.Mesh(new THREE.BoxGeometry(rampWidth, 0.3, rampLength), rampMat);
-    castleRamp.position.set(-15, rampHeight / 2 - 0.2, castleCenterZ + 1);
-    castleRamp.rotation.x = Math.atan(rampHeight / rampLength); // Angle of incline
-    castleRamp.castShadow = true;
-    castleRamp.receiveShadow = true;
-    scene.add(castleRamp);
-    this.levelColliders.push(castleRamp);
 
     // Elevator (MovingPlatform) connecting ground floor to 2nd floor (y: 0.2 to 5.0)
     const elevator = new MovingPlatform(
@@ -939,25 +923,21 @@ export class LevelToyStory {
     this.movingPlatforms.push(elevator);
     this.levelColliders.push(elevator.mesh);
 
-    // Floating platforms for jumping (on the right side of the castle)
-    // Leading to the Roof of the central castle (y = 5 to y = 10.2) in a reachable spiral
-    const platPositions = [
-      new THREE.Vector3(11.0, 5.8, castleCenterZ),      // Step 1
-      new THREE.Vector3(8.5, 6.7, castleCenterZ + 2.0),  // Step 2
-      new THREE.Vector3(6.5, 7.6, castleCenterZ + 4.0),  // Step 3
-      new THREE.Vector3(3.5, 8.5, castleCenterZ + 5.5),  // Step 4
-      new THREE.Vector3(0.0, 9.2, castleCenterZ + 6.5),  // Step 5
-      new THREE.Vector3(-3.0, 9.7, castleCenterZ + 5.5), // Step 6
-      new THREE.Vector3(-5.0, 10.1, castleCenterZ + 3.0) // Step 7: Leads directly to roof
-    ];
-    platPositions.forEach((pos) => {
-      const pMesh = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.4, 2.5), floorMat);
-      pMesh.position.copy(pos);
-      pMesh.castShadow = true;
-      pMesh.receiveShadow = true;
-      scene.add(pMesh);
-      this.levelColliders.push(pMesh);
-    });
+    // Internal Tower Spiral Steps to Roof Platform (y = 5.0 to 10.2)
+    const towerSteps = 10;
+    for (let i = 0; i < towerSteps; i++) {
+      const progress = i / (towerSteps - 1);
+      const angle = progress * Math.PI * 1.8;
+      const h = 5.2 + progress * 5.0;
+      const sx = Math.cos(angle) * 4.2;
+      const sz = (castleCenterZ - 4) + Math.sin(angle) * 4.2;
+
+      const step = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.3, 1.4), stoneMat);
+      step.position.set(sx, h, sz);
+      step.rotation.y = -angle + Math.PI / 2;
+      scene.add(step);
+      this.levelColliders.push(step);
+    }
 
     // 4. Combat Boss Arena (to the East, broad sand circular area)
     const arenaCenter = new THREE.Vector3(45, 0.1, -40);
