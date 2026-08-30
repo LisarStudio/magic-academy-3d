@@ -59,6 +59,15 @@ export class LevelToyStory {
   private grassUniforms: any = null;
   private cloudsUniforms: any = null;
 
+  public getTerrainHeight(x: number, z: number): number {
+    if (x > -35 && x < 35 && z > -70 && z < 25) {
+      return 0.0;
+    }
+    const h1 = Math.sin(x * 0.04) * Math.cos(z * 0.04) * 2.8;
+    const h2 = Math.sin(x * 0.095 + z * 0.07) * 1.5;
+    return Math.max(0.0, h1 + h2);
+  }
+
   // Quest states & Gekko Mission State Machine
   public gekkoMissionState: 'NOT_STARTED' | 'MISSION_ACTIVE' | 'MISSION_COMPLETE' | 'REWARD_GIVEN' = 'NOT_STARTED';
   private isCinematicPlaying = false;
@@ -1105,55 +1114,103 @@ export class LevelToyStory {
       scene.add(pag);
     };
 
-    // TEMPLO 03: CIRCULAR DRAGON CITADEL & STAFF SHRINE (East Peak at 85, 22, -150)
+    // TEMPLO 03: TEMPLO DEL BÁCULO / CÁMARA DEL SECRETO (East Peak at 85, 0, -145)
     const buildDragonCitadel = (cx: number, cy: number, cz: number) => {
       const cit = new THREE.Group();
       cit.position.set(cx, cy, cz);
 
       // Mountain Cliff Base
-      const cliffGeo = new THREE.CylinderGeometry(24, 32, 25, 10);
+      const cliffGeo = new THREE.CylinderGeometry(24, 32, 25, 12);
       const cliffMat = new THREE.MeshStandardMaterial({ color: 0x2e3b30, roughness: 0.9 });
       const cliff = new THREE.Mesh(cliffGeo, cliffMat);
-      cliff.position.y = -12.5;
+      cliff.position.y = 0;
       cit.add(cliff);
+      this.levelColliders.push(cliff);
 
-      // Circular Temple Floor Rampart
-      const rampart = new THREE.Mesh(new THREE.CylinderGeometry(18, 18, 5, 16), stoneMat);
+      // Circular Temple Lower Vestibule Floor (y = 2.5)
+      const rampart = new THREE.Mesh(new THREE.CylinderGeometry(18, 18, 1.2, 16), stoneMat);
       rampart.position.y = 2.5;
       cit.add(rampart);
+      this.levelColliders.push(rampart);
 
-      // 8 Perimeter Dragon Pillars with Gold Rings
-      for (let i = 0; i < 8; i++) {
-        const angle = (i / 8) * Math.PI * 2;
-        const px = Math.cos(angle) * 14;
-        const pz = Math.sin(angle) * 14;
-        const pCol = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 9, 10), redWoodMat);
-        pCol.position.set(px, 7, pz);
-        const pRing = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.15, 8, 16), goldMat);
-        pRing.position.set(px, 10.5, pz);
-        pRing.rotation.x = Math.PI / 2;
-        cit.add(pCol, pRing);
+      // Central Pillar for Spiral Staircase
+      const centralPillar = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 18.0, 12), redWoodMat);
+      centralPillar.position.y = 11.0;
+      cit.add(centralPillar);
+      this.levelColliders.push(centralPillar);
+
+      // ── WALKABLE SPIRAL STAIRCASE (ESCALERA EN ESPIRAL DEL TEMPLO DEL BÁCULO) ──
+      // Helical steps winding from lower floor (y = 2.5) up to Upper Secret Sanctum Chamber (y = 18.2)
+      const numSteps = 26;
+      const startH = 2.5;
+      const totalH = 15.7; // 2.5m to 18.2m
+      const stepRadius = 5.2;
+
+      for (let i = 0; i < numSteps; i++) {
+        const progress = i / (numSteps - 1);
+        const angle = progress * Math.PI * 2.8; // ~500 degrees spiral rotation
+        const h = startH + progress * totalH;
+
+        const stepGeo = new THREE.BoxGeometry(3.6, 0.4, 1.8);
+        const step = new THREE.Mesh(stepGeo, stoneMat);
+        const sx = Math.cos(angle) * stepRadius;
+        const sz = Math.sin(angle) * stepRadius;
+
+        step.position.set(sx, h, sz);
+        step.rotation.y = -angle + Math.PI / 2;
+        cit.add(step);
+        this.levelColliders.push(step);
+
+        // Hanging lanterns along the spiral staircase ascent
+        if (i % 6 === 0) {
+          const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, emissive: 0xff4400, emissiveIntensity: 1.5 });
+          const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), lanternMat);
+          lantern.position.set(sx * 1.2, h + 1.6, sz * 1.2);
+          const lLight = new THREE.PointLight(0xff7700, 2.0, 6.0);
+          lLight.position.set(sx * 1.2, h + 1.6, sz * 1.2);
+          cit.add(lantern, lLight);
+        }
       }
 
-      // Grand Double-Ringed Central Dome
-      const domeBase = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 6, 16), redWoodMat);
-      domeBase.position.y = 8;
+      // ── PISO SUPERIOR / CÁMARA DEL SECRETO (Y = 18.2) ──
+      const upperFloor = new THREE.Mesh(new THREE.CylinderGeometry(14, 14, 0.8, 16), stoneMat);
+      upperFloor.position.y = 18.2;
+      cit.add(upperFloor);
+      this.levelColliders.push(upperFloor);
 
-      const lowerRingRoof = new THREE.Mesh(new THREE.ConeGeometry(15, 3.2, 8), roofMat);
-      lowerRingRoof.position.y = 11;
+      // 8 Perimeter Dragon Pillars with Gold Rings in Secret Chamber
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const px = Math.cos(angle) * 12.5;
+        const pz = Math.sin(angle) * 12.5;
+        const pCol = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 8, 10), redWoodMat);
+        pCol.position.set(px, 22.2, pz);
+        const pRing = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.12, 8, 16), goldMat);
+        pRing.position.set(px, 25.5, pz);
+        pRing.rotation.x = Math.PI / 2;
+        cit.add(pCol, pRing);
+        this.levelColliders.push(pCol);
+      }
 
-      const upperDome = new THREE.Mesh(new THREE.SphereGeometry(7, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2), roofMat);
-      upperDome.position.y = 13;
+      // Chamber Pagoda Roof Cover
+      const chamberRoof = new THREE.Mesh(new THREE.ConeGeometry(16, 4.5, 8), roofMat);
+      chamberRoof.position.y = 28.0;
+      cit.add(chamberRoof);
 
-      cit.add(domeBase, lowerRingRoof, upperDome);
+      // Raised Stone Altar for the Special Staff Chest inside Secret Chamber
+      const altarGeo = new THREE.CylinderGeometry(2.5, 3.2, 0.8, 8);
+      const altar = new THREE.Mesh(altarGeo, stoneMat);
+      altar.position.set(0, 18.8, 0);
+      cit.add(altar);
+      this.levelColliders.push(altar);
 
       // Floating Glowing Cyan Staff Emblem above Dome
       const staffEmblem = new THREE.Mesh(new THREE.OctahedronGeometry(2.2, 0), new THREE.MeshStandardMaterial({
-        color: 0x00e5ff, emissive: 0x00bfff, emissiveIntensity: 2.2, metalness: 0.9
+        color: 0x00e5ff, emissive: 0x00bfff, emissiveIntensity: 2.5, metalness: 0.9
       }));
-      staffEmblem.position.y = 22;
-      const emblemLight = new THREE.PointLight(0x00e5ff, 5.5, 18.0);
-      emblemLight.position.y = 22;
+      staffEmblem.position.y = 31;
+      const emblemLight = new THREE.PointLight(0x00e5ff, 6.0, 20.0);
+      emblemLight.position.y = 31;
       cit.add(staffEmblem, emblemLight);
 
       scene.add(cit);
@@ -1161,10 +1218,10 @@ export class LevelToyStory {
 
     // Instantiate Templo 02 & Templo 03
     buildMountainPagoda(-95, 16, -140);
-    buildDragonCitadel(85, 22, -150);
+    buildDragonCitadel(85, 0, -145);
 
     // Scenic Mountain Bridge Path leading across the valley to Templo 03
-    const bridgeGeo = new THREE.BoxGeometry(45, 0.4, 2.8);
+    const bridgeGeo = new THREE.BoxGeometry(45, 0.4, 3.0);
     const bridge = new THREE.Mesh(bridgeGeo, stoneMat);
     bridge.position.set(55, 9.2, -95);
     bridge.rotation.y = -0.5;
@@ -1228,8 +1285,8 @@ export class LevelToyStory {
   private setupInteractiveProps(): void {
     const scene = this.sceneManager.scene;
 
-    // Relocate Staff Chest inside the Shrine of the Eastern Citadel ("Castillo del Báculo")
-    this.staffChest = new TreasureChest(new THREE.Vector3(75.0, 18.2, -145.0), Math.PI);
+    // Relocate Staff Chest on top of the Altar inside the Secret Chamber of Templo 03 ("Templo del Báculo")
+    this.staffChest = new TreasureChest(new THREE.Vector3(85.0, 19.3, -145.0), Math.PI);
     scene.add(this.staffChest.mesh);
     this.chests.push(this.staffChest);
     this.spellSystem.registerChest(this.staffChest);
@@ -1365,12 +1422,22 @@ export class LevelToyStory {
     coinPositions.push(new THREE.Vector3(-40, 0.5, -40));
     coinPositions.push(new THREE.Vector3(-45, 5.2, -40)); // Top of broken arch
 
-    // Guarantee EXACTLY 50 deterministic coin positions
+    // Guarantee EXACTLY 50 deterministic coin positions aligned strictly with terrain height
     const EXPECTED_LISAR_COINS = 50;
-    const finalCoins = coinPositions.slice(0, EXPECTED_LISAR_COINS);
-    while (finalCoins.length < EXPECTED_LISAR_COINS) {
-      finalCoins.push(new THREE.Vector3((Math.random() - 0.5) * 50, 0.5, -20 - Math.random() * 30));
+    const rawCoins = coinPositions.slice(0, EXPECTED_LISAR_COINS);
+    while (rawCoins.length < EXPECTED_LISAR_COINS) {
+      const rx = (Math.random() - 0.5) * 60;
+      const rz = -15 - Math.random() * 50;
+      rawCoins.push(new THREE.Vector3(rx, 0.6, rz));
     }
+
+    const finalCoins = rawCoins.map((pos) => {
+      // If the coin is near ground level (not on balconies/roofs/stairs), align to terrain height
+      if (pos.y < 1.5) {
+        pos.y = this.getTerrainHeight(pos.x, pos.z) + 0.6;
+      }
+      return pos;
+    });
 
     console.log(`[COINS] Initializing spawn sequence for EXACTLY ${finalCoins.length}/${EXPECTED_LISAR_COINS} Lisar Coins.`);
 
