@@ -36,6 +36,13 @@ export class HUD {
   private slotSpell2El: HTMLElement;
   private slotSpell3El: HTMLElement;
 
+  private pauseScreenEl: HTMLElement;
+  private btnMobilePauseEl: HTMLElement | null = null;
+  private sliderMusicEl: HTMLInputElement | null = null;
+  private sliderFxEl: HTMLInputElement | null = null;
+  private musicVolTextEl: HTMLElement | null = null;
+  private fxVolTextEl: HTMLElement | null = null;
+
   public isDebugMode = false;
 
   constructor() {
@@ -56,6 +63,13 @@ export class HUD {
     this.victoryScreenEl = document.getElementById('victory-screen')!;
     this.victoryCardsEl = document.getElementById('victory-cards')!;
     this.victoryTimeEl = document.getElementById('victory-time')!;
+    this.pauseScreenEl = document.getElementById('pause-screen')!;
+    this.btnMobilePauseEl = document.getElementById('btn-mobile-pause');
+
+    this.sliderMusicEl = document.getElementById('slider-music') as HTMLInputElement;
+    this.sliderFxEl = document.getElementById('slider-fx') as HTMLInputElement;
+    this.musicVolTextEl = document.getElementById('music-vol-text');
+    this.fxVolTextEl = document.getElementById('fx-vol-text');
 
     this.coinCounterEl = document.getElementById('coin-count');
     this.keyCounterEl = document.getElementById('key-count');
@@ -73,6 +87,50 @@ export class HUD {
     this.dialogueBubbleEl = document.getElementById('dialogue-bubble')!;
     this.dialogueSpeakerEl = document.getElementById('dialogue-speaker')!;
     this.dialogueTextEl = document.getElementById('dialogue-text')!;
+
+    this.initAudioSliders();
+    this.initPauseButton();
+  }
+
+  private initAudioSliders(): void {
+    if (this.sliderMusicEl) {
+      this.sliderMusicEl.addEventListener('input', () => {
+        const val = parseInt(this.sliderMusicEl!.value, 10);
+        if (this.musicVolTextEl) this.musicVolTextEl.textContent = `${val}%`;
+        const audioMgr = (window as any).gameInstance?.audioManager;
+        if (audioMgr) audioMgr.setMusicVolume(val / 100);
+      });
+    }
+
+    if (this.sliderFxEl) {
+      this.sliderFxEl.addEventListener('input', () => {
+        const val = parseInt(this.sliderFxEl!.value, 10);
+        if (this.fxVolTextEl) this.fxVolTextEl.textContent = `${val}%`;
+        const audioMgr = (window as any).gameInstance?.audioManager;
+        if (audioMgr) audioMgr.setSFXVolume(val / 100);
+      });
+    }
+  }
+
+  private initPauseButton(): void {
+    if (this.btnMobilePauseEl) {
+      const toggle = (e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const game = (window as any).gameInstance;
+        if (game) game.togglePause();
+      };
+      this.btnMobilePauseEl.addEventListener('click', toggle);
+      this.btnMobilePauseEl.addEventListener('touchstart', toggle);
+    }
+  }
+
+  public showPauseMenu(visible: boolean): void {
+    if (visible) {
+      this.pauseScreenEl.classList.remove('hidden');
+    } else {
+      this.pauseScreenEl.classList.add('hidden');
+    }
   }
 
   public showGameplayHUD(): void {

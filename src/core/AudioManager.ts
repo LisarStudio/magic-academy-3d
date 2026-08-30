@@ -75,6 +75,18 @@ export class AudioManager {
     });
   }
 
+  public setMusicVolume(volume: number): void {
+    this.musicVolume = Math.max(0, Math.min(1.0, volume));
+    if (this.bgmAudio) {
+      this.bgmAudio.volume = this.musicVolume * this.masterVolume;
+    }
+  }
+
+  public setSFXVolume(volume: number): void {
+    this.sfxVolume = Math.max(0, Math.min(1.0, volume));
+    this.voiceVolume = this.sfxVolume;
+  }
+
   public stopBGM(): void {
     if (this.bgmAudio) {
       this.bgmAudio.pause();

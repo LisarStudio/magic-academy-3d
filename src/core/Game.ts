@@ -291,15 +291,16 @@ export class Game {
     const btnReplay = document.getElementById('btn-replay');
     const btnContinue = document.getElementById('btn-continue');
     const btnResume = document.getElementById('btn-resume');
-    const btnReplayPause = document.getElementById('btn-replay-pause');
-    const btnExitPause = document.getElementById('btn-exit-pause');
+    this.inputManager.onPauseToggle = () => this.togglePause();
 
     btnStart?.addEventListener('click', () => {
       startScreen?.classList.add('hidden');
       this.audioManager.resume();
-      this.inputManager.requestPointerLock();
+      if (!this.hud.isTouchDevice()) {
+        this.inputManager.requestPointerLock();
+      }
       this.audioManager.startBGM();
-      this.hud.showGameplayHUD(); // Crucial: make the HUD visible!
+      this.hud.showGameplayHUD();
     });
 
     btnReplay?.addEventListener('click', () => {
@@ -312,16 +313,27 @@ export class Game {
 
     btnResume?.addEventListener('click', () => {
       this.audioManager.resume();
-      this.inputManager.requestPointerLock();
+      this.togglePause(false);
     });
+  }
 
-    btnReplayPause?.addEventListener('click', () => {
-      window.location.reload();
-    });
+  public togglePause(forceState?: boolean): void {
+    const nextState = forceState !== undefined ? forceState : !this.isPaused;
+    this.isPaused = nextState;
 
-    btnExitPause?.addEventListener('click', () => {
-      window.location.reload();
-    });
+    if (this.isPaused) {
+      this.inputManager.resetInputs();
+      this.hud.showPauseMenu(true);
+      if (document.pointerLockElement) {
+        document.exitPointerLock();
+      }
+    } else {
+      this.inputManager.resetInputs();
+      this.hud.showPauseMenu(false);
+      if (!this.hud.isTouchDevice()) {
+        this.inputManager.requestPointerLock();
+      }
+    }
   }
 
   private loop(currentTime: number): void {

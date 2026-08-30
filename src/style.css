@@ -415,7 +415,7 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
 .debug-header { font-weight: bold; border-bottom: 1px solid #0f6; margin-bottom: 6px; }
 
 /* ══════════════════════════════════════════════════════════════
-   START SCREEN / MODAL
+   MODAL SCREEN & PAUSE MENU (PC & MOBILE)
 ══════════════════════════════════════════════════════════════ */
 .modal-screen {
   position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -424,12 +424,13 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
   pointer-events: auto;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  z-index: 1000;
 }
 .modal-card {
   background: linear-gradient(160deg, #12103a 0%, #0a0818 100%);
   border: 1px solid rgba(245,200,66,0.5);
   border-radius: 16px;
-  padding: 48px;
+  padding: 42px;
   max-width: 520px; width: 92%;
   text-align: center;
   box-shadow:
@@ -439,17 +440,111 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
 }
 .start-card { max-width: 480px; }
 
-.game-title {
-  font-family: var(--font-title); font-size: 64px;
-  font-weight: 900; letter-spacing: 8px;
-  color: var(--gold);
-  text-shadow: 0 0 40px rgba(245,200,66,0.7), 0 2px 4px rgba(0,0,0,0.5);
-  margin-bottom: 8px;
-  animation: titlePulse 3s ease-in-out infinite;
+.pause-card {
+  max-width: 460px;
+  width: 90%;
+  padding: clamp(24px, 5vw, 40px);
 }
-@keyframes titlePulse { 0%, 100% { text-shadow: 0 0 40px rgba(245,200,66,0.7), 0 2px 4px rgba(0,0,0,0.5); } 50% { text-shadow: 0 0 60px rgba(245,200,66,1), 0 2px 4px rgba(0,0,0,0.5); } }
-.game-subtitle { font-size: 14px; letter-spacing: 3px; color: #8877aa; margin-bottom: 40px; text-transform: uppercase; font-family: var(--font-title); }
-.start-hint { font-size: 12px; color: #665577; margin-top: 20px; letter-spacing: 1px; }
+.pause-title {
+  font-family: var(--font-title);
+  font-size: clamp(26px, 6vw, 36px);
+  color: var(--gold);
+  text-shadow: 0 0 20px var(--gold-glow);
+  margin-bottom: 6px;
+  letter-spacing: 2px;
+}
+.pause-subtitle {
+  font-size: 13px;
+  color: #a095c0;
+  margin-bottom: 24px;
+}
+.volume-sliders-container {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-bottom: 20px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(245, 200, 66, 0.25);
+  border-radius: 12px;
+  padding: 18px;
+}
+.slider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+.slider-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.slider-label {
+  font-family: var(--font-title);
+  font-size: 13px;
+  color: var(--gold);
+  letter-spacing: 1px;
+}
+.slider-value {
+  font-weight: 700;
+  color: #3df3ff;
+  font-size: 14px;
+}
+.volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  outline: none;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 12px var(--gold-glow);
+  cursor: pointer;
+  border: 2px solid #fff;
+}
+.volume-slider::-moz-range-thumb {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 12px var(--gold-glow);
+  cursor: pointer;
+  border: 2px solid #fff;
+}
+
+/* Mobile Pause Button Top Right */
+.mobile-pause-btn {
+  background: linear-gradient(135deg, rgba(20, 24, 40, 0.85) 0%, rgba(10, 14, 26, 0.92) 100%);
+  border: 1.5px solid rgba(245, 200, 66, 0.6);
+  border-radius: 8px;
+  color: var(--gold);
+  font-family: var(--font-title);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 14px;
+  min-height: 38px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  pointer-events: auto;
+}
+.mobile-pause-btn:active {
+  transform: scale(0.96);
+  background: rgba(245, 200, 66, 0.2);
+}
 
 .victory-title { font-family: var(--font-title); font-size: 32px; color: var(--gold); letter-spacing: 2px; text-shadow: 0 0 20px var(--gold-glow); margin-bottom: 8px; }
 .victory-subtitle { font-size: 14px; color: #aaa; margin-bottom: 28px; }

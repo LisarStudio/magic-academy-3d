@@ -12,6 +12,7 @@ export class InputManager {
   public onToggleDebug: (() => void) | null = null;
   public onSelectSpell: ((spellIndex: number) => void) | null = null;
   public onPointerLockChange: ((isLocked: boolean) => void) | null = null;
+  public onPauseToggle: (() => void) | null = null;
 
   private ctrlDown = false;
   private canvas: HTMLCanvasElement;
@@ -21,8 +22,26 @@ export class InputManager {
     this.initListeners();
   }
 
+  public resetInputs(): void {
+    this.keys = {};
+    this.touchAnalogX = 0;
+    this.touchAnalogZ = 0;
+    this.touchIsRunning = false;
+    this.mouseDeltaX = 0;
+    this.mouseDeltaY = 0;
+  }
+
   private initListeners(): void {
     window.addEventListener('keydown', (e) => {
+      // Toggle Pause with KeyP or Enter
+      if (e.code === 'KeyP' || e.code === 'Enter') {
+        if (this.onPauseToggle) {
+          e.preventDefault();
+          this.onPauseToggle();
+          return;
+        }
+      }
+
       this.keys[e.code] = true;
 
       if (e.code === 'Digit1' || e.code === 'Numpad1') {
