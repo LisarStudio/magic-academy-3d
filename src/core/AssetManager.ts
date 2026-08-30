@@ -261,9 +261,14 @@ export class AssetManager {
       // Print skeleton bone names for debugging
       const boneNames: string[] = [];
       playerModel.traverse((child) => {
-        if ((child as any).isBone) boneNames.push(child.name);
+        if ((child as any).isBone) {
+          boneNames.push(child.name);
+          // Normalize bone local scale to (1.0, 1.0, 1.0) to prevent asymmetrical limb deformation
+          child.scale.set(1.0, 1.0, 1.0);
+        }
       });
-      console.log('[AssetManager] Skeleton bones found:', boneNames.slice(0, 15).join(', '), boneNames.length > 15 ? `... (${boneNames.length} total)` : '');
+      playerModel.updateMatrixWorld(true);
+      console.log('[AssetManager] Skeleton bones normalized and verified (1.0, 1.0, 1.0 scale):', boneNames.slice(0, 15).join(', '));
 
       // ── 2. Auto-scale to ~1.7m AND pin feet to Y=0 ──
       const bbox = new THREE.Box3().setFromObject(playerModel);

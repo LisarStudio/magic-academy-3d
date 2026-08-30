@@ -178,7 +178,7 @@ export class KeyPickupSequence {
 
     keyGroup.position.set(0.0, 0.18, 0.08);
     keyGroup.rotation.set(0, Math.PI / 2, Math.PI / 4);
-    keyGroup.scale.setScalar(7.6);
+    keyGroup.scale.setScalar(1.2);
 
     // Burst ring shockwave in exact key color
     const burstRingMat = new THREE.MeshBasicMaterial({

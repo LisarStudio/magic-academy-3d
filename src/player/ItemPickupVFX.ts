@@ -106,9 +106,9 @@ export class ItemPickupVFX {
       itemGroup.add(shaft, orb);
     }
 
-    // Attach item to hand & compensate parent bone scale (0.158) -> 7.6 scale = 1.2m world size inside hand!
+    // Attach item to hand (normalized 1.0 parent bone scale -> 1.2m world size inside hand)
     itemGroup.position.set(0, 0.18, 0.08);
-    itemGroup.scale.setScalar(7.6);
+    itemGroup.scale.setScalar(1.2);
     handNode.add(itemGroup);
 
     // 3. Create hero PointLight near hand/torso in matching item color

@@ -45,7 +45,10 @@ export class AnimationController {
     }
   }
 
+  private characterRoot: THREE.Object3D | null = null;
+
   private initAnimations(root: THREE.Object3D, clips: THREE.AnimationClip[]): void {
+    this.characterRoot = root;
     this.mixer = new THREE.AnimationMixer(root);
 
     console.log('[AnimCtrl] Registering clips:', clips.map((c) => `${c.name} (${c.tracks.length}t, ${c.duration.toFixed(1)}s)`).join(' | '));
@@ -321,6 +324,17 @@ export class AnimationController {
   public update(delta: number): void {
     if (this.mixer) {
       this.mixer.update(delta);
+
+      // Audit & enforce 1.0 scale on all bones to guarantee zero asymmetrical deformation during gameplay
+      if (this.characterRoot) {
+        this.characterRoot.traverse((child) => {
+          if ((child as THREE.Bone).isBone) {
+            if (child.scale.x !== 1.0 || child.scale.y !== 1.0 || child.scale.z !== 1.0) {
+              child.scale.set(1.0, 1.0, 1.0);
+            }
+          }
+        });
+      }
     }
     if (this.isProcedural && this.characterGroup) {
       this.updateProceduralAnimation(delta);
