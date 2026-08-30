@@ -629,6 +629,17 @@ export class EnemyController {
     this.safeNormalize(dir);
     this.mesh.position.addScaledVector(dir, this.chaseSpeed * delta);
     this.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+
+    // Enforce terrain grounding height per-frame for enemy feet
+    const level = (window as any).gameInstance?.level01;
+    if (level && level.getTerrainHeight) {
+      const terrainY = level.getTerrainHeight(this.mesh.position.x, this.mesh.position.z);
+      if (this.id === 'crab_boss') {
+        this.mesh.position.y = terrainY + 0.1;
+      } else if (this.mesh.position.y < terrainY) {
+        this.mesh.position.y = terrainY;
+      }
+    }
   }
 
   public isAlive(): boolean {

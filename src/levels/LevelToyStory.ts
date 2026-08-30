@@ -1228,6 +1228,33 @@ export class LevelToyStory {
     scene.add(bridge);
     this.levelColliders.push(bridge);
 
+    // ── SCENIC WALKABLE ROADS TO TEMPLO 02 AND TEMPLO 03 ──
+    // 1. West Scenic Highway to Templo 02 (Mountain Pagoda)
+    for (let i = 0; i < 14; i++) {
+      const t = i / 13;
+      const rx = THREE.MathUtils.lerp(-30, -90, t);
+      const rz = THREE.MathUtils.lerp(-40, -135, t);
+      const ry = THREE.MathUtils.lerp(0.1, 15.5, t);
+      const roadSlab = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.4, 7.0), stoneMat);
+      roadSlab.position.set(rx, ry, rz);
+      roadSlab.rotation.y = Math.atan2(-90 - (-30), -135 - (-40));
+      scene.add(roadSlab);
+      this.levelColliders.push(roadSlab);
+    }
+
+    // 2. East Scenic Highway to Templo 03 (Templo del Báculo Bridge)
+    for (let i = 0; i < 10; i++) {
+      const t = i / 9;
+      const rx = THREE.MathUtils.lerp(25, 55, t);
+      const rz = THREE.MathUtils.lerp(-40, -95, t);
+      const ry = THREE.MathUtils.lerp(0.1, 9.0, t);
+      const roadSlab = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.4, 7.0), stoneMat);
+      roadSlab.position.set(rx, ry, rz);
+      roadSlab.rotation.y = Math.atan2(55 - 25, -95 - (-40));
+      scene.add(roadSlab);
+      this.levelColliders.push(roadSlab);
+    }
+
     // ── South Ruins ──
     const ruins1 = new THREE.Group();
     ruins1.position.set(-30, 0, 10);
@@ -1463,9 +1490,12 @@ export class LevelToyStory {
     this.gekkoNPC.loadModels();
     this.sceneManager.scene.add(this.gekkoNPC.mesh);
 
-    // Gekko's invisible collider
-    const gekkoCollider = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 2), new THREE.MeshBasicMaterial({ visible: false }));
-    gekkoCollider.position.copy(this.gekkoNPC.mesh.position);
+    // Gekko's physical collider (prevents Wukong from passing through Gekko)
+    const gekkoCollider = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.8, 0.8, 2.5, 12),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    gekkoCollider.position.set(-4, 1.25, -10);
     this.sceneManager.scene.add(gekkoCollider);
     this.levelColliders.push(gekkoCollider);
 
