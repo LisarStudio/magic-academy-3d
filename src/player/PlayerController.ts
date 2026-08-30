@@ -313,29 +313,48 @@ export class PlayerController {
       const moveAmount = horizontalSpeed * delta;
       const moveNorm = horizontalVel.clone().normalize();
 
-      // Cast ray from chest height in movement direction
-      const rayOrigin = this.mesh.position.clone().add(new THREE.Vector3(0, 0.5, 0));
+      // Cast ray from upper body height (0.85m) so step risers (0.35m) don't block movement as walls
+      const rayOrigin = this.mesh.position.clone().add(new THREE.Vector3(0, 0.85, 0));
       this.wallRaycaster.set(rayOrigin, moveNorm);
       this.wallRaycaster.far = this.PLAYER_RADIUS + moveAmount;
 
       const wallHits = this.wallRaycaster.intersectObjects(this.colliders, true);
 
       if (wallHits.length > 0 && wallHits[0].distance < this.PLAYER_RADIUS + moveAmount) {
-        const wallNormal = wallHits[0].face?.normal?.clone() || new THREE.Vector3(0, 0, 1);
-        wallNormal.transformDirection(wallHits[0].object.matrixWorld);
-        
-        // Only treat as a wall if it is a steep vertical surface (abs(normal.y) < 0.4)
-        // Walkable slopes and ramps (normal.y > 0.4) are ignored so they don't block movement
-        if (Math.abs(wallNormal.y) < 0.4) {
-          wallNormal.y = 0;
-          wallNormal.normalize();
+        const hitObject = wallHits[0].object;
+        const objName = (hitObject.name || '').toLowerCase();
+        const isStairStep = objName.includes('step') || objName.includes('stair') || objName.includes('ramp');
 
-          // Remove the component of velocity going into the wall
-          const dot = this.velocity.x * wallNormal.x + this.velocity.z * wallNormal.z;
-          if (dot < 0) {
-            this.velocity.x -= dot * wallNormal.x;
-            this.velocity.z -= dot * wallNormal.z;
+        // Ignore stair steps so Wukong glides up them smoothly
+        if (!isStairStep) {
+          const wallNormal = wallHits[0].face?.normal?.clone() || new THREE.Vector3(0, 0, 1);
+          wallNormal.transformDirection(hitObject.matrixWorld);
+
+          // Only treat as a wall if it is a steep vertical surface (abs(normal.y) < 0.3)
+          if (Math.abs(wallNormal.y) < 0.3) {
+            wallNormal.y = 0;
+            wallNormal.normalize();
+
+            // Remove the component of velocity going into the wall
+            const dot = this.velocity.x * wallNormal.x + this.velocity.z * wallNormal.z;
+            if (dot < 0) {
+              this.velocity.x -= dot * wallNormal.x;
+              this.velocity.z -= dot * wallNormal.z;
+            }
           }
+        }
+      }
+
+      // Auto-step climbing: Cast low ray at foot/knee height to detect steps up to 0.45m
+      const lowRayOrigin = this.mesh.position.clone().add(new THREE.Vector3(0, 0.15, 0));
+      this.wallRaycaster.set(lowRayOrigin, moveNorm);
+      this.wallRaycaster.far = this.PLAYER_RADIUS + 0.3;
+      const stepHits = this.wallRaycaster.intersectObjects(this.colliders, true);
+      if (stepHits.length > 0 && stepHits[0].distance <= this.PLAYER_RADIUS + 0.3) {
+        const stepPt = stepHits[0].point;
+        const stepHeight = stepPt.y - this.mesh.position.y;
+        if (stepHeight > 0.05 && stepHeight <= 0.45 && this.isGrounded) {
+          this.mesh.position.y += stepHeight * 0.4; // Smoothly step up
         }
       }
     }
@@ -347,16 +366,16 @@ export class PlayerController {
 
     // ── NPC & Boss Physical Cylinder Separation Pass ──
     // Guarantees Wukong physically cannot walk through Gekko or Crab Boss
-    const gekkoPos = new THREE.Vector3(-4, 0, -10);
+    const levelInst = (window as any).gameInstance?.level01;
+    const gekkoPos = levelInst?.gekkoNPC?.mesh?.position || new THREE.Vector3(-4, 0, -10);
     const distGekko = Math.hypot(this.mesh.position.x - gekkoPos.x, this.mesh.position.z - gekkoPos.z);
-    if (distGekko < 1.25) {
+    if (distGekko < 1.5) {
       const pushX = (this.mesh.position.x - gekkoPos.x) / (distGekko || 1);
       const pushZ = (this.mesh.position.z - gekkoPos.z) / (distGekko || 1);
-      this.mesh.position.x = gekkoPos.x + pushX * 1.25;
-      this.mesh.position.z = gekkoPos.z + pushZ * 1.25;
+      this.mesh.position.x = gekkoPos.x + pushX * 1.5;
+      this.mesh.position.z = gekkoPos.z + pushZ * 1.5;
     }
 
-    const levelInst = (window as any).gameInstance?.level01;
     if (levelInst && levelInst.enemies) {
       const boss = levelInst.enemies.find((e: any) => e.id === 'crab_boss');
       if (boss && boss.isAlive()) {

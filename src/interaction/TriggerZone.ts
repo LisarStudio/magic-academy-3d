@@ -27,7 +27,7 @@ export class TriggerZone {
     const inside = this.boundingBox.containsPoint(position);
 
     if (this.repeatable) {
-      // For repeatable zones: trigger on each fresh entry after cooldown
+      // For repeatable zones: trigger on fresh entry or after cooldown expires
       if (inside && !this.wasInside && this.cooldownTimer <= 0) {
         this.wasInside = true;
         this.cooldownTimer = TriggerZone.COOLDOWN;
@@ -35,7 +35,7 @@ export class TriggerZone {
         this.onTrigger();
         return true;
       }
-      if (!inside) {
+      if (!inside && this.cooldownTimer <= 0) {
         this.wasInside = false;
       }
       return false;

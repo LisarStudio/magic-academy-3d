@@ -957,14 +957,39 @@ export class LevelToyStory {
     this.levelColliders.push(stairRailL, stairRailR, stairRailBack);
 
     // Second Floor Outer Guardrails
-    const guardrailL = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.2, 28), stoneMat);
-    guardrailL.position.set(-13.8, 5.6, castleCenterZ);
-    const guardrailR = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.2, 28), stoneMat);
-    guardrailR.position.set(13.8, 5.6, castleCenterZ);
-    const guardrailB = new THREE.Mesh(new THREE.BoxGeometry(28, 1.2, 0.4), stoneMat);
-    guardrailB.position.set(0, 5.6, castleCenterZ - 13.8);
-    scene.add(guardrailL, guardrailR, guardrailB);
-    this.levelColliders.push(guardrailL, guardrailR, guardrailB);
+    // ── OUTDOOR GRAND WRAPPING STAIRCASE (West Outer Wall x = -15, z = -23 to -42, y = 0.5 to 5.0) ──
+    const outdoorStairSteps = 18;
+    const outdoorRampLength = Math.hypot(19, 4.8) + 2.0;
+    const outdoorAngle = Math.atan(4.8 / 19);
+
+    const solidOutdoorFoundation = new THREE.Mesh(new THREE.BoxGeometry(4.2, 2.2, outdoorRampLength), stoneMat);
+    solidOutdoorFoundation.position.set(-15, 1.3, castleCenterZ + 7.5);
+    solidOutdoorFoundation.rotation.x = outdoorAngle;
+    scene.add(solidOutdoorFoundation);
+    this.levelColliders.push(solidOutdoorFoundation);
+
+    for (let i = 0; i < outdoorStairSteps; i++) {
+      const t = i / (outdoorStairSteps - 1);
+      const stepY = 0.5 + t * 4.6;
+      const stepZ = -23 - t * 19;
+      const step = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.35, 1.2), stoneMat);
+      step.name = `outdoor_step_${i}`;
+      step.position.set(-15, stepY, stepZ);
+      step.castShadow = true;
+      step.receiveShadow = true;
+      scene.add(step);
+      this.levelColliders.push(step);
+    }
+
+    const outdoorRampCollider = new THREE.Mesh(
+      new THREE.BoxGeometry(4.4, 0.35, outdoorRampLength),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    outdoorRampCollider.name = 'outdoor_ramp_collider';
+    outdoorRampCollider.position.set(-15, 2.7, castleCenterZ + 7.5);
+    outdoorRampCollider.rotation.x = outdoorAngle;
+    scene.add(outdoorRampCollider);
+    this.levelColliders.push(outdoorRampCollider);
 
     // ── HOLLOW HIGH TOWER (Central ring wall from y = 5 to 10 with internal open space) ──
     const towerRadius = 6.0;
