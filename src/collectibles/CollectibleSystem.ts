@@ -187,33 +187,60 @@ export class CollectibleSystem {
     delta: number,
     onCollectCard: (count: number) => void,
     onCollectCoin?: (totalCoins: number) => void,
-    onCollectPotion?: (type: 'POTION_HP' | 'POTION_MP' | 'CHOCOLATE_FROG') => void
+    onCollectPotion?: (type: 'POTION_HP' | 'POTION_MP' | 'CHOCOLATE_FROG') => void,
+    inputKeys?: Record<string, boolean>
   ): void {
+    let nearestItem: Collectible | null = null;
+    let minDistance = Infinity;
+
     for (const item of this.collectibles) {
       if (item.isCollected) continue;
 
       item.update(delta);
 
-      // Check distance to player
-      if (item.mesh.position.distanceTo(playerPos) < 1.2) {
-        item.isCollected = true;
-        this.scene.remove(item.mesh);
+      const dist = item.mesh.position.distanceTo(playerPos);
+      if (dist < 2.0 && dist < minDistance) {
+        minDistance = dist;
+        nearestItem = item;
+      }
+    }
 
-        if (item.type === 'CARD') {
+    const hud = (window as any).gameInstance?.hud;
+
+    if (nearestItem) {
+      let itemLabel = 'Item';
+      if (nearestItem.type === 'COIN') itemLabel = 'Lisar Coin';
+      else if (nearestItem.type === 'CARD') itemLabel = 'Carta Mágica';
+      else if (nearestItem.type === 'CHOCOLATE_FROG') itemLabel = 'Rana de Chocolate';
+      else if (nearestItem.type === 'POTION_HP') itemLabel = 'Poción de Salud';
+      else if (nearestItem.type === 'POTION_MP') itemLabel = 'Poción de Maná';
+
+      hud?.showInteractionPrompt(`Recoger ${itemLabel}`);
+
+      // Check if E key is pressed or walking right on top (distance < 1.0m or KeyE)
+      const ePressed = inputKeys ? !!inputKeys['KeyE'] : false;
+      const isTouch = hud?.isTouchDevice?.() || false;
+
+      if (ePressed || (isTouch && minDistance < 1.2) || minDistance < 0.9) {
+        nearestItem.isCollected = true;
+        this.scene.remove(nearestItem.mesh);
+        hud?.hideInteractionPrompt();
+
+        if (nearestItem.type === 'CARD') {
           this.collectedCount++;
           this.audioManager.playCardPickup();
           onCollectCard(this.collectedCount);
-        } else if (item.type === 'COIN') {
+        } else if (nearestItem.type === 'COIN') {
           this.coinCount++;
-          this.audioManager.playBeanPickup(); // We can reuse the sound
-          this.spawnSparks(item.mesh.position);
+          this.audioManager.playBeanPickup();
+          this.spawnSparks(nearestItem.mesh.position);
           onCollectCoin?.(this.coinCount);
-        } else if (item.type === 'CHOCOLATE_FROG') {
+        } else if (nearestItem.type === 'CHOCOLATE_FROG') {
           this.audioManager.playFrogPickup();
           onCollectPotion?.('CHOCOLATE_FROG');
-        } else if (item.type === 'POTION_HP' || item.type === 'POTION_MP') {
+        } else if (nearestItem.type === 'POTION_HP' || nearestItem.type === 'POTION_MP') {
           this.audioManager.playPotionPickup();
-          onCollectPotion?.(item.type);
+          onCollectPotion?.(nearestItem.type);
         }
       }
     }

@@ -449,18 +449,22 @@ export class EnemyController {
       });
     }
 
-    // ── Ground Snapping ──
+    // ── Ground Snapping (Slabs, Stairs, and Terrain) ──
+    const levelInst = (window as any).gameInstance?.level01;
+    let targetGroundY = levelInst ? levelInst.getTerrainHeight(this.mesh.position.x, this.mesh.position.z) : 0.0;
+
     if (colliders && colliders.length > 0) {
       const origin = new THREE.Vector3().copy(this.mesh.position);
       origin.y = Math.max(this.mesh.position.y + 3.0, 6.0);
       this.groundRaycaster.set(origin, new THREE.Vector3(0, -1, 0));
       const hits = this.groundRaycaster.intersectObjects(colliders, true);
-      if (hits.length > 0) {
-        let groundY = hits[0].point.y;
-        if (this.state === 'FLIPPED') groundY += 0.5;
-        this.mesh.position.y = THREE.MathUtils.lerp(this.mesh.position.y, groundY, delta * 10);
+      if (hits.length > 0 && hits[0].point.y >= targetGroundY) {
+        targetGroundY = hits[0].point.y;
       }
     }
+
+    if (this.state === 'FLIPPED') targetGroundY += 0.4;
+    this.mesh.position.y = THREE.MathUtils.lerp(this.mesh.position.y, targetGroundY, delta * 12);
 
     if (this.state !== 'FLIPPED') {
       this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, 0, delta * 8);

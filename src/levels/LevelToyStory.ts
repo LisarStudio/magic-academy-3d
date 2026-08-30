@@ -2536,7 +2536,7 @@ export class LevelToyStory {
       if (e.state !== 'DEAD') e.update(delta, playerPos, this.levelColliders);
     });
 
-    // Update collectibles
+    // Update collectibles (with manual E key press support)
     this.collectibleSystem.update(
       playerPos,
       delta,
@@ -2550,8 +2550,42 @@ export class LevelToyStory {
             this.subtitleSystem.show('Sistema', '¡Tienes 50 monedas LISAR! Ve a hablar con Gekko.');
           }
         }
-      }
+      },
+      undefined,
+      this.inputManager.keys
     );
+
+    // ── Gekko Proximity Detection & Automatic Cinematic Triggering ──
+    const gekkoPos = this.gekkoNPC?.mesh?.position || new THREE.Vector3(-4, 0.2, -10);
+    const distToGekko = Math.hypot(playerPos.x - gekkoPos.x, playerPos.z - gekkoPos.z);
+
+    if (distToGekko < 3.5 && !this.isCinematicPlaying && !this.player.isControlsLocked) {
+      if (this.gekkoMissionState === 'NOT_STARTED') {
+        this.gekkoMissionState = 'MISSION_ACTIVE';
+        this.stateFlags.gekkoTalked = true;
+        console.log('[GEKKO] Auto-triggering First Cinematic on proximity (dist: ' + distToGekko.toFixed(2) + 'm)');
+        this.runGekkoCinematic();
+      } else if (this.gekkoMissionState === 'MISSION_ACTIVE') {
+        const currentCoins = this.collectibleSystem.coinCount;
+        if (currentCoins >= 50) {
+          this.gekkoMissionState = 'MISSION_COMPLETE';
+          console.log('[GEKKO] Auto-triggering Second Cinematic (Reward) on proximity (dist: ' + distToGekko.toFixed(2) + 'm)');
+          this.runGekkoSecondCinematic();
+        } else {
+          const hud = (window as any).gameInstance?.hud;
+          hud?.showInteractionPrompt(`Hablar con Gekko (${currentCoins}/50 Monedas)`);
+          if (this.inputManager.keys['KeyE']) {
+            this.subtitleSystem.show('Gekko', `Aún no tienes las 50 monedas Lisar (tienes ${currentCoins}/50). ¡Búscalas por todo el reino!`);
+          }
+        }
+      } else if (this.gekkoMissionState === 'REWARD_GIVEN') {
+        const hud = (window as any).gameInstance?.hud;
+        hud?.showInteractionPrompt('Hablar con Gekko');
+        if (this.inputManager.keys['KeyE']) {
+          this.subtitleSystem.show('Gekko', '¡Gracias por ayudarme con las 50 Lisar Coins! Usa esa llave para abrir el portón principal.');
+        }
+      }
+    }
 
     // ── Energy Item Pickup Check ──────────────────────────────────────────
     for (let i = this.energyItems.length - 1; i >= 0; i--) {

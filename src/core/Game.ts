@@ -122,41 +122,58 @@ export class Game {
     // 7. Bind Input Actions
     this.inputManager.onLeftClick = () => {
       if (this.player.hasStaff && !this.player.isControlsLocked && !this.player.isAttacking) {
-        const manaCost = (this.spellSystem.activeSpell === 'ALOHOMORA' || this.spellSystem.activeSpell === 'LUMOS') ? 15 : 10;
+        this.player.isAttacking = true;
         
-        // Check mana first
-        if (this.player.mana >= manaCost) {
-          this.player.isAttacking = true;
-          
-          // Align player character rotation towards camera forward / target direction when starting attack
-          const rawDir = this.cameraController.getForwardVector();
-          const targetRot = Math.atan2(rawDir.x, rawDir.z);
-          this.player.mesh.rotation.y = targetRot;
+        // Align player character rotation towards camera forward / target direction when starting attack
+        const rawDir = this.cameraController.getForwardVector();
+        const targetRot = Math.atan2(rawDir.x, rawDir.z);
+        this.player.mesh.rotation.y = targetRot;
 
-          this.player.attachStaffToHand();
-          
-          // Play atack_wood.glb animation. Hechizo releases strictly at completion marker (~85% of gesture)
-          this.animationController.playCastSpellAnimation(
-            // OnCastAtMarker callback — exact moment spell is released from staff tip
-            () => {
-              if (this.player.useMana(manaCost)) {
-                const launchPos = this.player.getSpellLaunchPosition();
-                const defaultDir = this.cameraController.getForwardVector();
-                const camPos = this.cameraController.camera.position;
-                
-                // Get intuitive target-assisted direction
-                const finalDir = this.spellSystem.getAimedDirection(launchPos, camPos, defaultDir);
+        this.player.attachStaffToHand();
+        
+        // Play atack_wood.glb animation. Physical melee hit test executes at swing impact point (~35% of gesture)
+        this.animationController.playCastSpellAnimation(
+          // OnCastAtMarker callback — exact moment of physical staff swing impact
+          () => {
+            this.audioManager.playAttackGrunt(); // Energetic hero strike shout & impact
+            const playerPos = this.player.mesh.position;
+            const forwardDir = new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.mesh.quaternion);
 
-                this.spellSystem.castActiveSpell(launchPos, finalDir);
+            // 1. Physical Melee Hit Test against Enemies (within 2.8m in front cone)
+            this.level01.enemies.forEach(enemy => {
+              if (enemy.isAlive()) {
+                const enemyPos = enemy.getPosition();
+                const dist = playerPos.distanceTo(enemyPos);
+                if (dist < 2.8) {
+                  const toEnemy = enemyPos.clone().sub(playerPos).normalize();
+                  const dot = forwardDir.dot(toEnemy);
+                  if (dot > 0.3) {
+                    console.log(`[Game] Physical Staff Hit on '${enemy.id}'!`);
+                    enemy.takeHit(playerPos, 1);
+                  }
+                }
               }
-            },
-            // OnComplete callback — animation finished, unlock player attack state cleanly
-            () => {
-              this.player.attachStaffToBack();
-              this.player.isAttacking = false;
-            }
-          );
-        }
+            });
+
+            // 2. Physical Melee Hit Test against Destructible Pots (within 2.5m)
+            this.level01.pots.forEach(pot => {
+              if (!pot.isBroken) {
+                const dist = playerPos.distanceTo(pot.mesh.position);
+                if (dist < 2.5) {
+                  const toPot = pot.mesh.position.clone().sub(playerPos).normalize();
+                  if (forwardDir.dot(toPot) > 0.3) {
+                    pot.shatter(this.audioManager, (this.level01 as any).collectibleSystem);
+                  }
+                }
+              }
+            });
+          },
+          // OnComplete callback — animation finished, return staff to back cleanly
+          () => {
+            this.player.attachStaffToBack();
+            this.player.isAttacking = false;
+          }
+        );
       }
     };
 
