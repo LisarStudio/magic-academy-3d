@@ -33,8 +33,8 @@ export class InputManager {
 
   private initListeners(): void {
     window.addEventListener('keydown', (e) => {
-      // Toggle Pause with KeyP or Enter
-      if (e.code === 'KeyP' || e.code === 'Enter') {
+      // Toggle Pause with KeyP or Escape only (Enter is reserved for dialogue & skipping)
+      if (e.code === 'KeyP' || e.code === 'Escape') {
         if (this.onPauseToggle) {
           e.preventDefault();
           this.onPauseToggle();

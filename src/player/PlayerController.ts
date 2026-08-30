@@ -225,12 +225,17 @@ export class PlayerController {
     }
 
     const prevVelY = this.velocity.y;
-    this.isGrounded = validGroundHit !== null && validGroundHit.distance <= 0.85;
+    const terrainY = level?.getTerrainHeight ? level.getTerrainHeight(this.mesh.position.x, this.mesh.position.z) : 0.0;
+    
+    // Exact floor level: highest of static collider hit or terrain height
+    const hitY = (validGroundHit && validGroundHit.distance <= 0.95) ? validGroundHit.point.y : -999;
+    const floorY = Math.max(hitY, terrainY);
 
-    if (this.isGrounded && validGroundHit && this.velocity.y <= 0) {
+    if (this.mesh.position.y <= floorY + 0.12 && this.velocity.y <= 0) {
+      this.isGrounded = true;
       this.velocity.y = 0;
-      this.mesh.position.y = validGroundHit.point.y; // feet snap cleanly to floor
-      
+      this.mesh.position.y = floorY; // feet snap cleanly to floor
+
       const dangerousFall = prevVelY < -12.0;
 
       this.jumpCount = 0;
@@ -240,8 +245,11 @@ export class PlayerController {
       if (dangerousFall) {
         this.triggerHardLanding();
       }
-    } else if (!this.isMovementLocked) {
-      this.velocity.y += this.gravity * delta;
+    } else {
+      this.isGrounded = false;
+      if (!this.isMovementLocked) {
+        this.velocity.y += this.gravity * delta;
+      }
     }
 
     // Bind dynamic onJumpPress
