@@ -167,6 +167,19 @@ export class PlayerController {
   private static readonly DOWN_DIR = new THREE.Vector3(0, -1, 0);
 
   public update(delta: number, input: InputManager, cameraController: CameraController): void {
+    // ── Fail-Safe Control Recovery ──────────────────────────────────────────
+    // If controls are locked but NO cinematic or pickup sequence is active, force-unlock!
+    const level = (window as any).gameInstance?.level01;
+    const isCinematic = level?.isCinematicPlaying;
+    const isOneShot = (this.animationController as any)?.isPlayingOneShot;
+
+    if (this.isControlsLocked && !isCinematic && !isOneShot) {
+      console.warn('[PlayerController] 🔓 Safety Recovery: Clearing stuck control lock flag for gameplay!');
+      this.isControlsLocked = false;
+      this.isMovementLocked = false;
+      this.isAttacking = false;
+    }
+
     if (this.isControlsLocked) {
       this.animationController.update(delta);
       return;

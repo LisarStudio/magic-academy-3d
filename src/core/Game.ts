@@ -301,6 +301,10 @@ export class Game {
       }
       this.audioManager.startBGM();
       this.hud.showGameplayHUD();
+      this.inputManager.resetInputs();
+      this.player.isControlsLocked = false;
+      this.player.isMovementLocked = false;
+      this.player.isAttacking = false;
     });
 
     btnReplay?.addEventListener('click', () => {

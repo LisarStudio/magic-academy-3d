@@ -1850,14 +1850,17 @@ export class LevelToyStory {
           cameraController.updateCameraPosition();
         }
 
-        // Ensure Wukong stays facing -Z (back to camera)
+        // Ensure Wukong stays facing -Z (back to camera) and is completely unlocked
         this.player.mesh.rotation.set(0, Math.PI, 0);
 
+        this.isCinematicPlaying = false;
         this.player.isControlsLocked = false;
         this.player.isMovementLocked = false;
-        this.enemies.forEach(e => e.isPaused = false);
-        this.isCinematicPlaying = false;
+        this.player.isAttacking = false;
+        this.player.velocity.set(0, 0, 0);
+        this.player.forceIdle();
 
+        this.enemies.forEach(e => e.isPaused = false);
         hud.showGameplayHUD();
       };
 
