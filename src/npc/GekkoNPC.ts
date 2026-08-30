@@ -49,6 +49,22 @@ export class GekkoNPC {
       model.scale.set(0.25, 0.25, 0.25);
       this.mesh.add(model);
 
+      // Solid physical cylinder collider so raycasts and physical checks block player
+      const physicalCollider = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.2, 1.2, 2.4, 12),
+        new THREE.MeshBasicMaterial({ visible: false })
+      );
+      physicalCollider.name = 'gekko_physical_solid_collider';
+      physicalCollider.position.y = 1.2;
+      this.mesh.add(physicalCollider);
+
+      // Floating NPC speech / quest indicator
+      const indicatorMat = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffaa00, emissiveIntensity: 1.5 });
+      const indicator = new THREE.Mesh(new THREE.OctahedronGeometry(0.25, 0), indicatorMat);
+      indicator.position.y = 2.4;
+      indicator.name = 'gekko_quest_indicator';
+      this.mesh.add(indicator);
+
       this.mixer = new THREE.AnimationMixer(model);
 
       // Extract wave animation

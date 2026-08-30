@@ -932,6 +932,7 @@ export class LevelToyStory {
       const stepZ = (castleCenterZ + 5) - t * 9.0;
       const stepX = 4.0 - t * 4.0;
       const step = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.35, 1.2), stoneMat);
+      step.name = `roof_step_${i}`;
       step.position.set(stepX, stepY, stepZ);
       step.castShadow = true;
       step.receiveShadow = true;
@@ -943,10 +944,23 @@ export class LevelToyStory {
       new THREE.BoxGeometry(3.8, 0.35, Math.hypot(9.0, 5.2)),
       new THREE.MeshBasicMaterial({ visible: false })
     );
+    roofStairCollider.name = 'roof_stair_ramp_collider';
     roofStairCollider.position.set(2.0, 7.6, castleCenterZ + 0.5);
     roofStairCollider.rotation.x = Math.atan(5.2 / 9.0);
     scene.add(roofStairCollider);
     this.levelColliders.push(roofStairCollider);
+
+    // Side balustrades along the 2nd-tier roof staircase
+    const roofStairLength = Math.hypot(9.0, 5.2) + 1.0;
+    const roofStairAngle = Math.atan(5.2 / 9.0);
+    const roofBalustradeL = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.0, roofStairLength), redWoodMat);
+    roofBalustradeL.position.set(3.8, 8.2, castleCenterZ + 0.5);
+    roofBalustradeL.rotation.x = roofStairAngle;
+    const roofBalustradeR = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.0, roofStairLength), redWoodMat);
+    roofBalustradeR.position.set(0.2, 8.2, castleCenterZ + 0.5);
+    roofBalustradeR.rotation.x = roofStairAngle;
+    scene.add(roofBalustradeL, roofBalustradeR);
+    this.levelColliders.push(roofBalustradeL, roofBalustradeR);
 
     // ── STAIRWELL 2ND FLOOR BALUSTRADE SAFETY RAILINGS (Around opening) ──
     const stairRailL = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.1, 7.0), stoneMat);
@@ -958,7 +972,6 @@ export class LevelToyStory {
     scene.add(stairRailL, stairRailR, stairRailBack);
     this.levelColliders.push(stairRailL, stairRailR, stairRailBack);
 
-    // Second Floor Outer Guardrails
     // ── OUTDOOR GRAND WRAPPING STAIRCASE (West Outer Wall x = -15, z = -23 to -42, y = 0.5 to 5.0) ──
     const outdoorStairSteps = 18;
     const outdoorRampLength = Math.hypot(19, 4.8) + 2.0;
@@ -1008,24 +1021,44 @@ export class LevelToyStory {
       this.levelColliders.push(wallSeg);
     }
 
-    // Tower Roof Platform at y = 10.2 (Ring floor slab with central hole for stairs exit)
+    // ── 100% SOLID WALKABLE ROOF TERRACE PLATFORM (y = 10.2) ──
+    // Zero holes, zero gaps. 8 dense overlapping solid stone floor slabs covering the entire terrace.
     const towerRoofGroup = new THREE.Group();
     towerRoofGroup.position.set(0, 10.2, castleCenterZ - 4);
-    const towerRoofSlab = new THREE.Mesh(new THREE.RingGeometry(2.5, 6.4, 16), floorMat);
-    towerRoofSlab.rotation.x = -Math.PI / 2;
-    towerRoofSlab.receiveShadow = true;
-    towerRoofGroup.add(towerRoofSlab);
-    scene.add(towerRoofGroup);
+    
+    // 8 solid overlapping stone slab sections arranged around the central stairwell
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      const rx = Math.cos(angle) * 4.2;
+      const rz = Math.sin(angle) * 4.2;
+      const roofFloorSlab = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.4, 5.2), floorMat);
+      roofFloorSlab.position.set(rx, 10.2, (castleCenterZ - 4) + rz);
+      roofFloorSlab.receiveShadow = true;
+      scene.add(roofFloorSlab);
+      this.levelColliders.push(roofFloorSlab);
+    }
 
-    // Tower Roof Outer Collider Ring
-    for (let i = 0; i < 4; i++) {
-      const angle = (i / 4) * Math.PI * 2;
-      const cx = Math.cos(angle) * 4.5;
-      const cz = (castleCenterZ - 4) + Math.sin(angle) * 4.5;
-      const ringCol = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.4, 4.0), new THREE.MeshBasicMaterial({ visible: false }));
-      ringCol.position.set(cx, 10.2, cz);
-      scene.add(ringCol);
-      this.levelColliders.push(ringCol);
+    // Solid Perimeter Parapet / Balustrade Safety Railings around the roof edge (y = 10.2 to 11.4)
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      const bx = Math.cos(angle) * 6.5;
+      const bz = Math.sin(angle) * 6.5;
+      const roofRailing = new THREE.Mesh(new THREE.BoxGeometry(4.8, 1.2, 0.5), redWoodMat);
+      roofRailing.position.set(bx, 10.8, (castleCenterZ - 4) + bz);
+      roofRailing.rotation.y = -angle + Math.PI / 2;
+      scene.add(roofRailing);
+      this.levelColliders.push(roofRailing);
+    }
+
+    // 8 Imperial Red Wood Columns supporting the elevated Pavilion Crown Roof
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      const px = Math.cos(angle) * 5.8;
+      const pz = Math.sin(angle) * 5.8;
+      const roofPillar = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, 4.2, 8), redWoodMat);
+      roofPillar.position.set(px, 12.3, (castleCenterZ - 4) + pz);
+      scene.add(roofPillar);
+      this.levelColliders.push(roofPillar);
     }
 
     // Elevator (MovingPlatform) connecting ground floor to 2nd floor (y: 0.2 to 5.0)
@@ -1103,17 +1136,37 @@ export class LevelToyStory {
     // ── 1. CHINESE MEDIEVAL ARCHITECTURE DECORATIONS ON MAIN CASTLE ──
     const castleCenterZ = -40;
 
-    // Chinese Curved Pagoda Roof Eaves over the 1st floor balcony (y = 5.2)
-    const roof1 = new THREE.Mesh(new THREE.ConeGeometry(19, 2.2, 4), roofMat);
-    roof1.position.set(0, 5.8, castleCenterZ);
-    roof1.rotation.y = Math.PI / 4;
-    scene.add(roof1);
+    // ── CHINESE TRADITIONAL PERIMETER ROOF EAVES (Overhanging outer walls, open courtyard/balcony) ──
+    // 4 Perimeter Eave Canopies extending outwards from the 4 outer walls (keeps 2nd floor balcony 100% open & unobstructed)
+    const eaveFront = new THREE.Mesh(new THREE.BoxGeometry(29, 0.4, 2.8), roofMat);
+    eaveFront.position.set(0, 5.2, castleCenterZ + 14.5);
+    eaveFront.rotation.x = 0.25;
 
-    // Chinese Tower Pagoda Crown Roof over the top cylinder (y = 10.4)
-    const roofTower = new THREE.Mesh(new THREE.ConeGeometry(9.5, 3.5, 4), roofMat);
-    roofTower.position.set(0, 12.0, castleCenterZ - 4);
-    roofTower.rotation.y = Math.PI / 4;
+    const eaveBack = new THREE.Mesh(new THREE.BoxGeometry(29, 0.4, 2.8), roofMat);
+    eaveBack.position.set(0, 5.2, castleCenterZ - 14.5);
+    eaveBack.rotation.x = -0.25;
+
+    const eaveLeft = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.4, 29), roofMat);
+    eaveLeft.position.set(-14.5, 5.2, castleCenterZ);
+    eaveLeft.rotation.z = -0.25;
+
+    const eaveRight = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.4, 29), roofMat);
+    eaveRight.position.set(14.5, 5.2, castleCenterZ);
+    eaveRight.rotation.z = 0.25;
+
+    scene.add(eaveFront, eaveBack, eaveLeft, eaveRight);
+
+    // Elevated Chinese Pavilion Crown Pagoda Roof sitting high above the roof terrace (y = 15.0)
+    // Provides 4.8m of clear headroom so Wukong can run, fight, and walk without ever hitting the ceiling!
+    const roofTower = new THREE.Mesh(new THREE.ConeGeometry(9.5, 3.2, 8), roofMat);
+    roofTower.position.set(0, 15.0, castleCenterZ - 4);
+    roofTower.rotation.y = Math.PI / 8;
     scene.add(roofTower);
+
+    // Golden spire on top of the tower roof (y = 17.5)
+    const towerSpire = new THREE.Mesh(new THREE.ConeGeometry(0.8, 3.0, 8), goldMat);
+    towerSpire.position.set(0, 17.5, castleCenterZ - 4);
+    scene.add(towerSpire);
 
     // 8 Red Lacquered Wooden Columns with Gold Trim
     const colPositions = [
@@ -1275,8 +1328,8 @@ export class LevelToyStory {
       cit.add(centralPillar);
       this.levelColliders.push(centralPillar);
 
-      // ── WALKABLE SPIRAL RAMP (RAMPA EN ESPIRAL — ancha y segura, imposible caer) ──
-      const numSteps = 48; // Dense overlapping segments create smooth ramp surface
+      // ── WALKABLE SPIRAL RAMP (RAMPA EN ESPIRAL — ancha, suave y 100% segura con barreras físicas continuas) ──
+      const numSteps = 64; // Dense overlapping segments create smooth seamless ramp surface
       const startH = 0.8;
       const totalH = 14.0;
       const stepRadius = 4.5;
@@ -1286,61 +1339,64 @@ export class LevelToyStory {
         const angle = progress * Math.PI * 2.8;
         const h = startH + progress * totalH;
 
-        // Wide overlapping ramp segments (4.5m wide × 2.5m deep) that overlap to form continuous surface
-        const stepGeo = new THREE.BoxGeometry(4.5, 0.5, 2.5);
+        // Wide overlapping ramp segments (4.6m wide × 2.6m deep) that overlap to form continuous surface
+        const stepGeo = new THREE.BoxGeometry(4.6, 0.45, 2.6);
         const step = new THREE.Mesh(stepGeo, stoneMat);
         const sx = Math.cos(angle) * stepRadius;
         const sz = Math.sin(angle) * stepRadius;
 
+        step.name = `spiral_step_${i}`;
         step.position.set(sx, h, sz);
         step.rotation.y = -angle + Math.PI / 2;
         cit.add(step);
         this.levelColliders.push(step);
 
-        // ── THICK SAFETY WALLS on both sides (not thin rail posts, REAL WALLS) ──
-        // Inner wall (height 1.5m, can't jump over)
-        const innerWall = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.5, 2.5), redWoodMat);
-        innerWall.position.set(Math.cos(angle) * 2.0, h + 0.75, Math.sin(angle) * 2.0);
+        // ── THICK CONTINUOUS SAFETY BARRIERS (Barreras laterales curvas sin fisuras para evitar caídas) ──
+        // Inner curved barrier wall (height 1.8m above ramp)
+        const innerWall = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.8, 3.2), redWoodMat);
+        innerWall.position.set(Math.cos(angle) * 1.9, h + 0.9, Math.sin(angle) * 1.9);
         innerWall.rotation.y = -angle + Math.PI / 2;
         cit.add(innerWall);
         this.levelColliders.push(innerWall);
 
-        // Outer wall (height 1.5m)
-        const outerWall = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.5, 2.5), redWoodMat);
-        outerWall.position.set(Math.cos(angle) * 6.5, h + 0.75, Math.sin(angle) * 6.5);
+        // Outer curved barrier wall (height 1.8m above ramp)
+        const outerWall = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.8, 3.2), redWoodMat);
+        outerWall.position.set(Math.cos(angle) * 6.8, h + 0.9, Math.sin(angle) * 6.8);
         outerWall.rotation.y = -angle + Math.PI / 2;
         cit.add(outerWall);
         this.levelColliders.push(outerWall);
 
-        if (i % 12 === 0) {
+        if (i % 8 === 0) {
           const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, emissive: 0xff4400, emissiveIntensity: 1.5 });
-          const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), lanternMat);
-          lantern.position.set(Math.cos(angle) * 6.8, h + 2.0, Math.sin(angle) * 6.8);
+          const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), lanternMat);
+          lantern.position.set(Math.cos(angle) * 7.1, h + 2.2, Math.sin(angle) * 7.1);
           cit.add(lantern);
         }
       }
 
-      // ── PISO SUPERIOR / CÁMARA DEL SECRETO CON HOYO DE SALIDA AMPLIO (Y = 14.8) ──
-      // Ring Floor with central 5m hole so Wukong emerges smoothly onto the altar floor
-      const upperFloorGroup = new THREE.Group();
-      upperFloorGroup.position.y = 14.8;
+      // ── PISO SUPERIOR / CÁMARA DEL SECRETO (Y = 14.8) — 100% SÓLIDO SIN HUECOS ──
+      // 8 dense overlapping solid floor slabs covering the entire upper floor around the 4.5m stair exit
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const cx = Math.cos(angle) * 8.5;
+        const cz = Math.sin(angle) * 8.5;
+        const upperFloorSlab = new THREE.Mesh(new THREE.BoxGeometry(7.5, 0.6, 7.5), stoneMat);
+        upperFloorSlab.position.set(cx, 14.8, cz);
+        upperFloorSlab.receiveShadow = true;
+        cit.add(upperFloorSlab);
+        this.levelColliders.push(upperFloorSlab);
+      }
 
-      const upperFloorSlab = new THREE.Mesh(new THREE.RingGeometry(5.0, 13.0, 16), stoneMat);
-      upperFloorSlab.rotation.x = -Math.PI / 2;
-      upperFloorSlab.receiveShadow = true;
-      upperFloorGroup.add(upperFloorSlab);
-
-      cit.add(upperFloorGroup);
-
-      // Outer ring colliders around perimeter (radius 6.0 to 13.0) — keeping central 5m hole open!
-      for (let i = 0; i < 4; i++) {
-        const angle = (i / 4) * Math.PI * 2;
-        const cx = Math.cos(angle) * 9.0;
-        const cz = Math.sin(angle) * 9.0;
-        const ringCol = new THREE.Mesh(new THREE.BoxGeometry(8.0, 0.6, 8.0), new THREE.MeshBasicMaterial({ visible: false }));
-        ringCol.position.set(cx, 14.8, cz);
-        cit.add(ringCol);
-        this.levelColliders.push(ringCol);
+      // Solid outer perimeter safety balustrade around the secret chamber edge (radius 12.5m)
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const bx = Math.cos(angle) * 12.2;
+        const bz = Math.sin(angle) * 12.2;
+        const perimeterRailing = new THREE.Mesh(new THREE.BoxGeometry(9.5, 1.4, 0.6), redWoodMat);
+        perimeterRailing.position.set(bx, 15.5, bz);
+        perimeterRailing.rotation.y = -angle + Math.PI / 2;
+        cit.add(perimeterRailing);
+        this.levelColliders.push(perimeterRailing);
       }
 
       // 8 Perimeter Dragon Pillars with Gold Rings in Secret Chamber

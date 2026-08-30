@@ -49,38 +49,61 @@ export class ChestCinematic {
       this.staffInChest.visible = true;
       console.log('[ChestCinematic] STAFF_VISIBLE — showing existing chest prop');
     } else {
-      console.log('[ChestCinematic] STAFF_VISIBLE — loading baculo.glb?v=7');
+      console.log('[ChestCinematic] STAFF_VISIBLE — loading 3D staff model (baculo.glb / wood.glb)');
       try {
         const loader = new GLTFLoader();
-        const gltf = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/baculo.glb?v=7');
-        this.staffInChest = gltf.scene;
-        this.staffInChest.name = 'chest_staff_prop';
+        let gltf: any = null;
+        try {
+          gltf = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/baculo.glb?v=8');
+        } catch {
+          gltf = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/wood.glb?v=8');
+        }
 
-        // Add to scene FIRST — Box3.setFromObject needs world matrix updated
-        this.staffInChest.position.set(chestPosition.x, chestPosition.y + 0.3, chestPosition.z);
-        scene.add(this.staffInChest);
+        if (gltf && gltf.scene) {
+          const staffGroup = gltf.scene as THREE.Group;
+          staffGroup.name = 'chest_staff_prop';
 
-        // Compute real bounding box AFTER it's in the scene graph
-        const bbox = new THREE.Box3().setFromObject(this.staffInChest);
-        const size = new THREE.Vector3();
-        bbox.getSize(size);
-        const largest = Math.max(size.x, size.y, size.z);
-        console.log('[ChestCinematic] baculo.glb native: ' + size.x.toFixed(3) + 'w x ' + size.y.toFixed(3) + 'h x ' + size.z.toFixed(3) + 'd (largest: ' + largest.toFixed(3) + ')');
+          // Apply golden glow material to staff meshes if needed
+          staffGroup.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+            }
+          });
 
-        // Scale: largest dim → 0.32m (fits inside 0.7m chest with margin)
-        const TARGET = 0.32;
-        const sf = largest > 0.001 ? TARGET / largest : 0.1;
-        this.staffInChest.scale.setScalar(sf);
-        console.log('[ChestCinematic] Scale factor: ' + sf.toFixed(4) + ' (target ' + TARGET + 'm)');
+          // Add to scene FIRST — Box3.setFromObject needs world matrix updated
+          staffGroup.position.set(chestPosition.x, chestPosition.y + 0.35, chestPosition.z);
+          scene.add(staffGroup);
 
-        // Final position: center of chest interior
-        const staffY = chestPosition.y + 0.30;
-        this.staffInChest.position.set(chestPosition.x, staffY, chestPosition.z);
-        // Lay horizontally as if resting on chest floor
-        this.staffInChest.rotation.set(0, Math.PI * 0.25, Math.PI * 0.5);
-        console.log('[ChestCinematic] Staff world pos: (' + chestPosition.x.toFixed(2) + ', ' + staffY.toFixed(2) + ', ' + chestPosition.z.toFixed(2) + ')');
+          // Compute real bounding box AFTER it's in the scene graph
+          const bbox = new THREE.Box3().setFromObject(staffGroup);
+          const size = new THREE.Vector3();
+          bbox.getSize(size);
+          const largest = Math.max(size.x, size.y, size.z);
+          console.log('[ChestCinematic] 3D staff native size: ' + size.x.toFixed(3) + 'w x ' + size.y.toFixed(3) + 'h x ' + size.z.toFixed(3) + 'd');
+
+          // Scale: largest dim → 0.45m (clearly visible inside chest)
+          const TARGET = 0.45;
+          const sf = largest > 0.001 ? TARGET / largest : 0.15;
+          staffGroup.scale.setScalar(sf);
+
+          // Final position: center of chest interior elevated slightly so it floats majestically
+          const staffY = chestPosition.y + 0.38;
+          staffGroup.position.set(chestPosition.x, staffY, chestPosition.z);
+          staffGroup.rotation.set(0, Math.PI * 0.25, Math.PI * 0.4);
+
+          this.staffInChest = staffGroup;
+
+          // Add a brilliant golden aura point light inside the chest
+          const chestLight = new THREE.PointLight(0xffd700, 3.5, 5.0);
+          chestLight.position.set(chestPosition.x, staffY + 0.2, chestPosition.z);
+          chestLight.name = 'chest_staff_glow';
+          scene.add(chestLight);
+
+          console.log('[ChestCinematic] Staff 3D model successfully positioned in chest at:', chestPosition);
+        }
       } catch (e) {
-        console.warn('[ChestCinematic] baculo.glb load failed:', e);
+        console.warn('[ChestCinematic] Staff model load failed:', e);
       }
     }
 
