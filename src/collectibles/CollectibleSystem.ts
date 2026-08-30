@@ -252,11 +252,11 @@ export class CollectibleSystem {
 
       hud?.showInteractionPrompt(`Recoger ${itemLabel}`);
 
-      // Check if E key is pressed or walking right on top (distance < 1.0m or KeyE)
+      // Strict manual E key press required (or on mobile touch device proximity)
       const ePressed = inputKeys ? !!inputKeys['KeyE'] : false;
       const isTouch = hud?.isTouchDevice?.() || false;
 
-      if (ePressed || (isTouch && minDistance < 1.2) || minDistance < 0.9) {
+      if (ePressed || (isTouch && minDistance < 1.4)) {
         nearestItem.isCollected = true;
         this.scene.remove(nearestItem.mesh);
         hud?.hideInteractionPrompt();
@@ -278,6 +278,8 @@ export class CollectibleSystem {
           onCollectPotion?.(nearestItem.type);
         }
       }
+    } else {
+      // If we walked away from collectible items, hide prompt
     }
   }
 

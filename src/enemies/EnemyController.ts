@@ -74,6 +74,10 @@ export class EnemyController {
       const scale = (0.8 / Math.max(size.x, size.y, size.z)) * scaleMultiplier;
       model.scale.setScalar(scale);
 
+      // Recompute scaled bounding box and shift model down so bottom-most vertex of feet sits exactly at y = 0
+      const scaledBBox = new THREE.Box3().setFromObject(model);
+      model.position.y = -scaledBBox.min.y;
+
       model.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
           child.castShadow = true;
@@ -94,7 +98,7 @@ export class EnemyController {
         }
       });
 
-      console.log(`[EnemyController] Loaded crab.glb for '${this.id}' (${this.legs.length} leg nodes)`);
+      console.log(`[EnemyController] Loaded crab.glb for '${this.id}' (${this.legs.length} leg nodes, ground-aligned y: ${model.position.y.toFixed(2)})`);
     } catch (err) {
       console.warn(`[EnemyController] Could not load crab.glb for '${this.id}', using procedural`, err);
     }
@@ -107,7 +111,7 @@ export class EnemyController {
 
     const body = new THREE.Mesh(new THREE.SphereGeometry(0.4, 10, 8), bodyMat);
     body.scale.set(1.2, 0.6, 1.0);
-    body.position.y = 0.25;
+    body.position.y = 0.24;
     body.castShadow = true;
     body.name = 'crab_body';
     this.mesh.add(body);

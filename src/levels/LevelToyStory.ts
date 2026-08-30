@@ -78,11 +78,11 @@ export class LevelToyStory {
 
   // Generic Key Registry with Color Data
   public keyDefinitions: Record<string, KeyData> = {
-    key1_gekko: { id: 'key1_gekko', name: 'Llave de la Riqueza (Gekko)', color: 0x00ff88, emissiveColor: 0x00cc66, obtained: false },
-    key2_boss: { id: 'key2_boss', name: 'Llave de Combate (Jefe Cangrejo)', color: 0xff2200, emissiveColor: 0xff4400, obtained: false },
+    key1_gekko: { id: 'key1_gekko', name: 'Llave de la Riqueza (Gekko)', color: 0xff6600, emissiveColor: 0xff8800, obtained: false },
+    key2_boss: { id: 'key2_boss', name: 'Llave de la Valentía (Jefe Cangrejo)', color: 0xff2200, emissiveColor: 0xff4400, obtained: false },
     key3_platform: { id: 'key3_platform', name: 'Llave de Plataformas (Tejado)', color: 0x00e5ff, emissiveColor: 0x00bfff, obtained: false },
     key4_gargoyles: { id: 'key4_gargoyles', name: 'Llave del Secreto (Gárgolas)', color: 0xa855f7, emissiveColor: 0x9333ea, obtained: false },
-    key5_pots: { id: 'key5_pots', name: 'Llave de Destrucción (Gemas)', color: 0xffa500, emissiveColor: 0xff8800, obtained: false },
+    key5_pots: { id: 'key5_pots', name: 'Llave de Destrucción (Gemas)', color: 0xffd700, emissiveColor: 0xffaa00, obtained: false },
   };
 
   // Visual markers for keys
@@ -1886,22 +1886,29 @@ export class LevelToyStory {
     const scene = this.sceneManager.scene;
 
     // Normal patrols around the castle base (3 crabs) - placed safely away from spawn and Gekko
-    const patrol1 = new EnemyController('crab_1', new THREE.Vector3(-30, 0, -25), [
-      new THREE.Vector3(-40, 0, -25), new THREE.Vector3(-20, 0, -25)
+    const p1Y = this.getTerrainHeight(-30, -25);
+    const patrol1 = new EnemyController('crab_1', new THREE.Vector3(-30, p1Y, -25), [
+      new THREE.Vector3(-40, this.getTerrainHeight(-40, -25), -25),
+      new THREE.Vector3(-20, this.getTerrainHeight(-20, -25), -25)
     ]);
-    const patrol2 = new EnemyController('crab_2', new THREE.Vector3(25, 0, -25), [
-      new THREE.Vector3(15, 0, -25), new THREE.Vector3(35, 0, -25)
+    const p2Y = this.getTerrainHeight(25, -25);
+    const patrol2 = new EnemyController('crab_2', new THREE.Vector3(25, p2Y, -25), [
+      new THREE.Vector3(15, this.getTerrainHeight(15, -25), -25),
+      new THREE.Vector3(35, this.getTerrainHeight(35, -25), -25)
     ]);
-    const patrol3 = new EnemyController('crab_3', new THREE.Vector3(0, 0, -65), [
-      new THREE.Vector3(-10, 0, -65), new THREE.Vector3(10, 0, -65)
+    const p3Y = this.getTerrainHeight(0, -65);
+    const patrol3 = new EnemyController('crab_3', new THREE.Vector3(0, p3Y, -65), [
+      new THREE.Vector3(-10, this.getTerrainHeight(-10, -65), -65),
+      new THREE.Vector3(10, this.getTerrainHeight(10, -65), -65)
     ]);
 
-    // Guards on the 2nd floor (2 crabs)
+    // Guards on the 2nd floor (2 crabs) - sitting cleanly on 2nd floor slab
     const patrol4 = new EnemyController('crab_second_floor_1', new THREE.Vector3(-6, 5.0, -40));
     const patrol5 = new EnemyController('crab_second_floor_2', new THREE.Vector3(6, 5.0, -40));
 
     // Boss Giant Crab in the Sand Arena
-    this.bossEnemy = new EnemyController('crab_boss', new THREE.Vector3(45, 0.1, -40));
+    const bossY = this.getTerrainHeight(45, -40);
+    this.bossEnemy = new EnemyController('crab_boss', new THREE.Vector3(45, bossY, -40));
     this.enemies.push(patrol1, patrol2, patrol3, patrol4, patrol5, this.bossEnemy);
 
     this.enemies.forEach(e => {
@@ -2054,9 +2061,9 @@ export class LevelToyStory {
     if (hud) hud.setKeyCount(this.totalKeysCount);
 
     let keyName = '';
-    if (keyId === 'key1_gekko') keyName = 'Llave Naranja de Gekko (50 Monedas)';
-    if (keyId === 'key2_boss') keyName = 'Llave Carmesí de Combate (Jefe Cangrejo)';
-    if (keyId === 'key3_platform') keyName = 'Llave Esmeralda de Plataformas (Tejado)';
+    if (keyId === 'key1_gekko') keyName = 'Llave de la Riqueza (Gekko 50 Monedas)';
+    if (keyId === 'key2_boss') keyName = 'Llave de la Valentía (Jefe Cangrejo)';
+    if (keyId === 'key3_platform') keyName = 'Llave de Plataformas (Tejado)';
     if (keyId === 'key4_gargoyles') keyName = 'Llave del Secreto (Gárgolas)';
     if (keyId === 'key5_pots') keyName = 'Llave de Destrucción (Gemas)';
 
@@ -2477,13 +2484,15 @@ export class LevelToyStory {
     }
 
     // Spin 3D floating keys in the world & check for collection with TakingItem animation
+    // Spin 3D floating keys in the world & check for collection with manual E key
     for (let idx = this.keysMeshes.length - 1; idx >= 0; idx--) {
       const kMesh = this.keysMeshes[idx];
       kMesh.rotation.y += delta * 2.0;
       kMesh.position.y += Math.sin(Date.now() * 0.003) * 0.001;
 
-      // Check distance for collection
-      if (kMesh.position.distanceTo(playerPos) < 1.4 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
+      // Check distance for collection (requires E key press)
+      const distToKey = kMesh.position.distanceTo(playerPos);
+      if (distToKey < 2.0 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
         const keyId = kMesh.name;
         const keyPos = kMesh.position.clone();
         const keyData = this.keyDefinitions[keyId] || {
@@ -2494,13 +2503,19 @@ export class LevelToyStory {
           obtained: false,
         };
 
-        // Remove key mesh from scene and array immediately
-        this.sceneManager.scene.remove(kMesh);
-        this.keysMeshes.splice(idx, 1);
+        const hud = (window as any).gameInstance?.hud;
+        hud?.showInteractionPrompt(`Recoger ${keyData.name}`);
 
-        KeyPickupSequence.runSequence(keyData, keyPos, this.player, this.sceneManager.scene, () => {
-          this.awardKey(keyId as any, keyPos);
-        });
+        if (this.inputManager.keys['KeyE'] || (hud?.isTouchDevice?.() && distToKey < 1.3)) {
+          hud?.hideInteractionPrompt();
+          // Remove key mesh from scene and array immediately
+          this.sceneManager.scene.remove(kMesh);
+          this.keysMeshes.splice(idx, 1);
+
+          KeyPickupSequence.runSequence(keyData, keyPos, this.player, this.sceneManager.scene, () => {
+            this.awardKey(keyId as any, keyPos);
+          });
+        }
       }
     }
 
@@ -2509,7 +2524,7 @@ export class LevelToyStory {
       if (e.state !== 'DEAD') e.update(delta, playerPos, this.levelColliders);
     });
 
-    // Update collectibles (with manual E key press support)
+    // Update collectibles (with strict manual E key press support)
     this.collectibleSystem.update(
       playerPos,
       delta,
@@ -2560,17 +2575,24 @@ export class LevelToyStory {
       }
     }
 
-    // ── Energy Item Pickup Check ──────────────────────────────────────────
+    // ── Energy Item Pickup Check (Manual E key press) ─────────────────────
     for (let i = this.energyItems.length - 1; i >= 0; i--) {
       const item = this.energyItems[i];
       item.rotation.y += delta * 2.0; // Slow magical spin
-      if (item.position.distanceTo(playerPos) < 1.6 && !this.player.isControlsLocked) {
-        this.sceneManager.scene.remove(item);
-        this.energyItems.splice(i, 1);
-        this.createSparks(item.position);
-        this.audioManager.playCardPickup();
-        this.player.heal(35);
-        this.subtitleSystem.show('Durazno Celestial', '¡Has recogido un Durazno Celestial! (+35 ENERGÍA RESTAURADA)');
+      const distToEnergy = item.position.distanceTo(playerPos);
+      if (distToEnergy < 2.0 && !this.player.isControlsLocked) {
+        const hud = (window as any).gameInstance?.hud;
+        hud?.showInteractionPrompt('Recoger Durazno Celestial');
+
+        if (this.inputManager.keys['KeyE'] || (hud?.isTouchDevice?.() && distToEnergy < 1.3)) {
+          hud?.hideInteractionPrompt();
+          this.sceneManager.scene.remove(item);
+          this.energyItems.splice(i, 1);
+          this.createSparks(item.position);
+          this.audioManager.playCardPickup();
+          this.player.heal(35);
+          this.subtitleSystem.show('Durazno Celestial', '¡Has recogido un Durazno Celestial! (+35 ENERGÍA RESTAURADA)');
+        }
       }
     }
 
