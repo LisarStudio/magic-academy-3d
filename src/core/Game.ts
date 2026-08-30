@@ -319,7 +319,11 @@ export class Game {
     const btnResume = document.getElementById('btn-resume');
     this.inputManager.onPauseToggle = () => this.togglePause();
 
-    btnStart?.addEventListener('click', () => {
+    const onStartGame = (e?: Event) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
       startScreen?.classList.add('hidden');
       this.audioManager.resume();
       if (!this.hud.isTouchDevice()) {
@@ -331,7 +335,14 @@ export class Game {
       this.player.isControlsLocked = false;
       this.player.isMovementLocked = false;
       this.player.isAttacking = false;
-    });
+      if (this.level01) {
+        (this.level01 as any).isCinematicPlaying = false;
+        this.level01.stateFlags.introCompleted = true;
+      }
+    };
+
+    btnStart?.addEventListener('click', onStartGame);
+    btnStart?.addEventListener('touchstart', onStartGame, { passive: false });
 
     btnReplay?.addEventListener('click', () => {
       window.location.reload();

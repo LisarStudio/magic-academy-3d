@@ -504,42 +504,24 @@ export class PlayerController {
   }
 
   public attachStaffToHand(): void {
-    const backStaff = this.mesh.getObjectByName('Vaculo') || this.mesh.getObjectByName('magic_wand');
-    const attackStaff = this.mesh.getObjectByName('atack_wood_staff');
-
-    // Hide the staff on the back
-    if (backStaff) {
-      backStaff.visible = false;
-    }
-
-    // Show the staff in the hand (extracted from atack_wood.glb)
-    if (attackStaff) {
-      attackStaff.visible = true;
-      // Move light effect to attack staff tip
+    const staff = this.mesh.getObjectByName('Vaculo') || this.mesh.getObjectByName('magic_wand');
+    if (staff) {
+      staff.visible = true;
       if (this.wandEffect && this.wandEffect.wandMesh) {
-        this.wandEffect.wandMesh.position.set(0, 0.8, 0); // Adjust tip offset if needed for atack_wood_staff
-        attackStaff.add(this.wandEffect.wandMesh);
+        this.wandEffect.wandMesh.position.set(0, 0.8, 0);
+        staff.add(this.wandEffect.wandMesh);
       }
     }
   }
 
   public attachStaffToBack(): void {
-    const backStaff = this.mesh.getObjectByName('Vaculo') || this.mesh.getObjectByName('magic_wand');
-    const attackStaff = this.mesh.getObjectByName('atack_wood_staff');
-
-    // Show the staff on the back
-    if (backStaff) {
-      backStaff.visible = true;
-      // Move light effect back to the back staff
+    const staff = this.mesh.getObjectByName('Vaculo') || this.mesh.getObjectByName('magic_wand');
+    if (staff && this.hasStaff) {
+      staff.visible = true;
       if (this.wandEffect && this.wandEffect.wandMesh) {
         this.wandEffect.wandMesh.position.set(0, 0.8, 0);
-        backStaff.add(this.wandEffect.wandMesh);
+        staff.add(this.wandEffect.wandMesh);
       }
-    }
-
-    // Hide the staff in the hand
-    if (attackStaff) {
-      attackStaff.visible = false;
     }
   }
 

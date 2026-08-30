@@ -428,28 +428,6 @@ export class AssetManager {
 
       if (castSpellData) {
         clips.push(castSpellData.clip);
-        
-        // Attach the extracted staff to the player's LeftHand
-        castSpellData.externalMeshes.forEach(mesh => {
-          if (mesh.name === 'Cylinder') {
-            mesh.name = 'atack_wood_staff';
-            mesh.visible = false; // Hidden by default
-            
-            let targetHand: THREE.Object3D | null = null;
-            playerModel.traverse((child) => {
-              const n = child.name.toLowerCase();
-              if ((n.includes('righthand') || n.includes('lefthand')) && !n.includes('thumb') && !n.includes('index') && !n.includes('middle') && !n.includes('ring') && !n.includes('pinky')) {
-                if (!targetHand || n.includes('righthand')) {
-                  targetHand = child;
-                }
-              }
-            });
-            if (targetHand) {
-              (targetHand as THREE.Object3D).add(mesh);
-              console.log(`[AssetManager] Attached 'atack_wood_staff' to hand bone: ${(targetHand as THREE.Object3D).name}`);
-            }
-          }
-        });
       }
 
       console.log(`[AssetManager] 🎬 Total clips loaded: ${clips.length} → [${clips.map((c) => c.name).join(', ')}]`);

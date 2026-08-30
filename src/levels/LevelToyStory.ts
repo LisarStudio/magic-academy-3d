@@ -1808,9 +1808,9 @@ export class LevelToyStory {
   }
 
   private setupNPCs(): void {
-    // Position Gekko near the start/castle front, elevated +0.18m so his feet sit perfectly on top of floor
-    const gekkoY = this.getTerrainHeight(-4, -10) + 0.18;
-    this.gekkoNPC = new GekkoNPC(new THREE.Vector3(-4, gekkoY, -10), -Math.PI * 0.25);
+    // Position Gekko right alongside the entrance avenue, elevated +0.18m so his feet sit perfectly on top of floor
+    const gekkoY = this.getTerrainHeight(-2.8, -10) + 0.18;
+    this.gekkoNPC = new GekkoNPC(new THREE.Vector3(-2.8, gekkoY, -10), -Math.PI * 0.25);
     this.gekkoNPC.loadModels();
     this.sceneManager.scene.add(this.gekkoNPC.mesh);
 
@@ -1819,13 +1819,13 @@ export class LevelToyStory {
       new THREE.CylinderGeometry(0.8, 0.8, 2.5, 12),
       new THREE.MeshBasicMaterial({ visible: false })
     );
-    gekkoCollider.position.set(-4, gekkoY + 1.25, -10);
+    gekkoCollider.position.set(-2.8, gekkoY + 1.25, -10);
     this.sceneManager.scene.add(gekkoCollider);
     this.levelColliders.push(gekkoCollider);
 
     // Setup floating coin model for dialog reference
     this.floatingCoinMesh = new THREE.Group();
-    this.floatingCoinMesh.position.set(-4, 1.4, -10);
+    this.floatingCoinMesh.position.set(-2.8, 1.4, -10);
     this.floatingCoinMesh.scale.set(0.6, 0.6, 0.6);
     this.floatingCoinMesh.visible = false;
     this.sceneManager.scene.add(this.floatingCoinMesh);
@@ -2098,25 +2098,27 @@ export class LevelToyStory {
       this.player.isControlsLocked = true;
       this.player.isMovementLocked = true;
 
-      const gekkoY = this.getTerrainHeight(-4, -10) + 0.18;
+      const gekkoPos = this.gekkoNPC.mesh.position;
+      const gekkoY = gekkoPos.y;
+
       // Position Player facing Gekko
-      this.player.mesh.position.set(-4, 0.2, -7.5);
+      this.player.mesh.position.set(gekkoPos.x, 0.2, gekkoPos.z + 2.5);
       this.player.mesh.rotation.set(0, Math.PI, 0);
       this.player.forceIdle();
       
       // Position Gekko facing Player
-      this.gekkoNPC.mesh.position.set(-4, gekkoY, -10);
+      this.gekkoNPC.mesh.position.set(gekkoPos.x, gekkoY, gekkoPos.z);
       this.gekkoNPC.mesh.rotation.set(0, 0, 0);
       this.gekkoNPC.setTalking(true);
 
-      this.floatingCoinMesh.position.set(-4, gekkoY + 1.4, -8.7);
+      this.floatingCoinMesh.position.set(gekkoPos.x, gekkoY + 1.4, gekkoPos.z + 1.25);
       this.floatingCoinMesh.visible = true;
 
       this.subtitleSystem.hide();
 
-      // Camera view
-      const endPos = new THREE.Vector3(-1.5, gekkoY + 1.25, -8.75); 
-      const endLookAt = new THREE.Vector3(-4.0, gekkoY + 1.1, -8.75); 
+      // Camera view side-by-side shot
+      const endPos = new THREE.Vector3(gekkoPos.x + 2.5, gekkoY + 1.25, gekkoPos.z + 1.25); 
+      const endLookAt = new THREE.Vector3(gekkoPos.x, gekkoY + 1.1, gekkoPos.z + 1.25); 
       cinematicCamera.moveCamera(endPos, endPos, endLookAt, endLookAt, 999.0);
 
       await hud.fadeScreenIn(500);
@@ -2148,7 +2150,7 @@ export class LevelToyStory {
         this.isCinematicPlaying = false;
         
         this.gekkoNPC.setTalking(false);
-        this.gekkoNPC.mesh.position.set(-4, gekkoY, -10);
+        this.gekkoNPC.mesh.position.set(gekkoPos.x, gekkoY, gekkoPos.z);
         this.gekkoNPC.mesh.rotation.set(0, -Math.PI * 0.25, 0);
         this.floatingCoinMesh.visible = false;
         
@@ -2284,22 +2286,25 @@ export class LevelToyStory {
       this.player.isControlsLocked = true;
       this.player.isMovementLocked = true;
 
+      const gekkoPos = this.gekkoNPC.mesh.position;
+      const gekkoY = gekkoPos.y;
+
       // Position Player facing Gekko
-      this.player.mesh.position.set(-4, 0, -7.5);
+      this.player.mesh.position.set(gekkoPos.x, 0.2, gekkoPos.z + 2.5);
       this.player.mesh.rotation.set(0, Math.PI, 0);
       this.player.forceIdle();
       
       // Position Gekko facing Player
-      this.gekkoNPC.mesh.position.set(-4, 0, -10);
+      this.gekkoNPC.mesh.position.set(gekkoPos.x, gekkoY, gekkoPos.z);
       this.gekkoNPC.mesh.rotation.set(0, 0, 0);
       this.gekkoNPC.setTalking(true);
 
       // NO LISAR COIN FLOATING IN 2ND CINEMATIC!
       if (this.floatingCoinMesh) this.floatingCoinMesh.visible = false;
 
-      // Camera view
-      const endPos = new THREE.Vector3(-1.5, 1.25, -8.75); 
-      const endLookAt = new THREE.Vector3(-4.0, 1.1, -8.75); 
+      // Camera view side-by-side shot
+      const endPos = new THREE.Vector3(gekkoPos.x + 2.5, gekkoY + 1.25, gekkoPos.z + 1.25); 
+      const endLookAt = new THREE.Vector3(gekkoPos.x, gekkoY + 1.1, gekkoPos.z + 1.25); 
       cinematicCamera.moveCamera(endPos, endPos, endLookAt, endLookAt, 999.0);
 
       this.subtitleSystem.hide();
@@ -2476,10 +2481,10 @@ export class LevelToyStory {
     );
 
     // ── Gekko Proximity Detection & Automatic Cinematic Triggering ──
-    const gekkoPos = this.gekkoNPC?.mesh?.position || new THREE.Vector3(-4, 0.2, -10);
+    const gekkoPos = this.gekkoNPC?.mesh?.position || new THREE.Vector3(-2.8, 0.2, -10);
     const distToGekko = Math.hypot(playerPos.x - gekkoPos.x, playerPos.z - gekkoPos.z);
 
-    if (distToGekko < 3.5 && !this.isCinematicPlaying && !this.player.isControlsLocked) {
+    if (distToGekko < 5.5 && !this.isCinematicPlaying && !this.player.isControlsLocked) {
       if (this.gekkoMissionState === 'NOT_STARTED') {
         this.gekkoMissionState = 'MISSION_ACTIVE';
         this.stateFlags.gekkoTalked = true;
