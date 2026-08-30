@@ -1021,32 +1021,6 @@ export class LevelToyStory {
       this.levelColliders.push(roofPillar);
     }
 
-    // Elevator (MovingPlatform) connecting ground floor to 2nd floor (y: 0.2 to 5.0)
-    const elevator = new MovingPlatform(
-      new THREE.Vector3(10, 0.2, castleCenterZ + 10),
-      new THREE.Vector3(10, 5.0, castleCenterZ + 10),
-      1.5, // speed
-      4, 4 // size
-    );
-    scene.add(elevator.mesh);
-    this.movingPlatforms.push(elevator);
-    this.levelColliders.push(elevator.mesh);
-
-    // Internal Tower Spiral Steps to Roof Platform (y = 5.0 to 10.2)
-    const towerSteps = 10;
-    for (let i = 0; i < towerSteps; i++) {
-      const progress = i / (towerSteps - 1);
-      const angle = progress * Math.PI * 1.8;
-      const h = 5.2 + progress * 5.0;
-      const sx = Math.cos(angle) * 4.2;
-      const sz = (castleCenterZ - 4) + Math.sin(angle) * 4.2;
-
-      const step = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.3, 1.4), stoneMat);
-      step.position.set(sx, h, sz);
-      step.rotation.y = -angle + Math.PI / 2;
-      scene.add(step);
-      this.levelColliders.push(step);
-    }
 
     // 4. Combat Boss Arena (to the East, broad sand circular area)
     const arenaCenter = new THREE.Vector3(45, 0.1, -40);
@@ -2052,7 +2026,7 @@ export class LevelToyStory {
     this.triggerZones.push(tIntro);
 
     // Gekko First Encounter Trigger Zone (Tutorial Level Proven Architecture)
-    const tGekko = new TriggerZone('trig_gekko', new THREE.Vector3(-8.0, -2.0, -14.0), new THREE.Vector3(0.0, 6.0, -6.0), () => {
+    const tGekko = new TriggerZone('trig_gekko', new THREE.Vector3(-6.0, -2.0, -16.0), new THREE.Vector3(4.0, 6.0, -6.0), () => {
       if (this.gekkoMissionState === 'NOT_STARTED') {
         this.gekkoMissionState = 'MISSION_ACTIVE';
         this.stateFlags.gekkoTalked = true;
