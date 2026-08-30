@@ -1200,6 +1200,14 @@ export class LevelToyStory {
         cit.add(step);
         this.levelColliders.push(step);
 
+        // Outer Safety Balustrade Railing along the spiral edge (prevents falling off)
+        const railPost = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.2, 8), redWoodMat);
+        const rx = Math.cos(angle) * (stepRadius + 1.5);
+        const rz = Math.sin(angle) * (stepRadius + 1.5);
+        railPost.position.set(rx, h + 0.6, rz);
+        cit.add(railPost);
+        this.levelColliders.push(railPost);
+
         if (i % 6 === 0) {
           const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, emissive: 0xff4400, emissiveIntensity: 1.5 });
           const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), lanternMat);
@@ -1427,6 +1435,8 @@ export class LevelToyStory {
     this.spellSystem.registerChest(this.staffChest);
     this.levelColliders.push(this.staffChest.mesh);
 
+    this.setupEnergyItems();
+
     // 5 Special Pots for Key 5 (Glowing red effect)
     const specialPotPositions = [
       new THREE.Vector3(-10, 0, 5),     // Near start
@@ -1488,6 +1498,49 @@ export class LevelToyStory {
           this.awardKey('key4_gargoyles', new THREE.Vector3(0, 0.5, -35)); // Spawns inside castle entrance
         }
       };
+    });
+  }
+
+  private energyItems: THREE.Group[] = [];
+
+  private setupEnergyItems(): void {
+    const scene = this.sceneManager.scene;
+
+    const energySpots = [
+      new THREE.Vector3(-15, 0, -20),
+      new THREE.Vector3(15, 0, -20),
+      new THREE.Vector3(-55, 0, -65),
+      new THREE.Vector3(55, 0, -65),
+      new THREE.Vector3(-30, 0, -35),
+      new THREE.Vector3(30, 0, -35),
+      new THREE.Vector3(0, 0, -45),
+      new THREE.Vector3(55, 14.8, -75),
+    ];
+
+    energySpots.forEach((spot, idx) => {
+      const y = spot.y > 5.0 ? spot.y + 0.4 : this.getTerrainHeight(spot.x, spot.z) + 0.45;
+      const group = new THREE.Group();
+      group.position.set(spot.x, y, spot.z);
+
+      const orbMat = new THREE.MeshStandardMaterial({
+        color: 0xff66aa,
+        emissive: 0xff3388,
+        emissiveIntensity: 1.8,
+        roughness: 0.2,
+        metalness: 0.6,
+      });
+      const orb = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 12), orbMat);
+      
+      const ringMat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.9, roughness: 0.1 });
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.05, 8, 16), ringMat);
+      ring.rotation.x = Math.PI / 3;
+
+      const light = new THREE.PointLight(0xff66aa, 3.0, 5.0);
+      group.add(orb, ring, light);
+      group.name = `energy_item_${idx}`;
+
+      scene.add(group);
+      this.energyItems.push(group);
     });
   }
 
@@ -1593,8 +1646,9 @@ export class LevelToyStory {
   }
 
   private setupNPCs(): void {
-    // Position Gekko near the start/castle front
-    this.gekkoNPC = new GekkoNPC(new THREE.Vector3(-4, 0, -10), -Math.PI * 0.25);
+    // Position Gekko near the start/castle front, elevated +0.18m so his feet sit perfectly on top of floor
+    const gekkoY = this.getTerrainHeight(-4, -10) + 0.18;
+    this.gekkoNPC = new GekkoNPC(new THREE.Vector3(-4, gekkoY, -10), -Math.PI * 0.25);
     this.gekkoNPC.loadModels();
     this.sceneManager.scene.add(this.gekkoNPC.mesh);
 
@@ -1603,7 +1657,7 @@ export class LevelToyStory {
       new THREE.CylinderGeometry(0.8, 0.8, 2.5, 12),
       new THREE.MeshBasicMaterial({ visible: false })
     );
-    gekkoCollider.position.set(-4, 1.25, -10);
+    gekkoCollider.position.set(-4, gekkoY + 1.25, -10);
     this.sceneManager.scene.add(gekkoCollider);
     this.levelColliders.push(gekkoCollider);
 
@@ -1926,24 +1980,25 @@ export class LevelToyStory {
       this.player.isControlsLocked = true;
       this.player.isMovementLocked = true;
 
+      const gekkoY = this.getTerrainHeight(-4, -10) + 0.18;
       // Position Player facing Gekko
-      this.player.mesh.position.set(-4, 0, -7.5);
+      this.player.mesh.position.set(-4, 0.2, -7.5);
       this.player.mesh.rotation.set(0, Math.PI, 0);
       this.player.forceIdle();
       
       // Position Gekko facing Player
-      this.gekkoNPC.mesh.position.set(-4, 0, -10);
+      this.gekkoNPC.mesh.position.set(-4, gekkoY, -10);
       this.gekkoNPC.mesh.rotation.set(0, 0, 0);
       this.gekkoNPC.setTalking(true);
 
-      this.floatingCoinMesh.position.set(-4, 1.4, -8.7);
+      this.floatingCoinMesh.position.set(-4, gekkoY + 1.4, -8.7);
       this.floatingCoinMesh.visible = true;
 
       this.subtitleSystem.hide();
 
       // Camera view
-      const endPos = new THREE.Vector3(-1.5, 1.25, -8.75); 
-      const endLookAt = new THREE.Vector3(-4.0, 1.1, -8.75); 
+      const endPos = new THREE.Vector3(-1.5, gekkoY + 1.25, -8.75); 
+      const endLookAt = new THREE.Vector3(-4.0, gekkoY + 1.1, -8.75); 
       cinematicCamera.moveCamera(endPos, endPos, endLookAt, endLookAt, 999.0);
 
       await hud.fadeScreenIn(500);
@@ -1965,7 +2020,7 @@ export class LevelToyStory {
         this.player.isMovementLocked = false;
         
         this.gekkoNPC.setTalking(false);
-        this.gekkoNPC.mesh.position.set(-4, 0, -10);
+        this.gekkoNPC.mesh.position.set(-4, gekkoY, -10);
         this.gekkoNPC.mesh.rotation.set(0, -Math.PI * 0.25, 0);
         this.floatingCoinMesh.visible = false;
         
@@ -2278,6 +2333,20 @@ export class LevelToyStory {
         }
       }
     );
+
+    // ── Energy Item Pickup Check ──────────────────────────────────────────
+    for (let i = this.energyItems.length - 1; i >= 0; i--) {
+      const item = this.energyItems[i];
+      item.rotation.y += delta * 2.0; // Slow magical spin
+      if (item.position.distanceTo(playerPos) < 1.6 && !this.player.isControlsLocked) {
+        this.sceneManager.scene.remove(item);
+        this.energyItems.splice(i, 1);
+        this.createSparks(item.position);
+        this.audioManager.playCardPickup();
+        this.player.heal(35);
+        this.subtitleSystem.show('Durazno Celestial', '¡Has recogido un Durazno Celestial! (+35 ENERGÍA RESTAURADA)');
+      }
+    }
 
     // ── Chest Interaction — Staff Pickup ──────────────────────────────────────
     if (!this.stateFlags.staffFound && this.staffChest.mesh.position.distanceTo(playerPos) < 2.0) {

@@ -107,11 +107,16 @@ export class AnimationController {
     this.isPlayingOneShot = true;
 
     if (this.currentAction && this.currentAction !== action) {
-      this.currentAction.fadeOut(0.1);
+      this.currentAction.stop();
     }
 
-    // Speed up the attack animation for a much snappier, professional game feel
-    action.reset().setEffectiveWeight(1).setEffectiveTimeScale(1.7).fadeIn(0.08).play();
+    action.reset();
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = true;
+    action.setEffectiveWeight(1.0);
+    action.setEffectiveTimeScale(1.7);
+    action.play();
+
     this.currentAction = action;
     this.currentState = 'CastSpell';
 
@@ -325,11 +330,16 @@ export class AnimationController {
     if (this.mixer) {
       this.mixer.update(delta);
 
-      // Audit & enforce 1.0 scale on all bones to guarantee zero asymmetrical deformation during gameplay
+      // Audit & enforce 1.0 scale on all bones & weapon props to guarantee zero asymmetrical or gigantic staff deformation
       if (this.characterRoot) {
         this.characterRoot.traverse((child) => {
           if ((child as THREE.Bone).isBone) {
             if (child.scale.x !== 1.0 || child.scale.y !== 1.0 || child.scale.z !== 1.0) {
+              child.scale.set(1.0, 1.0, 1.0);
+            }
+          } else {
+            const name = child.name.toLowerCase();
+            if (name.includes('vaculo') || name.includes('baculo') || name.includes('staff') || name.includes('wand') || name.includes('cylinder')) {
               child.scale.set(1.0, 1.0, 1.0);
             }
           }

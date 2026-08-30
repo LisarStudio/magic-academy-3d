@@ -130,6 +130,10 @@ export class PlayerController {
   public heal(amount: number): void {
     this.health = Math.min(this.maxHealth, this.health + amount);
     this.onHealthChange?.(this.health, this.maxHealth);
+    const hud = (window as any).gameInstance?.hud;
+    if (hud) {
+      hud.setHealth(this.health, this.maxHealth);
+    }
   }
 
   public takeDamage(amount: number, respawnPos?: THREE.Vector3): void {
