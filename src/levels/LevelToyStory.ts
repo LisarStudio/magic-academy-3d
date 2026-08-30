@@ -336,9 +336,37 @@ export class LevelToyStory {
     const groundBaseMat = new THREE.MeshStandardMaterial({ color: 0x224925, roughness: 0.95 }); // Deep rich base for grass
     const sandMat = new THREE.MeshStandardMaterial({ color: 0xc2b280, roughness: 0.85 });  // Arena floor
 
-    // 1. Broad non-linear grass base (160 x 160)
-    const worldFloor = new THREE.Mesh(new THREE.BoxGeometry(160, 1, 160), groundBaseMat);
-    worldFloor.position.set(0, -0.5, -40);
+    // 1. Rolling Undulating Terrain Mesh (160 x 160, 64x64 segments)
+    const terrainGeo = new THREE.PlaneGeometry(160, 160, 64, 64);
+    terrainGeo.rotateX(-Math.PI / 2); // Orient horizontally
+
+    const posAttr = terrainGeo.attributes.position;
+    for (let i = 0; i < posAttr.count; i++) {
+      const x = posAttr.getX(i);
+      const z = posAttr.getZ(i) - 40; // Align with center at (0, 0, -40)
+
+      // Calculate distance to gameplay zones (Castle, Arena, Paths)
+      const castleDist = Math.max(Math.abs(x) - 14, Math.abs(z + 40) - 15);
+      const arenaDist = Math.hypot(x - 45, z + 40) - 15;
+
+      // Blend factor: 0.0 near gameplay zones (flat), 1.0 in open wilderness
+      let blend = 1.0;
+      if (castleDist < 8) blend *= Math.max(0, castleDist / 8);
+      if (arenaDist < 8) blend *= Math.max(0, arenaDist / 8);
+      if (z > -20 && Math.abs(x) < 8) blend *= Math.max(0, Math.abs(x) / 8);
+
+      // Layered organic noise for soft rolling hills, knolls, and valley dips
+      const hill1 = Math.sin(x * 0.05 + z * 0.04) * 2.2;
+      const hill2 = Math.cos(x * 0.09 - z * 0.07) * 1.4;
+      const knoll = Math.sin(x * 0.15) * Math.sin(z * 0.15) * 0.8;
+
+      const y = (hill1 + hill2 + knoll) * blend;
+      posAttr.setY(i, y);
+    }
+    terrainGeo.computeVertexNormals();
+
+    const worldFloor = new THREE.Mesh(terrainGeo, groundBaseMat);
+    worldFloor.position.set(0, 0, -40);
     worldFloor.receiveShadow = true;
     scene.add(worldFloor);
     this.levelColliders.push(worldFloor);
@@ -633,112 +661,133 @@ export class LevelToyStory {
     })();
 
     // ═══════════════════════════════════════════════════════════════════════════════
-    // ▓▓▓  AAA WILDFLOWERS SYSTEM  ▓▓▓  2,500 Instanced Field Flowers
+    // ▓▓▓  REAL 3D GLTF FOLIAGE & NATURE ENVIRONMENT MANAGER  ▓▓▓
+    // Loads & instantiates real 3D GLTF trees, shrubs, and 3D wildflowers.
+    // ZERO primitive spheres, ZERO blocky proxies.
     // ═══════════════════════════════════════════════════════════════════════════════
     (() => {
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      const FLOWER_COUNT = isMobile ? 800 : 2500;
+      const gltfLoader = new GLTFLoader();
 
-      const flowerHeadGeo = new THREE.DodecahedronGeometry(0.07, 0);
-      const flowerMat = new THREE.MeshStandardMaterial({
-        roughness: 0.6,
-        metalness: 0.1,
+      // 1. Real 3D Conifer Pine & Oak Trees
+      gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/tree_conifer.gltf', (gltf) => {
+        const treeTemplate = gltf.scene;
+        const treePositions = [
+          [-45, 0, 15], [-55, 0, -20], [-60, 0, -55], [55, 0, 10], [60, 0, -20],
+          [-25, 0, -90], [25, 0, -90], [-40, 0, -80], [45, 0, -80], [0, 0, -105]
+        ];
+        treePositions.forEach(([x, y, z]) => {
+          const t = treeTemplate.clone();
+          t.position.set(x, y, z);
+          t.rotation.y = Math.random() * Math.PI * 2;
+          const s = 1.0 + Math.random() * 0.5;
+          t.scale.set(s, s * (0.9 + Math.random() * 0.3), s);
+          scene.add(t);
+        });
       });
 
-      const flowerMesh = new THREE.InstancedMesh(flowerHeadGeo, flowerMat, FLOWER_COUNT);
-      flowerMesh.frustumCulled = false;
+      gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/tree_oak.gltf', (gltf) => {
+        const oakTemplate = gltf.scene;
+        const oakPositions = [
+          [-35, 0, -10], [35, 0, -15], [-20, 0, -75], [20, 0, -75], [-50, 0, -45]
+        ];
+        oakPositions.forEach(([x, y, z]) => {
+          const t = oakTemplate.clone();
+          t.position.set(x, y, z);
+          t.rotation.y = Math.random() * Math.PI * 2;
+          const s = 0.9 + Math.random() * 0.4;
+          t.scale.set(s, s, s);
+          scene.add(t);
+        });
+      });
 
-      const dummy = new THREE.Object3D();
-      let seed = 12345;
-      const rnd = () => { seed = (seed * 16807 + 0) % 2147483647; return (seed - 1) / 2147483646; };
+      // 2. Real 3D Meadow Shrubs & Bushes
+      gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/bush_meadow.gltf', (gltf) => {
+        const bushTemplate = gltf.scene;
+        const bushPositions = [
+          [-28, 0, 8], [-32, 0, 12], [-42, 0, -38], [-48, 0, -42],
+          [28, 0, -12], [32, 0, -18], [-15, 0, -85], [15, 0, -85],
+          [-8, 0, -22], [8, 0, -22], [-14, 0, -12], [14, 0, -12]
+        ];
+        bushPositions.forEach(([x, y, z]) => {
+          const b = bushTemplate.clone();
+          b.position.set(x, y, z);
+          b.rotation.y = Math.random() * Math.PI * 2;
+          const s = 1.0 + Math.random() * 0.6;
+          b.scale.set(s, s * (0.8 + Math.random() * 0.4), s);
+          scene.add(b);
+        });
+      });
 
-      const palette = [
-        0xffffff, 0xffffff, 0xffea00, 0xffea00, 0xa855f7, 0xf472b6, 0x38bdf8
+      // 3. Real 3D Wildflowers (Daisies & Buttercups in natural patches)
+      gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/flower_daisy.gltf', (gltf) => {
+        const daisyTemplate = gltf.scene;
+        const daisyPatches = [
+          { center: [-15, -15], count: 35 },
+          { center: [15, -15], count: 35 },
+          { center: [-25, 5], count: 40 },
+          { center: [20, -65], count: 40 },
+          { center: [-20, -65], count: 40 },
+        ];
+        daisyPatches.forEach((patch) => {
+          for (let i = 0; i < patch.count; i++) {
+            const f = daisyTemplate.clone();
+            const angle = Math.random() * Math.PI * 2;
+            const dist = Math.random() * 6.0;
+            const x = patch.center[0] + Math.cos(angle) * dist;
+            const z = patch.center[1] + Math.sin(angle) * dist;
+            f.position.set(x, 0.05, z);
+            f.rotation.y = Math.random() * Math.PI * 2;
+            const s = 0.8 + Math.random() * 0.5;
+            f.scale.set(s, s, s);
+            scene.add(f);
+          }
+        });
+      });
+
+      gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/flower_buttercup.gltf', (gltf) => {
+        const buttercupTemplate = gltf.scene;
+        const buttercupPatches = [
+          { center: [-10, 5], count: 30 },
+          { center: [10, 5], count: 30 },
+          { center: [-35, -30], count: 35 },
+          { center: [35, -30], count: 35 },
+        ];
+        buttercupPatches.forEach((patch) => {
+          for (let i = 0; i < patch.count; i++) {
+            const f = buttercupTemplate.clone();
+            const angle = Math.random() * Math.PI * 2;
+            const dist = Math.random() * 5.0;
+            const x = patch.center[0] + Math.cos(angle) * dist;
+            const z = patch.center[1] + Math.sin(angle) * dist;
+            f.position.set(x, 0.05, z);
+            f.rotation.y = Math.random() * Math.PI * 2;
+            const s = 0.8 + Math.random() * 0.5;
+            f.scale.set(s, s, s);
+            scene.add(f);
+          }
+        });
+      });
+
+      // 4. Drastically Reduced Realistic Mossy Boulders (9 hand-placed cluster rocks)
+      const rockGeo = new THREE.DodecahedronGeometry(0.8, 1);
+      const rockMat = new THREE.MeshStandardMaterial({ color: 0x3d423a, roughness: 0.85 });
+      const rockClusters = [
+        // South Ruins rubble base cluster
+        [-32, 0.4, 8, 1.2], [-28, 0.3, 14, 0.9], [-34, 0.5, 12, 1.4],
+        // West Library cliff knoll cluster
+        [-48, 0.6, -38, 1.5], [-44, 0.4, -42, 1.1], [-50, 0.5, -44, 1.3],
+        // North Arena rock outcrop cluster
+        [58, 0.5, -38, 1.6], [62, 0.4, -42, 1.2], [55, 0.3, -44, 1.0]
       ];
-
-      let placed = 0;
-      for (let i = 0; i < FLOWER_COUNT * 3 && placed < FLOWER_COUNT; i++) {
-        const x = (rnd() - 0.5) * 150;
-        const z = -110 + rnd() * 140;
-
-        // Exclude castle & arena
-        if (x > -16 && x < 16 && z > -58 && z < -17) continue;
-        if (Math.hypot(x - 40, z + 45) < 17) continue;
-
-        dummy.position.set(x, 0.35, z);
-        dummy.rotation.set((rnd() - 0.5) * 0.2, rnd() * Math.PI * 2, (rnd() - 0.5) * 0.2);
-        dummy.scale.setScalar(0.7 + rnd() * 0.8);
-        dummy.updateMatrix();
-
-        flowerMesh.setMatrixAt(placed, dummy.matrix);
-        const colHex = palette[Math.floor(rnd() * palette.length)];
-        flowerMesh.setColorAt(placed, new THREE.Color(colHex));
-        placed++;
-      }
-
-      flowerMesh.instanceMatrix.needsUpdate = true;
-      if (flowerMesh.instanceColor) flowerMesh.instanceColor.needsUpdate = true;
-      scene.add(flowerMesh);
-    })();
-
-    // ═══════════════════════════════════════════════════════════════════════════════
-    // ▓▓▓  AAA MOSSY NATURE ROCKS SYSTEM  ▓▓▓  350 Instanced Field Boulders
-    // ═══════════════════════════════════════════════════════════════════════════════
-    (() => {
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      const ROCK_COUNT = isMobile ? 120 : 350;
-
-      const rockGeo = new THREE.DodecahedronGeometry(0.7, 1);
-      const posAttr = rockGeo.attributes.position;
-      for (let i = 0; i < posAttr.count; i++) {
-        const vx = posAttr.getX(i);
-        const vy = posAttr.getY(i);
-        const vz = posAttr.getZ(i);
-        const noise = (Math.sin(vx * 4.0) + Math.cos(vy * 4.0) + Math.sin(vz * 4.0)) * 0.08;
-        posAttr.setXYZ(i, vx + noise, vy + noise * 0.5, vz + noise);
-      }
-      rockGeo.computeVertexNormals();
-
-      const rockMat = new THREE.MeshStandardMaterial({
-        color: 0x484c44,
-        roughness: 0.9,
-        metalness: 0.05,
+      rockClusters.forEach(([x, y, z, s]) => {
+        const rock = new THREE.Mesh(rockGeo, rockMat);
+        rock.position.set(x, y, z);
+        rock.rotation.set(Math.random() * 0.4, Math.random() * Math.PI * 2, Math.random() * 0.4);
+        rock.scale.set(s, s * 0.7, s);
+        rock.castShadow = true;
+        rock.receiveShadow = true;
+        scene.add(rock);
       });
-
-      const rockMesh = new THREE.InstancedMesh(rockGeo, rockMat, ROCK_COUNT);
-      rockMesh.castShadow = true;
-      rockMesh.receiveShadow = true;
-
-      const dummy = new THREE.Object3D();
-      let seed = 54321;
-      const rnd = () => { seed = (seed * 16807 + 0) % 2147483647; return (seed - 1) / 2147483646; };
-
-      let placed = 0;
-      for (let i = 0; i < ROCK_COUNT * 4 && placed < ROCK_COUNT; i++) {
-        const x = (rnd() - 0.5) * 152;
-        const z = -110 + rnd() * 142;
-
-        if (x > -15 && x < 15 && z > -56 && z < -18) continue;
-        if (Math.hypot(x - 40, z + 45) < 16) continue;
-
-        const scaleY = 0.35 + rnd() * 1.1;
-        const scaleXZ = 0.5 + rnd() * 1.5;
-
-        dummy.position.set(x, scaleY * 0.35, z);
-        dummy.rotation.set(rnd() * 0.3, rnd() * Math.PI * 2, rnd() * 0.3);
-        dummy.scale.set(scaleXZ, scaleY, scaleXZ);
-        dummy.updateMatrix();
-
-        rockMesh.setMatrixAt(placed, dummy.matrix);
-        const shade = 0.22 + rnd() * 0.15;
-        const mossTint = rnd() > 0.4 ? 0.05 : 0.0;
-        rockMesh.setColorAt(placed, new THREE.Color(shade, shade + mossTint, shade - 0.02));
-        placed++;
-      }
-
-      rockMesh.instanceMatrix.needsUpdate = true;
-      if (rockMesh.instanceColor) rockMesh.instanceColor.needsUpdate = true;
-      scene.add(rockMesh);
     })();
 
     // 2. Central Castle / Main Building (visible from almost everywhere)
