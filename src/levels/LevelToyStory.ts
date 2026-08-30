@@ -1702,39 +1702,40 @@ export class LevelToyStory {
     coinPositions.push(new THREE.Vector3(-40, 0.5, -40));
     coinPositions.push(new THREE.Vector3(-45, 5.2, -40)); // Top of broken arch
 
-    // Guarantee EXACTLY 50 deterministic coin positions aligned strictly with terrain height
+    // Ensure clean state before spawning
+    this.collectibleSystem.clearAll();
+
     const EXPECTED_LISAR_COINS = 50;
     const rawCoins = coinPositions.slice(0, EXPECTED_LISAR_COINS);
+
+    // Pad deterministically if needed
+    let seed = 12345;
+    const pseudoRandom = () => {
+      seed = (seed * 9301 + 49297) % 233280;
+      return seed / 233280;
+    };
+
     while (rawCoins.length < EXPECTED_LISAR_COINS) {
-      const rx = (Math.random() - 0.5) * 60;
-      const rz = -15 - Math.random() * 50;
+      const rx = (pseudoRandom() - 0.5) * 60;
+      const rz = -15 - pseudoRandom() * 50;
       rawCoins.push(new THREE.Vector3(rx, 0.6, rz));
     }
 
     const finalCoins = rawCoins.map((pos) => {
-      // If the coin is near ground level (not on balconies/roofs/stairs), align to terrain height
-      if (pos.y < 1.5) {
+      // If inside Castle ground floor footprint (X: -14..14, Z: -54..-26)
+      if (Math.abs(pos.x) <= 14 && pos.z >= -54 && pos.z <= -26 && pos.y < 2.0) {
+        pos.y = 0.85; // Sits 0.35m above Castle floor slab at y = 0.5
+      } else if (pos.y < 1.5) {
         pos.y = this.getTerrainHeight(pos.x, pos.z) + 0.6;
       }
       return pos;
     });
 
-    console.log(`[COINS] Initializing spawn sequence for EXACTLY ${finalCoins.length}/${EXPECTED_LISAR_COINS} Lisar Coins.`);
+    console.log(`[COINS] Synchronously spawning EXACTLY ${finalCoins.length}/${EXPECTED_LISAR_COINS} Lisar Coins.`);
 
-    let index = 0;
-    const spawnNext = () => {
-      if (index >= finalCoins.length) {
-        console.log(`[COINS] Spawned: ${finalCoins.length}/${EXPECTED_LISAR_COINS}`);
-        return;
-      }
-      const pos = finalCoins[index];
-      this.createSparks(pos);
-      this.collectibleSystem.spawnCoin(`coin_${index}`, pos);
-      this.audioManager.playCoinSpawnHarmonic(index);
-      index++;
-      setTimeout(spawnNext, 40);
-    };
-    spawnNext();
+    finalCoins.forEach((pos, idx) => {
+      this.collectibleSystem.spawnCoin(`coin_${idx}`, pos);
+    });
   }
 
   private setupNPCs(): void {

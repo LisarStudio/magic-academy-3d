@@ -345,6 +345,32 @@ export class PlayerController {
     this.mesh.position.y += this.velocity.y * delta;
     this.mesh.position.z += this.velocity.z * delta;
 
+    // ── NPC & Boss Physical Cylinder Separation Pass ──
+    // Guarantees Wukong physically cannot walk through Gekko or Crab Boss
+    const gekkoPos = new THREE.Vector3(-4, 0, -10);
+    const distGekko = Math.hypot(this.mesh.position.x - gekkoPos.x, this.mesh.position.z - gekkoPos.z);
+    if (distGekko < 1.25) {
+      const pushX = (this.mesh.position.x - gekkoPos.x) / (distGekko || 1);
+      const pushZ = (this.mesh.position.z - gekkoPos.z) / (distGekko || 1);
+      this.mesh.position.x = gekkoPos.x + pushX * 1.25;
+      this.mesh.position.z = gekkoPos.z + pushZ * 1.25;
+    }
+
+    const levelInst = (window as any).gameInstance?.level01;
+    if (levelInst && levelInst.enemies) {
+      const boss = levelInst.enemies.find((e: any) => e.id === 'crab_boss');
+      if (boss && boss.isAlive()) {
+        const bossPos = boss.getPosition();
+        const distBoss = Math.hypot(this.mesh.position.x - bossPos.x, this.mesh.position.z - bossPos.z);
+        if (distBoss < 3.2) {
+          const pushX = (this.mesh.position.x - bossPos.x) / (distBoss || 1);
+          const pushZ = (this.mesh.position.z - bossPos.z) / (distBoss || 1);
+          this.mesh.position.x = bossPos.x + pushX * 3.2;
+          this.mesh.position.z = bossPos.z + pushZ * 3.2;
+        }
+      }
+    }
+
     // Post-movement ground re-snap for smooth slope traversal
     // Without this, moving horizontally on a slope causes one frame of being airborne
     // which triggers gravity and makes uphill movement feel heavy

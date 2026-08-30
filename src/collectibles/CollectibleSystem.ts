@@ -145,7 +145,17 @@ export class CollectibleSystem {
     this.audioManager = audioManager;
   }
 
+  public clearAll(): void {
+    for (const item of this.collectibles) {
+      if (item.mesh.parent) {
+        item.mesh.parent.remove(item.mesh);
+      }
+    }
+    this.collectibles = [];
+  }
+
   public spawnCard(id: string, position: THREE.Vector3): void {
+    if (this.collectibles.some(c => c.id === id)) return;
     const card = new Collectible(id, position, 'CARD');
     this.collectibles.push(card);
     this.scene.add(card.mesh);
@@ -154,6 +164,7 @@ export class CollectibleSystem {
   public coinTemplate: THREE.Object3D | null = null;
 
   public spawnCoin(id: string, position: THREE.Vector3): void {
+    if (this.collectibles.some(c => c.id === id)) return;
     const coin = new Collectible(id, position, 'COIN', this.coinTemplate || undefined);
     this.collectibles.push(coin);
     this.scene.add(coin.mesh);
