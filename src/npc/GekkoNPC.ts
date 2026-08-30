@@ -58,13 +58,6 @@ export class GekkoNPC {
       physicalCollider.position.y = 1.2;
       this.mesh.add(physicalCollider);
 
-      // Floating NPC speech / quest indicator
-      const indicatorMat = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffaa00, emissiveIntensity: 1.5 });
-      const indicator = new THREE.Mesh(new THREE.OctahedronGeometry(0.25, 0), indicatorMat);
-      indicator.position.y = 2.4;
-      indicator.name = 'gekko_quest_indicator';
-      this.mesh.add(indicator);
-
       this.mixer = new THREE.AnimationMixer(model);
 
       // Extract wave animation

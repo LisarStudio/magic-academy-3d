@@ -1875,7 +1875,7 @@ export class LevelToyStory {
       import.meta.env.BASE_URL + 'assets/collectibles/lisar coin.glb?v=7',
       (gltf) => {
         this.floatingCoinMesh.add(gltf.scene.clone());
-        this.collectibleSystem.coinTemplate = gltf.scene;
+        this.collectibleSystem.setCoinTemplate(gltf.scene);
       },
       undefined,
       (err) => { console.warn("Failed to load LISAR coin", err); }
@@ -2131,33 +2131,6 @@ export class LevelToyStory {
       }
     });
     this.triggerZones.push(tBoss);
-
-    // Gekko conversation trigger zone — Compact 5m x 4m proximity zone around Gekko (-4, y, -10)
-    const tGekko = new TriggerZone('trig_gekko', new THREE.Vector3(-6.5, -1, -12.0), new THREE.Vector3(-1.5, 5, -8.0), async () => {
-      if (this.isCinematicPlaying) return;
-
-      if (this.gekkoMissionState === 'NOT_STARTED') {
-        this.gekkoMissionState = 'MISSION_ACTIVE';
-        this.stateFlags.gekkoTalked = true;
-        console.log('[GEKKO] State transition: NOT_STARTED -> MISSION_ACTIVE');
-        this.runGekkoCinematic();
-      } else if (this.gekkoMissionState === 'MISSION_COMPLETE') {
-        console.log('[GEKKO] Triggering 2nd cinematic for 50 coins reward...');
-        this.runGekkoSecondCinematic();
-      } else if (this.gekkoMissionState === 'MISSION_ACTIVE') {
-        const currentCoins = this.collectibleSystem.coinCount;
-        if (currentCoins >= 50) {
-          this.gekkoMissionState = 'MISSION_COMPLETE';
-          console.log('[GEKKO] State transition: MISSION_ACTIVE -> MISSION_COMPLETE');
-          this.runGekkoSecondCinematic();
-        } else {
-          this.subtitleSystem.show('Gekko', `Aún no tienes las 50 monedas Lisar (tienes ${currentCoins}/50). ¡Búscalas por todo el escenario!`);
-        }
-      } else if (this.gekkoMissionState === 'REWARD_GIVEN') {
-        this.subtitleSystem.show('Gekko', '¡Gracias por ayudarme con las 50 Lisar Coins! Usa esa llave para abrir el portón principal.');
-      }
-    }, true); // true = repeatable
-    this.triggerZones.push(tGekko);
 
     // Exit portal trigger at the back
     const tExit = new TriggerZone('trig_exit', new THREE.Vector3(-5, -1, -54), new THREE.Vector3(5, 5, -50), () => {

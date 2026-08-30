@@ -320,58 +320,52 @@ export class EnemyController {
     const gravity = -6.0;
 
     const animate = () => {
-      age += 0.016;
-      const t = age / totalDuration;
-      const tClamped = Math.min(1.0, t);
+      try {
+        age += 0.016;
+        const t = age / totalDuration;
+        const tClamped = Math.min(1.0, t);
 
-      // Flash: expand fast, fade
-      flash.scale.setScalar(1.0 + tClamped * 7.0);
-      (flashMat as THREE.MeshBasicMaterial).opacity = Math.max(0, 1.0 - tClamped * 2.5);
+        // Flash: expand fast, fade
+        flash.scale.setScalar(1.0 + tClamped * 7.0);
+        (flashMat as THREE.MeshBasicMaterial).opacity = Math.max(0, 1.0 - tClamped * 2.5);
 
-      // Ring: expand outward, fade
-      const ringScale = 1.0 + tClamped * 12.0;
-      ring.scale.setScalar(ringScale);
-      (ringMat as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.9 - tClamped * 1.8);
+        // Ring: expand outward, fade
+        const ringScale = 1.0 + tClamped * 12.0;
+        ring.scale.setScalar(ringScale);
+        (ringMat as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.9 - tClamped * 1.8);
 
-      // Shards
-      for (let i = 0; i < shardMeshes.length; i++) {
-        const vel = shardVelocities[i];
-        vel.y += gravity * 0.016;
-        shardMeshes[i].position.addScaledVector(vel, 0.016);
-        shardMeshes[i].rotation.x += 0.1;
-        shardMeshes[i].rotation.z += 0.08;
-        const shardFade = Math.max(0, 1.0 - Math.max(0, (t - 0.35) / 0.65));
-        (shardMeshes[i].material as THREE.MeshBasicMaterial).opacity = shardFade;
-      }
-
-      // Smoke
-      for (let i = 0; i < smokeMeshes.length; i++) {
-        smokeMeshes[i].position.addScaledVector(smokeVels[i], 0.016);
-        smokeMeshes[i].scale.addScalar(0.016 * 2.5);
-        const smokeFade = Math.max(0, 0.55 - tClamped * 0.9);
-        (smokeMeshes[i].material as THREE.MeshBasicMaterial).opacity = smokeFade;
-      }
-
-      if (age < totalDuration + 0.1) {
-        requestAnimationFrame(animate);
-      } else {
-        // Safe cleanup — do NOT dispose shared geometry/materials
-        // Only remove from scene; let GC collect if no other references
-        if (this.scene) {
-          this.scene.remove(flash);
-          this.scene.remove(ring);
-          shardMeshes.forEach(s => this.scene!.remove(s));
-          smokeMeshes.forEach(s => this.scene!.remove(s));
+        // Shards
+        for (let i = 0; i < shardMeshes.length; i++) {
+          const vel = shardVelocities[i];
+          vel.y += gravity * 0.016;
+          shardMeshes[i].position.addScaledVector(vel, 0.016);
+          shardMeshes[i].rotation.x += 0.1;
+          shardMeshes[i].rotation.z += 0.08;
+          const shardFade = Math.max(0, 1.0 - Math.max(0, (t - 0.35) / 0.65));
+          (shardMeshes[i].material as THREE.MeshBasicMaterial).opacity = shardFade;
         }
-        // Dispose only these locally-created materials (not shared)
-        flashMat.dispose();
-        ringMat.dispose();
-        shardMeshes.forEach(s => (s.material as THREE.Material).dispose());
-        smokeMeshes.forEach(s => (s.material as THREE.Material).dispose());
-        flashGeo.dispose();
-        ringGeo.dispose();
-        shardMeshes.forEach(s => s.geometry.dispose());
-        smokeMeshes.forEach(s => s.geometry.dispose());
+
+        // Smoke
+        for (let i = 0; i < smokeMeshes.length; i++) {
+          smokeMeshes[i].position.addScaledVector(smokeVels[i], 0.016);
+          smokeMeshes[i].scale.addScalar(0.016 * 2.5);
+          const smokeFade = Math.max(0, 0.55 - tClamped * 0.9);
+          (smokeMeshes[i].material as THREE.MeshBasicMaterial).opacity = smokeFade;
+        }
+
+        if (age < totalDuration + 0.1) {
+          requestAnimationFrame(animate);
+        } else {
+          // Safe scene removal
+          if (this.scene) {
+            this.scene.remove(flash);
+            this.scene.remove(ring);
+            shardMeshes.forEach(s => this.scene?.remove(s));
+            smokeMeshes.forEach(s => this.scene?.remove(s));
+          }
+        }
+      } catch (err) {
+        console.warn('[EnemyController] VFX cleanup safe catch:', err);
       }
     };
     requestAnimationFrame(animate);
@@ -392,7 +386,7 @@ export class EnemyController {
       if (!this.deathVfxSpawned) {
         this.deathVfxSpawned = true;
         this.spawnDeathVFX();
-        console.log(`[BOSS] Entering DYING — defeat sequence started`);
+        console.log(`[Enemy ${this.id}] Entering DYING — defeat sequence started`);
       }
 
       this.dyingTimer -= delta;
@@ -578,12 +572,22 @@ export class EnemyController {
             this.bossChargeTimer = 0.8;
           }
         } else {
-          if (distToPlayer > this.attackRadius * 1.2) {
+          // Normal crabs: Keep tracking player, lunge forward and pinch
+          const dir = new THREE.Vector3().subVectors(playerPos, this.mesh.position);
+          dir.y = 0;
+          this.safeNormalize(dir);
+          this.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+
+          if (distToPlayer > 3.0) {
+            // Player ran away -> switch back to CHASE
             this.state = 'CHASE';
           } else {
+            // Active pinch attack
+            this.mesh.position.addScaledVector(dir, this.chaseSpeed * 0.6 * delta);
             this.attackCooldown -= delta;
             if (this.attackCooldown <= 0) {
-              this.attackCooldown = 1.2;
+              this.attackCooldown = 1.0;
+              console.log(`[Enemy ${this.id}] 💥 Crab Pinched Player! (dist: ${distToPlayer.toFixed(2)}m)`);
               this.onAttackPlayer?.(12);
             }
           }

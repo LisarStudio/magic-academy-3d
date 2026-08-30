@@ -101,6 +101,32 @@ export class Collectible {
     this.mesh.add(this.floatMesh);
   }
 
+  public setCustomMesh(customMesh: THREE.Object3D): void {
+    if (this.floatMesh && this.floatMesh.parent) {
+      this.mesh.remove(this.floatMesh);
+    }
+    this.floatMesh = customMesh.clone();
+    
+    // Calculate the bounding box
+    const bbox = new THREE.Box3().setFromObject(this.floatMesh);
+    const center = new THREE.Vector3();
+    bbox.getCenter(center);
+    const size = new THREE.Vector3();
+    bbox.getSize(size);
+    const largestDim = Math.max(size.x, size.y, size.z);
+
+    // Scale to high-visibility size (0.55 meters)
+    const targetSize = 0.55;
+    this.scaleFactor = largestDim > 0.001 ? (targetSize / largestDim) : 0.4;
+    this.floatMesh.scale.setScalar(this.scaleFactor);
+
+    // Center pivot
+    for (const child of this.floatMesh.children) {
+      child.position.sub(center);
+    }
+    this.mesh.add(this.floatMesh);
+  }
+
   public update(delta: number): void {
     if (this.isCollected) return;
 
@@ -108,22 +134,20 @@ export class Collectible {
       // Hop animation for frog
       this.floatMesh.position.y = Math.abs(Math.sin(Date.now() * 0.006)) * 0.25;
     } else if (this.type === 'COIN') {
-      // Coin spinning and bouncing animation (rhythm of music on spawn)
+      // Coin spinning and bouncing animation
       const timeSinceSpawn = Date.now() - this.spawnTime;
-      let yOffset = Math.sin(Date.now() * 0.005) * 0.05;
+      let yOffset = Math.sin(Date.now() * 0.005) * 0.08;
       let scale = 1.0;
       
-      // Spawn bounce effect
       if (timeSinceSpawn < 1000) {
         const progress = timeSinceSpawn / 1000;
-        // Bounce formula: use Math.abs to keep it strictly above the floor
-        yOffset += Math.abs(Math.sin(progress * Math.PI * 3.0)) * (1.0 - progress) * 1.2;
+        yOffset += Math.abs(Math.sin(progress * Math.PI * 3.0)) * (1.0 - progress) * 0.8;
         scale = Math.min(1.0, progress * 2.0);
       }
       
       this.floatMesh.scale.setScalar(scale * this.scaleFactor);
       this.floatMesh.rotation.y += delta * 3.0;
-      this.floatMesh.position.y = yOffset + 0.1; // Offset Y up so it floats cleanly above the floor
+      this.floatMesh.position.y = yOffset + 0.15; // Offset Y up so it floats cleanly
     } else {
       // Floating animation
       this.floatMesh.rotation.y += delta * 2.0;
@@ -162,6 +186,17 @@ export class CollectibleSystem {
   }
 
   public coinTemplate: THREE.Object3D | null = null;
+
+  public setCoinTemplate(template: THREE.Object3D): void {
+    this.coinTemplate = template;
+    // Retroactively update all already spawned coins
+    for (const item of this.collectibles) {
+      if (item.type === 'COIN' && !item.isCollected) {
+        item.setCustomMesh(template);
+      }
+    }
+    console.log(`[CollectibleSystem] ✅ Retroactively updated ${this.collectibles.filter(c => c.type === 'COIN').length} coins with authentic 3D GLB model!`);
+  }
 
   public spawnCoin(id: string, position: THREE.Vector3): void {
     if (this.collectibles.some(c => c.id === id)) return;
