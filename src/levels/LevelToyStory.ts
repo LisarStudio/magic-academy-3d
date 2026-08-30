@@ -807,6 +807,7 @@ export class LevelToyStory {
 
     // ── Castle: 28w × 28d × 15h Monumental Imperial Palace, centered at (0, 0, -40) ──
     const castleCenterZ = -40;
+    const redWoodMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.5 });
 
     // Castle Base / Ground Floor Foundation
     const castleGroundFloor = new THREE.Mesh(new THREE.BoxGeometry(28, 0.4, 28), floorMat);
@@ -875,28 +876,75 @@ export class LevelToyStory {
     scene.add(roomWallL, roomWallR);
     this.levelColliders.push(roomWallL, roomWallR);
 
-    // Inside Castle Staircase (connecting ground floor y=0.1 to second floor y=5)
-    const stepCount = 14;
+    // ── MONUMENTAL CASTLE STAIRCASE (Ground Floor y=0.1 to 2nd Floor Balcony y=5.0) ──
+    // 1. Solid Imperial Stone Foundation Base underneath the staircase (No floating steps!)
+    const stairRampLength = Math.hypot(14, 4.9) + 2.0;
+    const stairAngle = Math.atan(4.9 / 14);
+
+    const solidStairFoundation = new THREE.Mesh(new THREE.BoxGeometry(4.6, 2.5, stairRampLength), stoneMat);
+    solidStairFoundation.position.set(-8, 1.2, -37);
+    solidStairFoundation.rotation.x = stairAngle;
+    scene.add(solidStairFoundation);
+    this.levelColliders.push(solidStairFoundation);
+
+    // 2. Step risers & treads
+    const stepCount = 16;
     for (let i = 0; i < stepCount; i++) {
       const t = i / (stepCount - 1);
       const stepY = 0.1 + t * 4.9;
       const stepZ = -30 - t * 14;
-      const step = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.4, 1.5), stoneMat);
+      const step = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.35, 1.3), stoneMat);
       step.position.set(-8, stepY, stepZ);
       step.castShadow = true;
       step.receiveShadow = true;
       scene.add(step);
     }
 
-    const stairRampLength = Math.hypot(14, 4.9) + 2.0;
-    const stairsCollider = new THREE.Mesh(
-      new THREE.BoxGeometry(4.6, 0.35, stairRampLength),
+    // 3. Side Balustrade Railings along the slope (Crimson red wood with gold caps)
+    const balustradeL = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.0, stairRampLength), redWoodMat);
+    balustradeL.position.set(-10.4, 2.8, -37);
+    balustradeL.rotation.x = stairAngle;
+    const balustradeR = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.0, stairRampLength), redWoodMat);
+    balustradeR.position.set(-5.6, 2.8, -37);
+    balustradeR.rotation.x = stairAngle;
+    scene.add(balustradeL, balustradeR);
+    this.levelColliders.push(balustradeL, balustradeR);
+
+    // 4. Lantern posts at bottom and top landings
+    const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, emissive: 0xff4400, emissiveIntensity: 1.5 });
+    const postL1 = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 1.6, 8), redWoodMat);
+    postL1.position.set(-10.4, 1.0, -30);
+    const postR1 = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 1.6, 8), redWoodMat);
+    postR1.position.set(-5.6, 1.0, -30);
+    const lant1L = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), lanternMat);
+    lant1L.position.set(-10.4, 1.9, -30);
+    const lant1R = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), lanternMat);
+    lant1R.position.set(-5.6, 1.9, -30);
+    scene.add(postL1, postR1, lant1L, lant1R);
+
+    // ── SECOND-TIER ROOF ACCESS STAIRCASE (2nd Floor Balcony y=5.0 to Temple Roof Terrace y=10.2) ──
+    const roofStairSteps = 16;
+    for (let i = 0; i < roofStairSteps; i++) {
+      const t = i / (roofStairSteps - 1);
+      const stepY = 5.0 + t * 5.2;
+      const stepZ = (castleCenterZ + 5) - t * 9.0;
+      const stepX = 4.0 - t * 4.0;
+      const step = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.35, 1.2), stoneMat);
+      step.position.set(stepX, stepY, stepZ);
+      step.castShadow = true;
+      step.receiveShadow = true;
+      scene.add(step);
+      this.levelColliders.push(step);
+    }
+
+    const roofStairCollider = new THREE.Mesh(
+      new THREE.BoxGeometry(3.8, 0.35, Math.hypot(9.0, 5.2)),
       new THREE.MeshBasicMaterial({ visible: false })
     );
-    stairsCollider.position.set(-8, 2.55, -37);
-    stairsCollider.rotation.x = Math.atan(4.9 / 14);
-    scene.add(stairsCollider);
-    this.levelColliders.push(stairsCollider);
+    roofStairCollider.position.set(2.0, 7.6, castleCenterZ + 0.5);
+    roofStairCollider.rotation.x = Math.atan(5.2 / 9.0);
+    scene.add(roofStairCollider);
+    this.levelColliders.push(roofStairCollider);
 
     // ── STAIRWELL 2ND FLOOR BALUSTRADE SAFETY RAILINGS (Around opening) ──
     const stairRailL = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.1, 7.0), stoneMat);
