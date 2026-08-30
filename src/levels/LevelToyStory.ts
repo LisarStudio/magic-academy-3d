@@ -1059,70 +1059,112 @@ export class LevelToyStory {
       scene.add(lantern, light);
     });
 
-    // ── 2. DISTANT HORIZON CASTLES / FORTRESSES (SEGUNDOS CASTILLOS LEJANOS) ──
+    // ── 2. THREE DISTINCT CHINESE MEDIEVAL ARCHITECTURAL LANDMARKS ──
 
-    // Helper: Build a distant Chinese Citadel / Pagoda Fortress
-    const buildDistantCitadel = (cx: number, cy: number, cz: number, isStaffCastle: boolean) => {
+    // TEMPLO 01: MAIN IMPERIAL PALACE FORTRESS (Center at 0, 0, -40)
+    // (Broad monumental fortress wall base, red lacquered columns, Paifang archway, double eave roofs)
+
+    // TEMPLO 02: VERTICAL 5-TIER MOUNTAIN PAGODA SHRINE (West Ridge at -95, 16, -140)
+    const buildMountainPagoda = (cx: number, cy: number, cz: number) => {
+      const pag = new THREE.Group();
+      pag.position.set(cx, cy, cz);
+
+      // Base Mountain Knoll
+      const mountainGeo = new THREE.ConeGeometry(30, 22, 8);
+      const mountainMat = new THREE.MeshStandardMaterial({ color: 0x243326, roughness: 0.95 });
+      const mountain = new THREE.Mesh(mountainGeo, mountainMat);
+      mountain.position.y = -11;
+      pag.add(mountain);
+
+      // Octagonal Base Wall
+      const baseWall = new THREE.Mesh(new THREE.CylinderGeometry(8, 9, 6, 8), stoneMat);
+      baseWall.position.y = 3;
+      pag.add(baseWall);
+
+      // 5 Tiered Pagoda Roofs tapering upward
+      const tierRadii = [11, 9, 7.5, 6, 4.5];
+      const tierHeights = [6, 11, 15.5, 19.5, 23];
+
+      tierRadii.forEach((r, idx) => {
+        const h = tierHeights[idx];
+        // Wall section
+        const wall = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.75, r * 0.8, 3.5, 8), redWoodMat);
+        wall.position.y = h;
+        // Overhanging curved eave roof
+        const eave = new THREE.Mesh(new THREE.ConeGeometry(r, 2.2, 4), roofMat);
+        eave.position.y = h + 1.8;
+        eave.rotation.y = Math.PI / 4;
+        pag.add(wall, eave);
+      });
+
+      // Golden Needle Spire Crown
+      const spire = new THREE.Mesh(new THREE.ConeGeometry(1.8, 8, 8), goldMat);
+      spire.position.y = 28;
+      pag.add(spire);
+
+      scene.add(pag);
+    };
+
+    // TEMPLO 03: CIRCULAR DRAGON CITADEL & STAFF SHRINE (East Peak at 85, 22, -150)
+    const buildDragonCitadel = (cx: number, cy: number, cz: number) => {
       const cit = new THREE.Group();
       cit.position.set(cx, cy, cz);
 
-      // Base Mountain Knoll
-      const mountainGeo = new THREE.ConeGeometry(35, 25, 8);
-      const mountainMat = new THREE.MeshStandardMaterial({ color: 0x2d3a2e, roughness: 0.95 });
-      const mountain = new THREE.Mesh(mountainGeo, mountainMat);
-      mountain.position.y = -12.5;
-      cit.add(mountain);
+      // Mountain Cliff Base
+      const cliffGeo = new THREE.CylinderGeometry(24, 32, 25, 10);
+      const cliffMat = new THREE.MeshStandardMaterial({ color: 0x2e3b30, roughness: 0.9 });
+      const cliff = new THREE.Mesh(cliffGeo, cliffMat);
+      cliff.position.y = -12.5;
+      cit.add(cliff);
 
-      // Citadel Base Fortress Wall
-      const baseWall = new THREE.Mesh(new THREE.BoxGeometry(24, 8, 24), stoneMat);
-      baseWall.position.y = 4;
-      cit.add(baseWall);
+      // Circular Temple Floor Rampart
+      const rampart = new THREE.Mesh(new THREE.CylinderGeometry(18, 18, 5, 16), stoneMat);
+      rampart.position.y = 2.5;
+      cit.add(rampart);
 
-      // Pagoda Tier 1
-      const tier1Roof = new THREE.Mesh(new THREE.ConeGeometry(18, 4.5, 4), roofMat);
-      tier1Roof.position.y = 10;
-      tier1Roof.rotation.y = Math.PI / 4;
-      cit.add(tier1Roof);
-
-      // Pagoda Tier 2
-      const tier2Wall = new THREE.Mesh(new THREE.BoxGeometry(14, 6, 14), redWoodMat);
-      tier2Wall.position.y = 14;
-      cit.add(tier2Wall);
-
-      const tier2Roof = new THREE.Mesh(new THREE.ConeGeometry(12, 3.8, 4), roofMat);
-      tier2Roof.position.y = 18;
-      tier2Roof.rotation.y = Math.PI / 4;
-      cit.add(tier2Roof);
-
-      // Pagoda Crown Spire
-      const crown = new THREE.Mesh(new THREE.ConeGeometry(6, 6, 4), goldMat);
-      crown.position.y = 22;
-      crown.rotation.y = Math.PI / 4;
-      cit.add(crown);
-
-      if (isStaffCastle) {
-        // Glowing staff emblem on the crown
-        const staffEmblem = new THREE.Mesh(new THREE.OctahedronGeometry(1.8, 0), new THREE.MeshStandardMaterial({
-          color: 0x00e5ff, emissive: 0x00bfff, emissiveIntensity: 2.0
-        }));
-        staffEmblem.position.y = 26;
-        const emblemLight = new THREE.PointLight(0x00e5ff, 5.0, 15.0);
-        emblemLight.position.y = 26;
-        cit.add(staffEmblem, emblemLight);
+      // 8 Perimeter Dragon Pillars with Gold Rings
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const px = Math.cos(angle) * 14;
+        const pz = Math.sin(angle) * 14;
+        const pCol = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 9, 10), redWoodMat);
+        pCol.position.set(px, 7, pz);
+        const pRing = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.15, 8, 16), goldMat);
+        pRing.position.set(px, 10.5, pz);
+        pRing.rotation.x = Math.PI / 2;
+        cit.add(pCol, pRing);
       }
 
+      // Grand Double-Ringed Central Dome
+      const domeBase = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 6, 16), redWoodMat);
+      domeBase.position.y = 8;
+
+      const lowerRingRoof = new THREE.Mesh(new THREE.ConeGeometry(15, 3.2, 8), roofMat);
+      lowerRingRoof.position.y = 11;
+
+      const upperDome = new THREE.Mesh(new THREE.SphereGeometry(7, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2), roofMat);
+      upperDome.position.y = 13;
+
+      cit.add(domeBase, lowerRingRoof, upperDome);
+
+      // Floating Glowing Cyan Staff Emblem above Dome
+      const staffEmblem = new THREE.Mesh(new THREE.OctahedronGeometry(2.2, 0), new THREE.MeshStandardMaterial({
+        color: 0x00e5ff, emissive: 0x00bfff, emissiveIntensity: 2.2, metalness: 0.9
+      }));
+      staffEmblem.position.y = 22;
+      const emblemLight = new THREE.PointLight(0x00e5ff, 5.5, 18.0);
+      emblemLight.position.y = 22;
+      cit.add(staffEmblem, emblemLight);
+
       scene.add(cit);
-      return cit;
     };
 
-    // Distant Castle 1: Western Ridge Fortress
-    buildDistantCitadel(-90, 12, -140, false);
+    // Instantiate Templo 02 & Templo 03
+    buildMountainPagoda(-95, 16, -140);
+    buildDragonCitadel(85, 22, -150);
 
-    // Distant Castle 2: Eastern Peak Citadel ("Castillo del Báculo")
-    buildDistantCitadel(85, 18, -150, true);
-
-    // Scenic Mountain Bridge Path leading to the Eastern Citadel
-    const bridgeGeo = new THREE.BoxGeometry(45, 0.4, 2.5);
+    // Scenic Mountain Bridge Path leading across the valley to Templo 03
+    const bridgeGeo = new THREE.BoxGeometry(45, 0.4, 2.8);
     const bridge = new THREE.Mesh(bridgeGeo, stoneMat);
     bridge.position.set(55, 9.2, -95);
     bridge.rotation.y = -0.5;
@@ -1758,6 +1800,7 @@ export class LevelToyStory {
 
   public async runGameIntroSequence(): Promise<void> {
     const cinematicCamera = (window as any).gameInstance?.cinematicCamera;
+    const cameraController = (window as any).gameInstance?.cameraController;
     const hud = (window as any).gameInstance?.hud;
 
     if (cinematicCamera && hud) {
@@ -1766,23 +1809,28 @@ export class LevelToyStory {
       this.player.isControlsLocked = true;
       this.player.isMovementLocked = true;
 
+      // Position Wukong facing FORWARD along -Z (with his BACK to the camera +Z!)
+      this.player.mesh.position.set(0, 0.2, 10);
+      this.player.mesh.rotation.set(0, Math.PI, 0); // Math.PI = facing -Z into the world!
+      this.player.forceIdle();
+
       // Start black fade
       await hud.fadeScreenOut(0);
 
-      // High scenic camera sweep over the meadow towards the castle
-      const startCamPos = new THREE.Vector3(22.0, 16.0, 32.0);
-      const startLookAt = new THREE.Vector3(0, 3.5, -40.0);
+      // High scenic camera sweep over the meadow and mountain pagodas
+      const startCamPos = new THREE.Vector3(25.0, 18.0, 35.0);
+      const startLookAt = new THREE.Vector3(0, 4.0, -40.0);
 
-      // End camera position near Gekko and Wukong
-      const endCamPos = new THREE.Vector3(-1.5, 1.25, -8.75);
-      const endLookAt = new THREE.Vector3(-4.0, 1.1, -8.75);
+      // End camera position: Placed smoothly BEHIND Wukong, looking forward into the kingdom
+      const endCamPos = new THREE.Vector3(0, 2.8, 15.5);
+      const endLookAt = new THREE.Vector3(0, 1.8, -25.0);
 
-      cinematicCamera.moveCamera(startCamPos, endCamPos, startLookAt, endLookAt, 3.8);
+      cinematicCamera.moveCamera(startCamPos, endCamPos, startLookAt, endLookAt, 4.0);
 
       // Fade screen in
       await hud.fadeScreenIn(1000);
 
-      this.subtitleSystem.show('LISAR', '¡Bienvenido al Castillo de las Ruinas! Se ha iniciado la aventura.', 4000);
+      this.subtitleSystem.show('LISAR', '¡Bienvenido al Reino Místico del Rey Mono! Se ha iniciado la aventura.', 4000);
 
       let introFinished = false;
       const finishIntro = async () => {
@@ -1794,6 +1842,16 @@ export class LevelToyStory {
 
         hud.hideDialogue();
         cinematicCamera.abort();
+
+        // Position camera behind Wukong facing forward (-Z)
+        if (cameraController) {
+          cameraController.yaw = Math.PI; // Look along -Z into the world
+          cameraController.pitch = -0.15;
+          cameraController.updateCameraPosition();
+        }
+
+        // Ensure Wukong stays facing -Z (back to camera)
+        this.player.mesh.rotation.set(0, Math.PI, 0);
 
         this.player.isControlsLocked = false;
         this.player.isMovementLocked = false;
@@ -1815,18 +1873,10 @@ export class LevelToyStory {
       window.addEventListener('touchstart', touchSkip, { passive: false });
       window.addEventListener('pointerdown', touchSkip, { passive: false });
 
-      // Gekko waves and opens introductory dialogue
-      this.gekkoNPC.setTalking(true);
-
-      const introText = hud.isTouchDevice()
-        ? '¡Hola aventurero! Soy Gekko. Toca la pantalla para avanzar. Busca tu báculo en el cofre del castillo y junta 50 monedas Lisar para abrir el portal.'
-        : '¡Hola aventurero! Soy Gekko. Presiona ENTER o la pantalla para avanzar. Busca tu báculo en el cofre del castillo y junta 50 monedas Lisar para abrir el portal.';
-
-      hud.showTypewriterDialogue('Gekko', introText, () => {
-        setTimeout(() => {
-          if (!introFinished) finishIntro();
-        }, 4500);
-      });
+      // ZERO GEKKO DIALOGUE ON INTRO! Gekko stays completely idle until Wukong physically walks up to him!
+      setTimeout(() => {
+        if (!introFinished) finishIntro();
+      }, 4200);
     }
   }
 
