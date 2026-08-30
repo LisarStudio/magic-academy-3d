@@ -1073,85 +1073,72 @@ export class LevelToyStory {
     // TEMPLO 01: MAIN IMPERIAL PALACE FORTRESS (Center at 0, 0, -40)
     // (Broad monumental fortress wall base, red lacquered columns, Paifang archway, double eave roofs)
 
-    // TEMPLO 02: VERTICAL 5-TIER MOUNTAIN PAGODA SHRINE (West Ridge at -95, 16, -140)
-    const buildMountainPagoda = (cx: number, cy: number, cz: number) => {
+    // TEMPLO 02: VERTICAL 5-TIER MOUNTAIN PAGODA SHRINE (West Ridge at -65, 0, -85)
+    const buildMountainPagoda = (cx: number, cz: number) => {
+      const cy = this.getTerrainHeight(cx, cz);
       const pag = new THREE.Group();
       pag.position.set(cx, cy, cz);
 
-      // Base Mountain Knoll
-      const mountainGeo = new THREE.ConeGeometry(30, 22, 8);
-      const mountainMat = new THREE.MeshStandardMaterial({ color: 0x243326, roughness: 0.95 });
-      const mountain = new THREE.Mesh(mountainGeo, mountainMat);
-      mountain.position.y = -11;
-      pag.add(mountain);
-
-      // Octagonal Base Wall
-      const baseWall = new THREE.Mesh(new THREE.CylinderGeometry(8, 9, 6, 8), stoneMat);
-      baseWall.position.y = 3;
+      // Base Octagonal Foundation (grounded)
+      const baseWall = new THREE.Mesh(new THREE.CylinderGeometry(8, 9, 2.5, 8), stoneMat);
+      baseWall.position.y = 1.25;
       pag.add(baseWall);
+      this.levelColliders.push(baseWall);
 
       // 5 Tiered Pagoda Roofs tapering upward
-      const tierRadii = [11, 9, 7.5, 6, 4.5];
-      const tierHeights = [6, 11, 15.5, 19.5, 23];
+      const tierRadii = [10, 8.5, 7, 5.5, 4];
+      const tierHeights = [3.5, 8.0, 12.0, 15.5, 18.5];
 
       tierRadii.forEach((r, idx) => {
         const h = tierHeights[idx];
-        // Wall section
-        const wall = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.75, r * 0.8, 3.5, 8), redWoodMat);
+        const wall = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.75, r * 0.8, 3.2, 8), redWoodMat);
         wall.position.y = h;
-        // Overhanging curved eave roof
-        const eave = new THREE.Mesh(new THREE.ConeGeometry(r, 2.2, 4), roofMat);
-        eave.position.y = h + 1.8;
+        const eave = new THREE.Mesh(new THREE.ConeGeometry(r, 2.0, 4), roofMat);
+        eave.position.y = h + 1.6;
         eave.rotation.y = Math.PI / 4;
         pag.add(wall, eave);
+        this.levelColliders.push(wall);
       });
 
       // Golden Needle Spire Crown
-      const spire = new THREE.Mesh(new THREE.ConeGeometry(1.8, 8, 8), goldMat);
-      spire.position.y = 28;
+      const spire = new THREE.Mesh(new THREE.ConeGeometry(1.5, 6, 8), goldMat);
+      spire.position.y = 23;
       pag.add(spire);
 
       scene.add(pag);
     };
 
-    // TEMPLO 03: TEMPLO DEL BÁCULO / CÁMARA DEL SECRETO (East Peak at 85, 0, -145)
-    const buildDragonCitadel = (cx: number, cy: number, cz: number) => {
+    // TEMPLO 03: TEMPLO DEL BÁCULO / CÁMARA DEL SECRETO (East Peak at 65, 0, -85)
+    const buildDragonCitadel = (cx: number, cz: number) => {
+      const cy = this.getTerrainHeight(cx, cz);
       const cit = new THREE.Group();
       cit.position.set(cx, cy, cz);
 
-      // Mountain Cliff Base
-      const cliffGeo = new THREE.CylinderGeometry(24, 32, 25, 12);
-      const cliffMat = new THREE.MeshStandardMaterial({ color: 0x2e3b30, roughness: 0.9 });
-      const cliff = new THREE.Mesh(cliffGeo, cliffMat);
-      cliff.position.y = 0;
-      cit.add(cliff);
-      this.levelColliders.push(cliff);
-
-      // Circular Temple Lower Vestibule Floor (y = 2.5)
-      const rampart = new THREE.Mesh(new THREE.CylinderGeometry(18, 18, 1.2, 16), stoneMat);
-      rampart.position.y = 2.5;
+      // Circular Temple Base Rampart (grounded on terrain)
+      const rampart = new THREE.Mesh(new THREE.CylinderGeometry(16, 17, 1.6, 16), stoneMat);
+      rampart.position.y = 0.8;
       cit.add(rampart);
       this.levelColliders.push(rampart);
 
       // Central Pillar for Spiral Staircase
-      const centralPillar = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 18.0, 12), redWoodMat);
-      centralPillar.position.y = 11.0;
+      const centralPillar = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 14.0, 12), redWoodMat);
+      centralPillar.position.y = 7.8;
       cit.add(centralPillar);
       this.levelColliders.push(centralPillar);
 
       // ── WALKABLE SPIRAL STAIRCASE (ESCALERA EN ESPIRAL DEL TEMPLO DEL BÁCULO) ──
-      // Helical steps winding from lower floor (y = 2.5) up to Upper Secret Sanctum Chamber (y = 18.2)
-      const numSteps = 26;
-      const startH = 2.5;
-      const totalH = 15.7; // 2.5m to 18.2m
-      const stepRadius = 5.2;
+      // Helical steps winding from lower floor (y = 0.8) up to Upper Secret Sanctum Chamber (y = 14.8)
+      const numSteps = 24;
+      const startH = 0.8;
+      const totalH = 14.0;
+      const stepRadius = 4.8;
 
       for (let i = 0; i < numSteps; i++) {
         const progress = i / (numSteps - 1);
         const angle = progress * Math.PI * 2.8; // ~500 degrees spiral rotation
         const h = startH + progress * totalH;
 
-        const stepGeo = new THREE.BoxGeometry(3.6, 0.4, 1.8);
+        const stepGeo = new THREE.BoxGeometry(3.5, 0.35, 1.8);
         const step = new THREE.Mesh(stepGeo, stoneMat);
         const sx = Math.cos(angle) * stepRadius;
         const sz = Math.sin(angle) * stepRadius;
@@ -1161,98 +1148,87 @@ export class LevelToyStory {
         cit.add(step);
         this.levelColliders.push(step);
 
-        // Hanging lanterns along the spiral staircase ascent
         if (i % 6 === 0) {
           const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, emissive: 0xff4400, emissiveIntensity: 1.5 });
           const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), lanternMat);
-          lantern.position.set(sx * 1.2, h + 1.6, sz * 1.2);
+          lantern.position.set(sx * 1.2, h + 1.5, sz * 1.2);
           const lLight = new THREE.PointLight(0xff7700, 2.0, 6.0);
-          lLight.position.set(sx * 1.2, h + 1.6, sz * 1.2);
+          lLight.position.set(sx * 1.2, h + 1.5, sz * 1.2);
           cit.add(lantern, lLight);
         }
       }
 
-      // ── PISO SUPERIOR / CÁMARA DEL SECRETO (Y = 18.2) ──
-      const upperFloor = new THREE.Mesh(new THREE.CylinderGeometry(14, 14, 0.8, 16), stoneMat);
-      upperFloor.position.y = 18.2;
+      // ── PISO SUPERIOR / CÁMARA DEL SECRETO (Y = 14.8) ──
+      const upperFloor = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 0.6, 16), stoneMat);
+      upperFloor.position.y = 14.8;
       cit.add(upperFloor);
       this.levelColliders.push(upperFloor);
 
       // 8 Perimeter Dragon Pillars with Gold Rings in Secret Chamber
       for (let i = 0; i < 8; i++) {
         const angle = (i / 8) * Math.PI * 2;
-        const px = Math.cos(angle) * 12.5;
-        const pz = Math.sin(angle) * 12.5;
-        const pCol = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 8, 10), redWoodMat);
-        pCol.position.set(px, 22.2, pz);
+        const px = Math.cos(angle) * 11.5;
+        const pz = Math.sin(angle) * 11.5;
+        const pCol = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 7, 10), redWoodMat);
+        pCol.position.set(px, 18.3, pz);
         const pRing = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.12, 8, 16), goldMat);
-        pRing.position.set(px, 25.5, pz);
+        pRing.position.set(px, 21.2, pz);
         pRing.rotation.x = Math.PI / 2;
         cit.add(pCol, pRing);
         this.levelColliders.push(pCol);
       }
 
       // Chamber Pagoda Roof Cover
-      const chamberRoof = new THREE.Mesh(new THREE.ConeGeometry(16, 4.5, 8), roofMat);
-      chamberRoof.position.y = 28.0;
+      const chamberRoof = new THREE.Mesh(new THREE.ConeGeometry(15, 4.0, 8), roofMat);
+      chamberRoof.position.y = 23.5;
       cit.add(chamberRoof);
 
       // Raised Stone Altar for the Special Staff Chest inside Secret Chamber
-      const altarGeo = new THREE.CylinderGeometry(2.5, 3.2, 0.8, 8);
+      const altarGeo = new THREE.CylinderGeometry(2.2, 2.8, 0.8, 8);
       const altar = new THREE.Mesh(altarGeo, stoneMat);
-      altar.position.set(0, 18.8, 0);
+      altar.position.set(0, 15.4, 0);
       cit.add(altar);
       this.levelColliders.push(altar);
 
       // Floating Glowing Cyan Staff Emblem above Dome
-      const staffEmblem = new THREE.Mesh(new THREE.OctahedronGeometry(2.2, 0), new THREE.MeshStandardMaterial({
+      const staffEmblem = new THREE.Mesh(new THREE.OctahedronGeometry(2.0, 0), new THREE.MeshStandardMaterial({
         color: 0x00e5ff, emissive: 0x00bfff, emissiveIntensity: 2.5, metalness: 0.9
       }));
-      staffEmblem.position.y = 31;
+      staffEmblem.position.y = 26;
       const emblemLight = new THREE.PointLight(0x00e5ff, 6.0, 20.0);
-      emblemLight.position.y = 31;
+      emblemLight.position.y = 26;
       cit.add(staffEmblem, emblemLight);
 
       scene.add(cit);
     };
 
-    // Instantiate Templo 02 & Templo 03
-    buildMountainPagoda(-95, 16, -140);
-    buildDragonCitadel(85, 0, -145);
+    // Instantiate Templo 02 & Templo 03 firmly grounded on terrain
+    buildMountainPagoda(-65, -85);
+    buildDragonCitadel(65, -85);
 
-    // Scenic Mountain Bridge Path leading across the valley to Templo 03
-    const bridgeGeo = new THREE.BoxGeometry(45, 0.4, 3.0);
-    const bridge = new THREE.Mesh(bridgeGeo, stoneMat);
-    bridge.position.set(55, 9.2, -95);
-    bridge.rotation.y = -0.5;
-    scene.add(bridge);
-    this.levelColliders.push(bridge);
-
-    // ── SCENIC WALKABLE ROADS TO TEMPLO 02 AND TEMPLO 03 ──
-    // 1. West Scenic Highway to Templo 02 (Mountain Pagoda)
-    for (let i = 0; i < 14; i++) {
-      const t = i / 13;
-      const rx = THREE.MathUtils.lerp(-30, -90, t);
-      const rz = THREE.MathUtils.lerp(-40, -135, t);
-      const ry = THREE.MathUtils.lerp(0.1, 15.5, t);
-      const roadSlab = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.4, 7.0), stoneMat);
-      roadSlab.position.set(rx, ry, rz);
-      roadSlab.rotation.y = Math.atan2(-90 - (-30), -135 - (-40));
-      scene.add(roadSlab);
-      this.levelColliders.push(roadSlab);
+    // ── GROUNDED STONE PATHWAYS TO TEMPLO 02 AND TEMPLO 03 ──
+    // 1. West Scenic Ground Pathway to Templo 02 (Mountain Pagoda)
+    for (let i = 0; i < 12; i++) {
+      const t = i / 11;
+      const rx = THREE.MathUtils.lerp(-20, -65, t);
+      const rz = THREE.MathUtils.lerp(-40, -85, t);
+      const ry = this.getTerrainHeight(rx, rz) + 0.05;
+      const pathSlab = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.1, 4.5), stoneMat);
+      pathSlab.position.set(rx, ry, rz);
+      pathSlab.receiveShadow = true;
+      scene.add(pathSlab);
     }
 
-    // 2. East Scenic Highway to Templo 03 (Templo del Báculo Bridge)
-    for (let i = 0; i < 10; i++) {
-      const t = i / 9;
-      const rx = THREE.MathUtils.lerp(25, 55, t);
-      const rz = THREE.MathUtils.lerp(-40, -95, t);
-      const ry = THREE.MathUtils.lerp(0.1, 9.0, t);
-      const roadSlab = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.4, 7.0), stoneMat);
-      roadSlab.position.set(rx, ry, rz);
-      roadSlab.rotation.y = Math.atan2(55 - 25, -95 - (-40));
-      scene.add(roadSlab);
-      this.levelColliders.push(roadSlab);
+    // 2. East Scenic Ground Pathway to Templo 03 (Templo del Báculo)
+    for (let i = 0; i < 12; i++) {
+      const t = i / 11;
+      const rx = THREE.MathUtils.lerp(20, 65, t);
+      const rz = THREE.MathUtils.lerp(-40, -85, t);
+      const ry = this.getTerrainHeight(rx, rz) + 0.05;
+      const pathSlab = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.1, 4.5), stoneMat);
+      pathSlab.position.set(rx, ry, rz);
+      pathSlab.receiveShadow = true;
+      scene.add(pathSlab);
     }
 
     // ── South Ruins ──
@@ -1313,7 +1289,7 @@ export class LevelToyStory {
     const scene = this.sceneManager.scene;
 
     // Relocate Staff Chest on top of the Altar inside the Secret Chamber of Templo 03 ("Templo del Báculo")
-    this.staffChest = new TreasureChest(new THREE.Vector3(85.0, 19.3, -145.0), Math.PI);
+    this.staffChest = new TreasureChest(new THREE.Vector3(65.0, 15.9, -85.0), Math.PI);
     scene.add(this.staffChest.mesh);
     this.chests.push(this.staffChest);
     this.spellSystem.registerChest(this.staffChest);
