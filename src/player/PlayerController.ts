@@ -162,6 +162,9 @@ export class PlayerController {
 
   private wallRaycaster = new THREE.Raycaster();
   private readonly PLAYER_RADIUS = 0.4;
+  private static readonly TEMP_GROUND_ORIGIN = new THREE.Vector3();
+  private static readonly RAY_OFFSET = new THREE.Vector3(0, 0.4, 0);
+  private static readonly DOWN_DIR = new THREE.Vector3(0, -1, 0);
 
   public update(delta: number, input: InputManager, cameraController: CameraController): void {
     if (this.isControlsLocked) {
@@ -170,11 +173,8 @@ export class PlayerController {
     }
 
     // 1. Ground Check
-    // AUTHORITY: PlayerController owns position exclusively.
-    // AnimationMixer owns bone rotations only (Hips position tracks stripped in AssetManager).
-    // Model pivot is at feet (Y=0 of this.mesh = bottom of character).
-    const origin = new THREE.Vector3().copy(this.mesh.position).add(new THREE.Vector3(0, 0.4, 0));
-    this.groundRaycaster.set(origin, new THREE.Vector3(0, -1, 0));
+    PlayerController.TEMP_GROUND_ORIGIN.copy(this.mesh.position).add(PlayerController.RAY_OFFSET);
+    this.groundRaycaster.set(PlayerController.TEMP_GROUND_ORIGIN, PlayerController.DOWN_DIR);
     const groundHits = this.groundRaycaster.intersectObjects(this.colliders, true);
 
     const prevVelY = this.velocity.y;

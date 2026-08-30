@@ -44,6 +44,9 @@ export class CinematicCamera {
     });
   }
 
+  private static readonly TEMP_POS = new THREE.Vector3();
+  private static readonly TEMP_LOOKAT = new THREE.Vector3();
+
   public update(delta: number): void {
     if (!this.isCinematicActive) return;
 
@@ -55,11 +58,11 @@ export class CinematicCamera {
       ? 4 * progress * progress * progress
       : 1 - Math.pow(-2 * progress + 2, 3) / 2;
 
-    const currentPos = new THREE.Vector3().lerpVectors(this.startPos, this.targetPos, t);
-    const currentLookAt = new THREE.Vector3().lerpVectors(this.startLookAt, this.targetLookAt, t);
+    CinematicCamera.TEMP_POS.lerpVectors(this.startPos, this.targetPos, t);
+    CinematicCamera.TEMP_LOOKAT.lerpVectors(this.startLookAt, this.targetLookAt, t);
 
-    this.camera.position.copy(currentPos);
-    this.camera.lookAt(currentLookAt);
+    this.camera.position.copy(CinematicCamera.TEMP_POS);
+    this.camera.lookAt(CinematicCamera.TEMP_LOOKAT);
 
     if (progress >= 1.0) {
       this.isCinematicActive = false;

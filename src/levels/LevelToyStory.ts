@@ -308,6 +308,9 @@ export class LevelToyStory {
     // Add key visual hints
     this.spawnKeysInWorld();
 
+    // Pre-compile cinematic key shaders & materials ahead of time to eliminate boss death stutter
+    KeyPickupSequence.precompileShaders(this.sceneManager.renderer, scene, this.sceneManager.camera);
+
     this.checkpointManager.respawnPlayer(this.player);
   }
 
@@ -627,6 +630,115 @@ export class LevelToyStory {
       if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
       scene.add(grassMesh);
       console.log(`[Grass AAA] ✅ ${placed}/${COUNT} blades placed in ${tries} tries`);
+    })();
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // ▓▓▓  AAA WILDFLOWERS SYSTEM  ▓▓▓  2,500 Instanced Field Flowers
+    // ═══════════════════════════════════════════════════════════════════════════════
+    (() => {
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      const FLOWER_COUNT = isMobile ? 800 : 2500;
+
+      const flowerHeadGeo = new THREE.DodecahedronGeometry(0.07, 0);
+      const flowerMat = new THREE.MeshStandardMaterial({
+        roughness: 0.6,
+        metalness: 0.1,
+      });
+
+      const flowerMesh = new THREE.InstancedMesh(flowerHeadGeo, flowerMat, FLOWER_COUNT);
+      flowerMesh.frustumCulled = false;
+
+      const dummy = new THREE.Object3D();
+      let seed = 12345;
+      const rnd = () => { seed = (seed * 16807 + 0) % 2147483647; return (seed - 1) / 2147483646; };
+
+      const palette = [
+        0xffffff, 0xffffff, 0xffea00, 0xffea00, 0xa855f7, 0xf472b6, 0x38bdf8
+      ];
+
+      let placed = 0;
+      for (let i = 0; i < FLOWER_COUNT * 3 && placed < FLOWER_COUNT; i++) {
+        const x = (rnd() - 0.5) * 150;
+        const z = -110 + rnd() * 140;
+
+        // Exclude castle & arena
+        if (x > -16 && x < 16 && z > -58 && z < -17) continue;
+        if (Math.hypot(x - 40, z + 45) < 17) continue;
+
+        dummy.position.set(x, 0.35, z);
+        dummy.rotation.set((rnd() - 0.5) * 0.2, rnd() * Math.PI * 2, (rnd() - 0.5) * 0.2);
+        dummy.scale.setScalar(0.7 + rnd() * 0.8);
+        dummy.updateMatrix();
+
+        flowerMesh.setMatrixAt(placed, dummy.matrix);
+        const colHex = palette[Math.floor(rnd() * palette.length)];
+        flowerMesh.setColorAt(placed, new THREE.Color(colHex));
+        placed++;
+      }
+
+      flowerMesh.instanceMatrix.needsUpdate = true;
+      if (flowerMesh.instanceColor) flowerMesh.instanceColor.needsUpdate = true;
+      scene.add(flowerMesh);
+    })();
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // ▓▓▓  AAA MOSSY NATURE ROCKS SYSTEM  ▓▓▓  350 Instanced Field Boulders
+    // ═══════════════════════════════════════════════════════════════════════════════
+    (() => {
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      const ROCK_COUNT = isMobile ? 120 : 350;
+
+      const rockGeo = new THREE.DodecahedronGeometry(0.7, 1);
+      const posAttr = rockGeo.attributes.position;
+      for (let i = 0; i < posAttr.count; i++) {
+        const vx = posAttr.getX(i);
+        const vy = posAttr.getY(i);
+        const vz = posAttr.getZ(i);
+        const noise = (Math.sin(vx * 4.0) + Math.cos(vy * 4.0) + Math.sin(vz * 4.0)) * 0.08;
+        posAttr.setXYZ(i, vx + noise, vy + noise * 0.5, vz + noise);
+      }
+      rockGeo.computeVertexNormals();
+
+      const rockMat = new THREE.MeshStandardMaterial({
+        color: 0x484c44,
+        roughness: 0.9,
+        metalness: 0.05,
+      });
+
+      const rockMesh = new THREE.InstancedMesh(rockGeo, rockMat, ROCK_COUNT);
+      rockMesh.castShadow = true;
+      rockMesh.receiveShadow = true;
+
+      const dummy = new THREE.Object3D();
+      let seed = 54321;
+      const rnd = () => { seed = (seed * 16807 + 0) % 2147483647; return (seed - 1) / 2147483646; };
+
+      let placed = 0;
+      for (let i = 0; i < ROCK_COUNT * 4 && placed < ROCK_COUNT; i++) {
+        const x = (rnd() - 0.5) * 152;
+        const z = -110 + rnd() * 142;
+
+        if (x > -15 && x < 15 && z > -56 && z < -18) continue;
+        if (Math.hypot(x - 40, z + 45) < 16) continue;
+
+        const scaleY = 0.35 + rnd() * 1.1;
+        const scaleXZ = 0.5 + rnd() * 1.5;
+
+        dummy.position.set(x, scaleY * 0.35, z);
+        dummy.rotation.set(rnd() * 0.3, rnd() * Math.PI * 2, rnd() * 0.3);
+        dummy.scale.set(scaleXZ, scaleY, scaleXZ);
+        dummy.updateMatrix();
+
+        rockMesh.setMatrixAt(placed, dummy.matrix);
+        const shade = 0.22 + rnd() * 0.15;
+        const mossTint = rnd() > 0.4 ? 0.05 : 0.0;
+        rockMesh.setColorAt(placed, new THREE.Color(shade, shade + mossTint, shade - 0.02));
+        placed++;
+      }
+
+      rockMesh.instanceMatrix.needsUpdate = true;
+      if (rockMesh.instanceColor) rockMesh.instanceColor.needsUpdate = true;
+      scene.add(rockMesh);
     })();
 
     // 2. Central Castle / Main Building (visible from almost everywhere)

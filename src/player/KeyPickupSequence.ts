@@ -13,6 +13,42 @@ export interface KeyData {
 export class KeyPickupSequence {
   private static isSequenceRunning = false;
 
+  // Reusable static vector math to avoid GC pressure
+  private static readonly TEMP_START = new THREE.Vector3();
+  private static readonly TEMP_TARGET = new THREE.Vector3();
+  private static readonly TEMP_CURR = new THREE.Vector3();
+
+  // Reusable pooled geometries
+  private static ringGeo = new THREE.TorusGeometry(0.24, 0.07, 12, 24);
+  private static shaftGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.6, 12);
+  private static tooth1Geo = new THREE.BoxGeometry(0.16, 0.1, 0.05);
+  private static tooth2Geo = new THREE.BoxGeometry(0.12, 0.08, 0.05);
+  private static particleGeo = new THREE.OctahedronGeometry(0.035, 0);
+  private static burstRingGeo = new THREE.RingGeometry(0.1, 0.6, 24);
+
+  /**
+   * Warmup function called during level load to pre-compile key shaders into WebGL
+   */
+  public static precompileShaders(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): void {
+    const dummyKeyMat = new THREE.MeshStandardMaterial({
+      color: 0xff3300,
+      emissive: 0xffaa00,
+      emissiveIntensity: 1.2,
+      metalness: 0.85,
+      roughness: 0.2,
+    });
+    const dummyMesh = new THREE.Mesh(this.ringGeo, dummyKeyMat);
+    dummyMesh.position.set(0, -999, 0);
+    const dummyLight = new THREE.PointLight(0xffaa00, 4.0, 6.0);
+    dummyMesh.add(dummyLight);
+    scene.add(dummyMesh);
+
+    renderer.compile(scene, camera);
+
+    scene.remove(dummyMesh);
+    dummyKeyMat.dispose();
+  }
+
   /**
    * Executes the full 5-Phase AAA Nintendo-style Key Pickup Sequence:
    * Phase 1: Defeat / Origin contextual pause.
@@ -54,16 +90,16 @@ export class KeyPickupSequence {
       roughness: 0.2,
     });
 
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.07, 12, 24), keyMat);
+    const ring = new THREE.Mesh(this.ringGeo, keyMat);
     ring.rotation.x = Math.PI / 2;
 
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 12), keyMat);
+    const shaft = new THREE.Mesh(this.shaftGeo, keyMat);
     shaft.position.y = -0.32;
 
-    const tooth1 = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 0.05), keyMat);
+    const tooth1 = new THREE.Mesh(this.tooth1Geo, keyMat);
     tooth1.position.set(0.1, -0.5, 0);
 
-    const tooth2 = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.05), keyMat);
+    const tooth2 = new THREE.Mesh(this.tooth2Geo, keyMat);
     tooth2.position.set(0.08, -0.38, 0);
 
     keyGroup.add(ring, shaft, tooth1, tooth2);
@@ -74,16 +110,15 @@ export class KeyPickupSequence {
     keyGroup.add(keyLight);
 
     // Matching color particles
-    const particleCount = 14;
+    const particleCount = 12;
     const particles: THREE.Mesh[] = [];
-    const pGeo = new THREE.OctahedronGeometry(0.035, 0);
     for (let i = 0; i < particleCount; i++) {
       const pMat = new THREE.MeshBasicMaterial({
         color: keyData.color,
         transparent: true,
         opacity: 0.9,
       });
-      const p = new THREE.Mesh(pGeo, pMat);
+      const p = new THREE.Mesh(this.particleGeo, pMat);
       const angle = (i / particleCount) * Math.PI * 2;
       p.position.set(Math.cos(angle) * 0.35, (Math.random() - 0.5) * 0.4, Math.sin(angle) * 0.35);
       keyGroup.add(p);
@@ -94,34 +129,31 @@ export class KeyPickupSequence {
 
     // ── FASE 3: Interpolated flight curve towards Wukong ──
     console.log(`[KEY] Flying to player...`);
-    const flightDuration = 1.4; // seconds
+    const flightDuration = 1.3; // seconds
     let flightElapsed = 0;
 
-    const initialPos = startPos.clone();
+    this.TEMP_START.copy(startPos);
     
     await new Promise<void>((resolve) => {
-      const flyStep = () => {
-        flightElapsed += 0.016;
-        const t = Math.min(1.0, flightElapsed / flightDuration);
+      let lastTime = performance.now();
+      const flyStep = (now: number) => {
+        const delta = Math.min(0.05, (now - lastTime) / 1000);
+        lastTime = now;
+        flightElapsed += delta;
 
-        // Smooth cubic ease-in-out
+        const t = Math.min(1.0, flightElapsed / flightDuration);
         const easeT = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
-        // Target position: player hand height (~1.2m above feet)
-        const targetPos = player.mesh.position.clone().add(new THREE.Vector3(0, 1.2, 0));
+        this.TEMP_TARGET.copy(player.mesh.position).add(new THREE.Vector3(0, 1.2, 0));
+        const midY = Math.max(this.TEMP_START.y, this.TEMP_TARGET.y) + 1.2;
 
-        // Arc height control point
-        const midY = Math.max(initialPos.y, targetPos.y) + 1.2;
-        const currentPos = new THREE.Vector3();
-        currentPos.x = THREE.MathUtils.lerp(initialPos.x, targetPos.x, easeT);
-        currentPos.z = THREE.MathUtils.lerp(initialPos.z, targetPos.z, easeT);
-        // Parabolic arc for Y
-        currentPos.y = (1 - easeT) * (1 - easeT) * initialPos.y + 2 * (1 - easeT) * easeT * midY + easeT * easeT * targetPos.y;
+        this.TEMP_CURR.x = THREE.MathUtils.lerp(this.TEMP_START.x, this.TEMP_TARGET.x, easeT);
+        this.TEMP_CURR.z = THREE.MathUtils.lerp(this.TEMP_START.z, this.TEMP_TARGET.z, easeT);
+        this.TEMP_CURR.y = (1 - easeT) * (1 - easeT) * this.TEMP_START.y + 2 * (1 - easeT) * easeT * midY + easeT * easeT * this.TEMP_TARGET.y;
 
-        keyGroup.position.copy(currentPos);
+        keyGroup.position.copy(this.TEMP_CURR);
         keyGroup.rotation.y += 0.08;
 
-        // Swirl particles
         particles.forEach((p, idx) => {
           p.rotation.x += 0.1;
           p.rotation.y += 0.1;
@@ -138,19 +170,17 @@ export class KeyPickupSequence {
     });
 
     // ── FASE 4: Attach physically to Wukong's RightHand bone ──
-    console.log(`[KEY] Attached to hand '${keyData.id}' with color 0x${keyData.color.toString(16)}`);
-    scene.remove(keyGroup); // Remove from world scene
+    console.log(`[KEY] Attached to hand '${keyData.id}'`);
+    scene.remove(keyGroup);
 
     const handNode = ItemPickupVFX.findHandNode(player);
     handNode.add(keyGroup); // ATTACH TO PLAYER HAND BONE
 
-    // Account for parent bone scale (0.158) so the key is PROMINENT and clearly visible in Wukong's hand (7.6 * 0.158 = 1.2m world scale)
     keyGroup.position.set(0.0, 0.18, 0.08);
     keyGroup.rotation.set(0, Math.PI / 2, Math.PI / 4);
     keyGroup.scale.setScalar(7.6);
 
     // Burst ring shockwave in exact key color
-    const burstRingGeo = new THREE.RingGeometry(0.1, 0.6, 24);
     const burstRingMat = new THREE.MeshBasicMaterial({
       color: keyData.color,
       transparent: true,
@@ -158,7 +188,7 @@ export class KeyPickupSequence {
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-    const burstRing = new THREE.Mesh(burstRingGeo, burstRingMat);
+    const burstRing = new THREE.Mesh(this.burstRingGeo, burstRingMat);
     burstRing.position.copy(player.mesh.position).add(new THREE.Vector3(0, 1.2, 0));
     burstRing.rotation.x = -Math.PI / 2;
     scene.add(burstRing);
@@ -173,24 +203,23 @@ export class KeyPickupSequence {
 
     // ── FASE 5: Store gesture -> register in inventory -> cleanup ──
     let holdElapsed = 0;
-    const holdDuration = 1.8; // seconds matching TakeItem pose
+    const holdDuration = 1.7; // seconds matching TakeItem pose
 
     await new Promise<void>((resolve) => {
-      const holdStep = () => {
-        holdElapsed += 0.016;
+      let lastTime = performance.now();
+      const holdStep = (now: number) => {
+        const delta = Math.min(0.05, (now - lastTime) / 1000);
+        lastTime = now;
+        holdElapsed += delta;
+
         const t = Math.min(1.0, holdElapsed / holdDuration);
 
-        // Animate burst ring expanding & fading in matching key color
         burstRing.scale.setScalar(1.0 + t * 8.0);
-        (burstRingMat as THREE.MeshBasicMaterial).opacity = Math.max(0, 1.0 - t * 2.5);
+        burstRingMat.opacity = Math.max(0, 1.0 - t * 2.5);
 
-        // Rotate key slowly in hand
         keyGroup.rotation.z += 0.04;
-
-        // Pulse light
         heroLight.intensity = (5.0 + Math.sin(holdElapsed * 10) * 2.0) * (1.0 - Math.max(0, (t - 0.7) / 0.3));
 
-        // Particles fade out as key is stored
         particles.forEach((p) => {
           (p.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1.0 - t * 1.3);
         });
@@ -198,20 +227,14 @@ export class KeyPickupSequence {
         if (t < 1.0) {
           requestAnimationFrame(holdStep);
         } else {
-          // Detach from hand and dispose local resources
+          // Detach from hand safely
           scene.remove(burstRing);
-          burstRingGeo.dispose();
           burstRingMat.dispose();
 
           handNode.remove(keyGroup);
-          keyGroup.traverse((child) => {
-            if ((child as THREE.Mesh).isMesh) {
-              (child as THREE.Mesh).geometry.dispose();
-              const mat = (child as THREE.Mesh).material;
-              if (Array.isArray(mat)) mat.forEach(m => m.dispose());
-              else mat.dispose();
-            }
-          });
+          keyMat.dispose();
+          particles.forEach(p => (p.material as THREE.MeshBasicMaterial).dispose());
+
           resolve();
         }
       };
@@ -229,7 +252,6 @@ export class KeyPickupSequence {
 
     console.log(`[KEY] KeyPickupSequence completed for '${keyData.id}'`);
 
-    // Execute completion callback
     if (onComplete) onComplete();
   }
 }
