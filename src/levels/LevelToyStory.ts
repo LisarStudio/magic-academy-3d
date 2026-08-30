@@ -682,6 +682,7 @@ export class LevelToyStory {
           const s = 1.0 + Math.random() * 0.5;
           t.scale.set(s, s * (0.9 + Math.random() * 0.3), s);
           scene.add(t);
+          this.levelColliders.push(t);
         });
       });
 
@@ -697,6 +698,7 @@ export class LevelToyStory {
           const s = 0.9 + Math.random() * 0.4;
           t.scale.set(s, s, s);
           scene.add(t);
+          this.levelColliders.push(t);
         });
       });
 
@@ -787,6 +789,7 @@ export class LevelToyStory {
         rock.castShadow = true;
         rock.receiveShadow = true;
         scene.add(rock);
+        this.levelColliders.push(rock);
       });
     })();
 
@@ -1572,6 +1575,8 @@ export class LevelToyStory {
         if (cinematicSkipped) return;
         cinematicSkipped = true;
         window.removeEventListener('keydown', skipHandler);
+        window.removeEventListener('touchstart', touchSkipHandler);
+        window.removeEventListener('pointerdown', touchSkipHandler);
         hud.hideDialogue();
         
         await hud.fadeScreenOut(500);
@@ -1596,14 +1601,99 @@ export class LevelToyStory {
           finishCinematic();
         }
       };
-      window.addEventListener('keydown', skipHandler);
+      const touchSkipHandler = (e: Event) => {
+        e.preventDefault();
+        finishCinematic();
+      };
 
-      hud.showTypewriterDialogue('Gekko', '¡Hola viajero! Consigue 50 monedas LISAR del mapa y te entregaré una de las cinco llaves mágicas del portal.', () => {
+      window.addEventListener('keydown', skipHandler);
+      window.addEventListener('touchstart', touchSkipHandler, { passive: false });
+      window.addEventListener('pointerdown', touchSkipHandler, { passive: false });
+
+      const gekkoMsg = hud.isTouchDevice()
+        ? '¡Hola viajero! Consigue 50 monedas LISAR del mapa y te entregaré una de las cinco llaves mágicas del portal.'
+        : '¡Hola viajero! Consigue 50 monedas LISAR del mapa y te entregaré una de las cinco llaves mágicas del portal. Presiona ENTER para continuar.';
+
+      hud.showTypewriterDialogue('Gekko', gekkoMsg, () => {
         if (cinematicSkipped) return;
         setTimeout(() => {
           if (cinematicSkipped) return;
           finishCinematic();
         }, 4000);
+      });
+    }
+  }
+
+  public async runGameIntroSequence(): Promise<void> {
+    const cinematicCamera = (window as any).gameInstance?.cinematicCamera;
+    const hud = (window as any).gameInstance?.hud;
+
+    if (cinematicCamera && hud) {
+      this.isCinematicPlaying = true;
+      this.enemies.forEach(e => e.isPaused = true);
+      this.player.isControlsLocked = true;
+      this.player.isMovementLocked = true;
+
+      // Start black fade
+      await hud.fadeScreenOut(0);
+
+      // High scenic camera sweep over the meadow towards the castle
+      const startCamPos = new THREE.Vector3(22.0, 16.0, 32.0);
+      const startLookAt = new THREE.Vector3(0, 3.5, -40.0);
+
+      // End camera position near Gekko and Wukong
+      const endCamPos = new THREE.Vector3(-1.5, 1.25, -8.75);
+      const endLookAt = new THREE.Vector3(-4.0, 1.1, -8.75);
+
+      cinematicCamera.moveCamera(startCamPos, endCamPos, startLookAt, endLookAt, 3.8);
+
+      // Fade screen in
+      await hud.fadeScreenIn(1000);
+
+      this.subtitleSystem.show('LISAR', '¡Bienvenido al Castillo de las Ruinas! Se ha iniciado la aventura.', 4000);
+
+      let introFinished = false;
+      const finishIntro = async () => {
+        if (introFinished) return;
+        introFinished = true;
+        window.removeEventListener('keydown', keySkip);
+        window.removeEventListener('touchstart', touchSkip);
+        window.removeEventListener('pointerdown', touchSkip);
+
+        hud.hideDialogue();
+        cinematicCamera.abort();
+
+        this.player.isControlsLocked = false;
+        this.player.isMovementLocked = false;
+        this.enemies.forEach(e => e.isPaused = false);
+        this.isCinematicPlaying = false;
+
+        hud.showGameplayHUD();
+      };
+
+      const keySkip = (e: KeyboardEvent) => {
+        if (e.code === 'Space' || e.code === 'Enter' || e.code === 'Escape') finishIntro();
+      };
+      const touchSkip = (e: Event) => {
+        e.preventDefault();
+        finishIntro();
+      };
+
+      window.addEventListener('keydown', keySkip);
+      window.addEventListener('touchstart', touchSkip, { passive: false });
+      window.addEventListener('pointerdown', touchSkip, { passive: false });
+
+      // Gekko waves and opens introductory dialogue
+      this.gekkoNPC.setTalking(true);
+
+      const introText = hud.isTouchDevice()
+        ? '¡Hola aventurero! Soy Gekko. Toca la pantalla para avanzar. Busca tu báculo en el cofre del castillo y junta 50 monedas Lisar para abrir el portal.'
+        : '¡Hola aventurero! Soy Gekko. Presiona ENTER o la pantalla para avanzar. Busca tu báculo en el cofre del castillo y junta 50 monedas Lisar para abrir el portal.';
+
+      hud.showTypewriterDialogue('Gekko', introText, () => {
+        setTimeout(() => {
+          if (!introFinished) finishIntro();
+        }, 4500);
       });
     }
   }

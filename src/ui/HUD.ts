@@ -172,7 +172,20 @@ export class HUD {
     }
   }
 
+  public isTouchDevice(): boolean {
+    return (
+      'ontouchstart' in window ||
+      navigator.maxTouchPoints > 0 ||
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+      window.innerWidth <= 1024
+    );
+  }
+
   public showInteractionPrompt(label: string): void {
+    if (this.isTouchDevice()) {
+      label = label.replace(/\[ENTER\]|ENTER/gi, '[TOCA LA PANTALLA]');
+      label = label.replace(/PRESIONA/gi, 'TOCA');
+    }
     this.interactionLabelEl.textContent = label;
     this.interactionPromptEl.classList.remove('hidden');
   }
@@ -209,7 +222,7 @@ export class HUD {
     this.victoryScreenEl.classList.add('hidden');
   }
 
-  // Typewriter Dialogue Effect
+  // Typewriter Dialogue Effect (Supports Touch Tap Anywhere to Advance)
   private typewriterInterval: any;
   public showTypewriterDialogue(speaker: string, text: string, onComplete?: () => void): void {
     this.dialogueBubbleEl.classList.remove('hidden');
@@ -229,7 +242,24 @@ export class HUD {
         clearInterval(this.typewriterInterval);
         if (onComplete) onComplete();
       }
-    }, 40); // 40ms per character
+    }, 35);
+
+    // Touch tap / click listener on dialogue bubble to immediately finish text & advance
+    const handleTap = (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.dialogueBubbleEl.removeEventListener('click', handleTap);
+      this.dialogueBubbleEl.removeEventListener('touchstart', handleTap);
+      
+      if (this.typewriterInterval) {
+        clearInterval(this.typewriterInterval);
+      }
+      this.dialogueTextEl.textContent = text;
+      if (onComplete) onComplete();
+    };
+
+    this.dialogueBubbleEl.addEventListener('click', handleTap, { once: true });
+    this.dialogueBubbleEl.addEventListener('touchstart', handleTap, { once: true });
   }
 
   public hideDialogue(): void {

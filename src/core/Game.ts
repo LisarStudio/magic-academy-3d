@@ -100,6 +100,9 @@ export class Game {
     // Focus camera on target AFTER the level is initialized and player is spawned at Checkpoint 0!
     this.cameraController.setTarget(this.player.mesh);
 
+    // Trigger Game Intro Sequence (Cinemática Inicial con Gekko)
+    this.level01.runGameIntroSequence();
+
     // 6. Bind Player & HUD Status Callbacks
     this.player.onHealthChange = (hp, maxHp) => this.hud.setHealth(hp, maxHp);
     this.spellSystem.onCollectStaffCallback = () => {
