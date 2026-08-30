@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { PlayerController } from '../player/PlayerController';
+import { ItemPickupVFX } from '../player/ItemPickupVFX';
 
 /**
  * ChestCinematic — Zelda-style staff pickup cinematic.
@@ -128,42 +129,49 @@ export class ChestCinematic {
     // ── STATE: PLAYER_TAKES_STAFF ──────────────────────────────────────────
     console.log('[ChestCinematic] PLAYER_TAKES_STAFF');
 
-    // Staff disappears as player reaches for it (visual: player grabbed it)
-    if (this.staffInChest) {
-      this.staffInChest.visible = false;
-      if (this.bobAnimId !== null) {
-        cancelAnimationFrame(this.bobAnimId);
-        this.bobAnimId = null;
-      }
+    if (this.bobAnimId !== null) {
+      cancelAnimationFrame(this.bobAnimId);
+      this.bobAnimId = null;
     }
 
-    // Play TakeItem — resolves ONLY when mixer.finished fires. No setTimeout.
+    // Attach staff directly to Wukong's hand bone so he holds it up during TakeItem!
+    const handNode = ItemPickupVFX.findHandNode(player);
+    if (this.staffInChest && handNode) {
+      scene.remove(this.staffInChest);
+      handNode.add(this.staffInChest);
+      this.staffInChest.position.set(0, 0.2, 0.1);
+      this.staffInChest.rotation.set(0, 0, Math.PI / 2);
+      this.staffInChest.visible = true;
+    }
+
+    // Play TakeItem — resolves ONLY when mixer.finished fires. No premature disappearance.
     const animOK = await this.playTakeItemAndWait(player);
     if (!animOK) {
-      await this.wait(600); // safety pause if clip was missing
+      await this.wait(1400);
     }
 
     // ── STATE: FADE_OUT ────────────────────────────────────────────────────
-    // This code runs ONLY after the animation ended.
     console.log('[ChestCinematic] FADE_OUT — animation complete');
 
     if (this.staffInChest) {
-      scene.remove(this.staffInChest);
+      if (this.staffInChest.parent) {
+        this.staffInChest.parent.remove(this.staffInChest);
+      }
       this.staffInChest = null;
     }
 
-    await hud.fadeScreenOut(700);
+    await hud.fadeScreenOut(500);
 
     // ── STATE: EQUIP_STAFF ─────────────────────────────────────────────────
-    // Screen is fully black — swap animations invisibly
     console.log('[ChestCinematic] EQUIP_STAFF — screen black');
 
     player.hasStaff = true;
     player.setStaffVisibility(true);
+    player.attachStaffToBack();
     player.animationController.setArmed(true);
 
-    hud.setObjective('Usa Force Blast en el objetivo sobre la puerta');
-    await this.wait(400);
+    hud.setObjective('Explora el Reino y reúne las 3 llaves místicas');
+    await this.wait(300);
 
     // ── STATE: FADE_IN ─────────────────────────────────────────────────────
     console.log('[ChestCinematic] FADE_IN — player armed and ready');

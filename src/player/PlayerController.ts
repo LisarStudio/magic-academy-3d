@@ -138,7 +138,13 @@ export class PlayerController {
     }
   }
 
+  public isInvulnerable = false;
+
   public takeDamage(amount: number, respawnPos?: THREE.Vector3): void {
+    if (this.isInvulnerable || this.isControlsLocked || this.isMovementLocked) {
+      // Immune while performing TakeItem animation or watching cinematics
+      return;
+    }
     this.health = Math.max(0, this.health - amount);
     this.onHealthChange?.(this.health, this.maxHealth);
 

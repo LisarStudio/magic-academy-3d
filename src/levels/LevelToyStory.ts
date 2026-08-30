@@ -20,6 +20,7 @@ import { EnemyController } from '../enemies/EnemyController';
 import { GekkoNPC } from '../npc/GekkoNPC';
 import { MovingPlatform } from '../world/MovingPlatform';
 import { KeyPickupSequence, type KeyData } from '../player/KeyPickupSequence';
+import { ItemPickupVFX } from '../player/ItemPickupVFX';
 
 export class LevelToyStory {
   private sceneManager: SceneManager;
@@ -2564,7 +2565,7 @@ export class LevelToyStory {
         };
 
         const hud = (window as any).gameInstance?.hud;
-        hud?.showInteractionPrompt(`Recoger ${keyData.name}`);
+        hud?.showInteractionPrompt(`Presiona [E] para tomar ${keyData.name}`);
 
         if (this.inputManager.keys['KeyE'] || (hud?.isTouchDevice?.() && distToKey < 1.3)) {
           hud?.hideInteractionPrompt();
@@ -2666,23 +2667,43 @@ export class LevelToyStory {
       this.subtitleSystem.show('Cripta de Lava', '¡Cuidado con la lava ardiente! Cruza usando las plataformas móviles.');
     }
 
-    // ── Energy Item / Peach Pickup Check (Manual E key press with Zero Lag) ─────────────────────
+    // ── Energy Item / Peach Pickup Check (Manual E key press with Full TakeItem Animation) ─────────────────────
     for (let i = this.energyItems.length - 1; i >= 0; i--) {
       const item = this.energyItems[i];
       item.rotation.y += delta * 2.0; // Slow magical spin
       const distToEnergy = item.position.distanceTo(playerPos);
-      if (distToEnergy < 2.2 && !this.player.isControlsLocked) {
+      if (distToEnergy < 2.2 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
         const hud = (window as any).gameInstance?.hud;
-        hud?.showInteractionPrompt('Recoger Durazno Celestial [E]');
+        hud?.showInteractionPrompt('Presiona [E] para tomar Durazno Celestial');
 
         if (this.inputManager.keys['KeyE'] || (hud?.isTouchDevice?.() && distToEnergy < 1.3)) {
           hud?.hideInteractionPrompt();
+          const peachPos = item.position.clone();
+
+          // Lock player movement and lock controls during TakeItem animation
+          this.player.isControlsLocked = true;
+          this.player.isMovementLocked = true;
+          this.player.velocity.set(0, 0, 0);
+
+          // Attach peach to Wukong's hand so it doesn't disappear prematurely
           this.sceneManager.scene.remove(item);
+          const handNode = ItemPickupVFX.findHandNode(this.player);
+          handNode.add(item);
+          item.position.set(0, 0.15, 0.05);
+          item.scale.setScalar(0.8);
+
           this.energyItems.splice(i, 1);
-          this.collectibleSystem.spawnSparks(item.position);
-          this.audioManager.playCardPickup();
-          this.player.heal(35);
-          this.subtitleSystem.show('Durazno Celestial', '¡Has recogido un Durazno Celestial! (+35 ENERGÍA RESTAURADA)');
+
+          this.player.animationController.playTakeItemAnimation(() => {
+            // ONLY WHEN TakeItem animation finishes:
+            handNode.remove(item);
+            this.collectibleSystem.spawnSparks(peachPos);
+            this.audioManager.playCardPickup();
+            this.player.heal(35);
+            this.player.isControlsLocked = false;
+            this.player.isMovementLocked = false;
+            this.subtitleSystem.show('Durazno Celestial', '¡Has recogido un Durazno Celestial! (+35 ENERGÍA RESTAURADA)');
+          });
         }
       }
     }
@@ -2690,7 +2711,7 @@ export class LevelToyStory {
     // ── Chest Interaction — Staff Pickup ──────────────────────────────────────
     if (!this.stateFlags.staffFound && this.staffChest.mesh.position.distanceTo(playerPos) < 2.0) {
       const hud = (window as any).gameInstance?.hud;
-      hud?.showInteractionPrompt('Abrir Cofre');
+      hud?.showInteractionPrompt('Presiona [E] para abrir cofre');
 
       if (this.inputManager.keys['KeyE'] && !this.staffChest.isUnlocked) {
         this.stateFlags.staffFound = true;
