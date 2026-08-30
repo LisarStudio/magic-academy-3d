@@ -617,8 +617,10 @@ export class LevelToyStory {
         // Ruin patches
         if (Math.hypot(x + 30, z - 10) < 8) continue;
         if (Math.hypot(x + 45, z + 40) < 8) continue;
-        // Castle walls thick envelope
+        // Castle walls & entrance corridor thick envelope
         if (x > -17 && x < 17 && z > -58 && z < -17) continue;
+        // Central Paved Avenue (CAMINO) clean corridor (keeps main path 100% legible)
+        if (Math.abs(x) < 3.5 && z > -25 && z < 15) continue;
 
         // ── Organic density: clumping via noise ──
         const clump = Math.sin(x * 0.38) * Math.cos(z * 0.29) + Math.sin(x * 0.17 + z * 0.22) * 0.6;
@@ -1746,17 +1748,43 @@ export class LevelToyStory {
       rawCoins.push(new THREE.Vector3(rx, 0.6, rz));
     }
 
-    const finalCoins = rawCoins.map((pos) => {
-      // If inside Castle ground floor footprint (X: -14..14, Z: -54..-26)
-      if (Math.abs(pos.x) <= 14 && pos.z >= -54 && pos.z <= -26 && pos.y < 2.0) {
-        pos.y = 0.85; // Sits 0.35m above Castle floor slab at y = 0.5
-      } else if (pos.y < 1.5) {
-        pos.y = this.getTerrainHeight(pos.x, pos.z) + 0.6;
-      }
-      return pos;
-    });
+    // ── AUTOMATED COIN POSITION VALIDATION & COLLISION CHECKER ──
+    const validateCoinPosition = (pos: THREE.Vector3): THREE.Vector3 => {
+      const checkedPos = pos.clone();
 
-    console.log(`[COINS] Synchronously spawning EXACTLY ${finalCoins.length}/${EXPECTED_LISAR_COINS} Lisar Coins.`);
+      // 1. Surface Height Check (Castle slabs vs Balconies vs Roofs vs Outdoor Terrain)
+      if (Math.abs(checkedPos.x) <= 14 && checkedPos.z >= -54 && checkedPos.z <= -26 && checkedPos.y < 2.0) {
+        checkedPos.y = 0.85; // Sits 0.35m above Castle ground floor slab at y = 0.5
+      } else if (checkedPos.y < 1.5) {
+        checkedPos.y = this.getTerrainHeight(checkedPos.x, checkedPos.z) + 0.6;
+      }
+
+      // 2. Horizontal Wall Collision Test (Cast rays in 4 cardinal directions to ensure no clipping inside walls)
+      const raycaster = new THREE.Raycaster();
+      const directions = [
+        new THREE.Vector3(1, 0, 0),
+        new THREE.Vector3(-1, 0, 0),
+        new THREE.Vector3(0, 0, 1),
+        new THREE.Vector3(0, 0, -1)
+      ];
+
+      for (const dir of directions) {
+        raycaster.set(checkedPos, dir);
+        raycaster.far = 0.4;
+        const hits = raycaster.intersectObjects(this.levelColliders, true);
+        if (hits.length > 0) {
+          // If too close to a wall, nudge 0.5m away from the wall normal
+          const hitNorm = hits[0].face?.normal?.clone() || new THREE.Vector3(0, 0, 1);
+          checkedPos.addScaledVector(hitNorm, 0.5);
+        }
+      }
+
+      return checkedPos;
+    };
+
+    const finalCoins = rawCoins.map((pos) => validateCoinPosition(pos));
+
+    console.log(`[COINS-VALIDATION] Validated & Synchronously Spawning EXACTLY ${finalCoins.length}/${EXPECTED_LISAR_COINS} Lisar Coins.`);
 
     finalCoins.forEach((pos, idx) => {
       this.collectibleSystem.spawnCoin(`coin_${idx}`, pos);
