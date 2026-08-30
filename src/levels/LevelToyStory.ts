@@ -317,11 +317,19 @@ export class LevelToyStory {
     // Generate Textures
     const stoneTex = TextureGenerator.createStoneWallTexture();
     stoneTex.repeat.set(4, 4);
-    const floorTex = TextureGenerator.createCheckerFloorTexture();
-    floorTex.repeat.set(8, 8);
-    
+    const floorTex = TextureGenerator.createAncientRuinedFlagstonesTexture();
+    floorTex.repeat.set(6, 6);
+    const floorNormalTex = TextureGenerator.createCastleFloorNormalMap();
+    floorNormalTex.repeat.set(6, 6);
+
     const stoneMat = new THREE.MeshStandardMaterial({ map: stoneTex, roughness: 0.65, bumpScale: 0.04 });
-    const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.35, metalness: 0.1 });
+    const floorMat = new THREE.MeshStandardMaterial({
+      map: floorTex,
+      normalMap: floorNormalTex,
+      normalScale: new THREE.Vector2(0.85, 0.85),
+      roughness: 0.78,
+      metalness: 0.12
+    });
     const groundBaseMat = new THREE.MeshStandardMaterial({ color: 0x224925, roughness: 0.95 }); // Deep rich base for grass
     const sandMat = new THREE.MeshStandardMaterial({ color: 0xc2b280, roughness: 0.85 });  // Arena floor
 

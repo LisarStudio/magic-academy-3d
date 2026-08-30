@@ -50,26 +50,121 @@ export class TextureGenerator {
     return texture;
   }
 
-  public static createCheckerFloorTexture(): THREE.CanvasTexture {
+  public static createAncientRuinedFlagstonesTexture(): THREE.CanvasTexture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 1024;
+    const ctx = canvas.getContext('2d')!;
+
+    // Base dark slate background for mortar joints
+    ctx.fillStyle = '#14151a';
+    ctx.fillRect(0, 0, 1024, 1024);
+
+    // Large irregular ruined flagstone slabs
+    const slabCols = 4;
+    const slabRows = 6;
+    const slabW = 1024 / slabCols;
+    const slabH = 1024 / slabRows;
+
+    const stoneColors = [
+      '#2a2c34', '#32343e', '#26272e', '#363844',
+      '#2d2f38', '#383a46', '#222329', '#30323c'
+    ];
+
+    for (let r = 0; r < slabRows; r++) {
+      const offsetX = (r % 2) * (slabW * 0.45);
+      for (let c = -1; c < slabCols + 1; c++) {
+        const x = c * slabW + offsetX;
+        const y = r * slabH;
+
+        // Pick stone color with organic variation
+        const baseColor = stoneColors[(Math.abs(r * 3 + c * 7)) % stoneColors.length];
+        ctx.fillStyle = baseColor;
+
+        // Draw slightly rounded, worn flagstone rectangle
+        const padding = 6;
+        const width = slabW - padding * 2;
+        const height = slabH - padding * 2;
+        const rx = x + padding;
+        const ry = y + padding;
+
+        ctx.beginPath();
+        ctx.roundRect(rx, ry, width, height, [6, 12, 8, 10]);
+        ctx.fill();
+
+        // Inner slab texture noise & grit
+        for (let n = 0; n < 80; n++) {
+          const nx = rx + Math.random() * width;
+          const ny = ry + Math.random() * height;
+          const alpha = 0.04 + Math.random() * 0.08;
+          ctx.fillStyle = Math.random() > 0.4 ? `rgba(255,255,255,${alpha})` : `rgba(0,0,0,${alpha * 1.5})`;
+          ctx.fillRect(nx, ny, 3, 3);
+        }
+
+        // Cracks branching across flagstones
+        if ((r + c) % 3 === 0) {
+          ctx.strokeStyle = 'rgba(12, 12, 16, 0.7)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(rx + width * 0.2, ry + height * 0.1);
+          ctx.lineTo(rx + width * 0.45, ry + height * 0.5);
+          ctx.lineTo(rx + width * 0.8, ry + height * 0.75);
+          ctx.stroke();
+        }
+
+        // Moss crevices in flagstone corners
+        if ((r * 2 + c) % 4 === 0) {
+          ctx.fillStyle = 'rgba(40, 75, 45, 0.45)';
+          ctx.beginPath();
+          ctx.arc(rx + 8, ry + 8, 14 + Math.random() * 10, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    return texture;
+  }
+
+  public static createCastleFloorNormalMap(): THREE.CanvasTexture {
     const canvas = document.createElement('canvas');
     canvas.width = 512;
     canvas.height = 512;
     const ctx = canvas.getContext('2d')!;
 
-    const tileSize = 64;
-    for (let x = 0; x < 512; x += tileSize) {
-      for (let y = 0; y < 512; y += tileSize) {
-        const isDark = ((x / tileSize) + (y / tileSize)) % 2 === 0;
-        ctx.fillStyle = isDark ? '#1a1824' : '#dcd6e8';
-        ctx.fillRect(x, y, tileSize, tileSize);
+    // Neutral normal blue/purple base
+    ctx.fillStyle = 'rgb(128, 128, 255)';
+    ctx.fillRect(0, 0, 512, 512);
 
-        // Marble veining details
-        ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.1)';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(x + Math.random() * tileSize, y);
-        ctx.lineTo(x + Math.random() * tileSize, y + tileSize);
-        ctx.stroke();
+    // Beveled edges for flagstones
+    const slabCols = 4;
+    const slabRows = 6;
+    const slabW = 512 / slabCols;
+    const slabH = 512 / slabRows;
+
+    for (let r = 0; r < slabRows; r++) {
+      const offsetX = (r % 2) * (slabW * 0.45);
+      for (let c = -1; c < slabCols + 1; c++) {
+        const x = c * slabW + offsetX;
+        const y = r * slabH;
+
+        // Top edge normal (slanted up)
+        ctx.fillStyle = 'rgb(128, 200, 255)';
+        ctx.fillRect(x + 4, y, slabW - 8, 4);
+
+        // Left edge normal (slanted left)
+        ctx.fillStyle = 'rgb(200, 128, 255)';
+        ctx.fillRect(x, y + 4, 4, slabH - 8);
+
+        // Bottom edge normal (slanted down)
+        ctx.fillStyle = 'rgb(128, 50, 255)';
+        ctx.fillRect(x + 4, y + slabH - 4, slabW - 8, 4);
+
+        // Right edge normal (slanted right)
+        ctx.fillStyle = 'rgb(50, 128, 255)';
+        ctx.fillRect(x + slabW - 4, y + 4, 4, slabH - 8);
       }
     }
 

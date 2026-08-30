@@ -178,13 +178,13 @@ export class PlayerController {
     const groundHits = this.groundRaycaster.intersectObjects(this.colliders, true);
 
     const prevVelY = this.velocity.y;
-    this.isGrounded = groundHits.length > 0 && groundHits[0].distance <= 0.8; // Increased from 0.5 for slope tolerance
+    this.isGrounded = groundHits.length > 0 && groundHits[0].distance <= 0.8; // Slope tolerance
 
     if (this.isGrounded && this.velocity.y <= 0) {
       this.velocity.y = 0;
       this.mesh.position.y = groundHits[0].point.y; // feet snap to floor surface
       
-      const dangerousFall = prevVelY < -15.0;
+      const dangerousFall = prevVelY < -12.0;
 
       this.jumpCount = 0;
       this.doubleJumpSpinTimer = 0;
@@ -201,21 +201,24 @@ export class PlayerController {
     if (!input.onJumpPress) {
       input.onJumpPress = () => {
         if (this.isControlsLocked || this.isMovementLocked) return;
+        const audioManager = (window as any).gameInstance?.audioManager;
+
         if (this.isGrounded) {
           this.velocity.y = this.jumpForce;
           this.isGrounded = false;
           this.jumpCount = 1;
           this.animationController.playState('Jump');
+          if (audioManager) audioManager.playJumpGrunt();
         } else if (this.jumpCount === 1) {
           this.velocity.y = this.jumpForce * 0.95;
           this.jumpCount = 2;
           this.doubleJumpSpinTimer = 0.4;
-          // Play special Wukong double jump if unarmed, else standard jump
           if (!this.hasStaff) {
             this.animationController.playState('Wukong_NoWood_DoubleJump' as any);
           } else {
             this.animationController.playState('Jump');
           }
+          if (audioManager) audioManager.playJumpGrunt();
         }
       };
     }
@@ -502,6 +505,62 @@ export class PlayerController {
     return fallback.addScaledVector(new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.mesh.rotation.y), 0.6);
   }
 
+  private createDustImpactVFX(origin: THREE.Vector3): void {
+    if (!this.mesh.parent) return;
+    const scene = this.mesh.parent;
+    const dustCount = 18;
+    const dustMeshes: THREE.Mesh[] = [];
+    const dustVels: THREE.Vector3[] = [];
+
+    const geo = new THREE.SphereGeometry(0.12, 6, 6);
+    for (let i = 0; i < dustCount; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xccccaa,
+        transparent: true,
+        opacity: 0.7,
+        depthWrite: false,
+      });
+      const dust = new THREE.Mesh(geo, mat);
+      dust.position.copy(origin).add(new THREE.Vector3(0, 0.05, 0));
+
+      const angle = (i / dustCount) * Math.PI * 2;
+      const speed = 2.0 + Math.random() * 2.5;
+      const vel = new THREE.Vector3(
+        Math.cos(angle) * speed,
+        0.4 + Math.random() * 0.8,
+        Math.sin(angle) * speed
+      );
+
+      scene.add(dust);
+      dustMeshes.push(dust);
+      dustVels.push(vel);
+    }
+
+    let age = 0;
+    const duration = 0.55;
+    const anim = () => {
+      age += 0.016;
+      const t = age / duration;
+      dustMeshes.forEach((d, idx) => {
+        d.position.addScaledVector(dustVels[idx], 0.016);
+        dustVels[idx].y -= 4.0 * 0.016;
+        d.scale.addScalar(0.016 * 3.0);
+        (d.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.7 - t * 1.3);
+      });
+
+      if (age < duration) {
+        requestAnimationFrame(anim);
+      } else {
+        dustMeshes.forEach(d => {
+          scene.remove(d);
+          d.geometry.dispose();
+          (d.material as THREE.Material).dispose();
+        });
+      }
+    };
+    requestAnimationFrame(anim);
+  }
+
   private triggerHardLanding(): void {
     if (this.isControlsLocked || this.isMovementLocked) return;
 
@@ -509,10 +568,18 @@ export class PlayerController {
     this.isMovementLocked = true;
     this.velocity.set(0, 0, 0);
 
-    const dmg = this.maxHealth * 0.20;
+    const dmg = this.maxHealth * 0.15;
     this.takeDamage(dmg);
 
-    console.log('[PlayerController] Triggered dangerous fall: playing Wukong_NoWood_HardLanding...');
+    const audioManager = (window as any).gameInstance?.audioManager;
+    if (audioManager) {
+      audioManager.playHardLandingImpact('stone');
+      audioManager.playHardLandingGrunt();
+    }
+
+    this.createDustImpactVFX(this.mesh.position.clone());
+
+    console.log('[PlayerController] Triggered dangerous fall: playing Wukong_NoWood_HardLanding with dust VFX...');
     this.animationController.playHardLanding(() => {
       this.isControlsLocked = false;
       this.isMovementLocked = false;

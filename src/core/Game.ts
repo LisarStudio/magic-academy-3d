@@ -207,6 +207,8 @@ export class Game {
           }
         }
 
+        this.audioManager.playAttackGrunt();
+
         this.animationController.playWukongKick(
           () => {
             const playerPos = this.player.mesh.position;
@@ -227,6 +229,7 @@ export class Game {
                   const dot = forwardDir.dot(dirToEnemy);
                   if (dot > 0.35 || enemy.id === 'crab_boss') { // Always allow hitting boss if in range
                     enemy.takeHit(playerPos);
+                    this.audioManager.playHitImpact();
                     // @ts-ignore
                     this.spellSystem.createImpactParticles(enemyPos.clone().add(new THREE.Vector3(0, 0.5, 0)), 0xffa500);
                   }

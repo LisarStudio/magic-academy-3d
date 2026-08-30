@@ -2,8 +2,47 @@ export class AudioManager {
   private ctx: AudioContext | null = null;
   private bgmAudio: HTMLAudioElement | null = null;
 
+  // Volume channels
+  public masterVolume = 1.0;
+  public musicVolume = 0.5;
+  public sfxVolume = 0.8;
+  public voiceVolume = 0.95;
+
+  private isAudioUnlocked = false;
+
   constructor() {
-    // AudioContext will be initialized on first user interaction
+    this.setupMobileTouchUnlock();
+  }
+
+  /**
+   * Unlocks WebAudio & HTML5 Audio autoplay policies on mobile devices (iOS Safari & Chrome Mobile)
+   * upon the first touch/click interaction.
+   */
+  private setupMobileTouchUnlock(): void {
+    const unlock = () => {
+      if (this.isAudioUnlocked) return;
+      this.isAudioUnlocked = true;
+
+      try {
+        const ctx = this.initCtx();
+        if (ctx.state === 'suspended') {
+          ctx.resume();
+        }
+
+        if (this.bgmAudio && this.bgmAudio.paused) {
+          this.bgmAudio.play().catch(e => console.warn('[AudioManager] BGM unlock resume error:', e));
+        }
+
+        console.log('[AudioManager] ✅ Mobile WebAudio & BGM unlocked on first touch/click.');
+      } catch (err) {
+        console.warn('[AudioManager] Audio unlock failed:', err);
+      }
+    };
+
+    window.addEventListener('touchstart', unlock, { once: true });
+    window.addEventListener('touchend', unlock, { once: true });
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('click', unlock, { once: true });
   }
 
   public resume(): void {
@@ -28,12 +67,11 @@ export class AudioManager {
   public startBGM(): void {
     if (this.bgmAudio) return;
     
-    // Reproduce la música personalizada (espera que esté en public/assets/Castle Dawn Escape.mp3)
     this.bgmAudio = new Audio(import.meta.env.BASE_URL + 'assets/Castle Dawn Escape.mp3');
     this.bgmAudio.loop = true;
-    this.bgmAudio.volume = 0.4;
+    this.bgmAudio.volume = this.musicVolume * this.masterVolume;
     this.bgmAudio.play().catch(err => {
-      console.warn('[AudioManager] No se encontró la música o el navegador bloqueó el autoplay.', err);
+      console.warn('[AudioManager] BGM autoplay blocked or failed to load:', err);
     });
   }
 
@@ -42,6 +80,209 @@ export class AudioManager {
       this.bgmAudio.pause();
       this.bgmAudio.currentTime = 0;
     }
+  }
+
+  // ── Multi-Variant Physical Hit Impact SFX (with pitch/volume variation) ──────
+  public playHitImpact(): void {
+    const ctx = this.initCtx();
+    const now = ctx.currentTime;
+
+    // Pitch variation: +/- 10%
+    const pitchFactor = 0.9 + Math.random() * 0.2;
+    const vol = (0.7 + Math.random() * 0.2) * this.sfxVolume * this.masterVolume;
+
+    // Heavy punchy transient oscillator
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(180 * pitchFactor, now);
+    osc.frequency.exponentialRampToValueAtTime(45 * pitchFactor, now + 0.12);
+
+    gain.gain.setValueAtTime(vol, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.14);
+  }
+
+  // ── Youthful Adventurous Male Hero Vocal Grunts ──────────────────────────────
+  public playAttackGrunt(): void {
+    const ctx = this.initCtx();
+    const now = ctx.currentTime;
+    const vol = 0.85 * this.voiceVolume * this.masterVolume;
+
+    // Formant synthesizer for energetic hero attack shout
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    const variants = [320, 360, 410];
+    const baseFreq = variants[Math.floor(Math.random() * variants.length)];
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(baseFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.7, now + 0.18);
+
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1100, now);
+    filter.Q.setValueAtTime(3.0, now);
+
+    gain.gain.setValueAtTime(vol, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.2);
+  }
+
+  public playJumpGrunt(): void {
+    // 45% chance to trigger jump vocal grunt (avoids repetitive fatigue)
+    if (Math.random() > 0.45) return;
+
+    const ctx = this.initCtx();
+    const now = ctx.currentTime;
+    const vol = 0.7 * this.voiceVolume * this.masterVolume;
+
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(280, now);
+    osc.frequency.exponentialRampToValueAtTime(460, now + 0.15);
+
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1300, now);
+    filter.Q.setValueAtTime(2.5, now);
+
+    gain.gain.setValueAtTime(vol, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.16);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.16);
+  }
+
+  public playHurtGrunt(): void {
+    const ctx = this.initCtx();
+    const now = ctx.currentTime;
+    const vol = 0.9 * this.voiceVolume * this.masterVolume;
+
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(340, now);
+    osc.frequency.exponentialRampToValueAtTime(160, now + 0.22);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(900, now);
+
+    gain.gain.setValueAtTime(vol, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.24);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.24);
+  }
+
+  public playHardLandingGrunt(): void {
+    const ctx = this.initCtx();
+    const now = ctx.currentTime;
+    const vol = 0.95 * this.voiceVolume * this.masterVolume;
+
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(240, now);
+    osc.frequency.exponentialRampToValueAtTime(110, now + 0.32);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(800, now);
+
+    gain.gain.setValueAtTime(vol, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.34);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.34);
+  }
+
+  // ── Hard Landing Heavy Impact SFX (Surface Specific) ──────────────────────────
+  public playHardLandingImpact(surface: 'grass' | 'stone' | 'wood' = 'stone'): void {
+    const ctx = this.initCtx();
+    const now = ctx.currentTime;
+    const vol = 0.95 * this.sfxVolume * this.masterVolume;
+
+    // 1. Sub-bass heavy impact pulse
+    const subOsc = ctx.createOscillator();
+    const subGain = ctx.createGain();
+
+    subOsc.type = 'sine';
+    subOsc.frequency.setValueAtTime(120, now);
+    subOsc.frequency.exponentialRampToValueAtTime(30, now + 0.35);
+
+    subGain.gain.setValueAtTime(vol * 1.2, now);
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+
+    subOsc.connect(subGain);
+    subGain.connect(ctx.destination);
+    subOsc.start(now);
+    subOsc.stop(now + 0.38);
+
+    // 2. Surface-specific noise burst
+    const bufferSize = ctx.sampleRate * 0.3;
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+
+    const noiseFilter = ctx.createBiquadFilter();
+    if (surface === 'grass') {
+      noiseFilter.type = 'bandpass';
+      noiseFilter.frequency.setValueAtTime(1200, now);
+    } else if (surface === 'wood') {
+      noiseFilter.type = 'lowpass';
+      noiseFilter.frequency.setValueAtTime(450, now);
+    } else {
+      // stone
+      noiseFilter.type = 'lowpass';
+      noiseFilter.frequency.setValueAtTime(800, now);
+    }
+
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(vol * 0.8, now);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+
+    noise.connect(noiseFilter);
+    noiseFilter.connect(noiseGain);
+    noiseGain.connect(ctx.destination);
+
+    noise.start(now);
+    noise.stop(now + 0.28);
   }
 
   public playFlipendoCast(): void {

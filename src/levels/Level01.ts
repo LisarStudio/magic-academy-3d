@@ -100,7 +100,7 @@ export class Level01 {
 
     const stoneTex = TextureGenerator.createStoneWallTexture();
     stoneTex.repeat.set(2, 6);
-    const checkerTex = TextureGenerator.createCheckerFloorTexture();
+    const checkerTex = TextureGenerator.createAncientRuinedFlagstonesTexture();
     checkerTex.repeat.set(4, 15);
 
     const stoneMat = new THREE.MeshStandardMaterial({ map: stoneTex, roughness: 0.7 });
