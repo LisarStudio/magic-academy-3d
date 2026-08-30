@@ -387,7 +387,7 @@ export class SpellSystem {
     }
   }
 
-  private createImpactParticles(position: THREE.Vector3, colorHex: number = 0x3df3ff): void {
+  public createImpactParticles(position: THREE.Vector3, colorHex: number = 0x3df3ff): void {
     const particleCount = 20;
     const geo = new THREE.BufferGeometry();
     const posArray = new Float32Array(particleCount * 3);

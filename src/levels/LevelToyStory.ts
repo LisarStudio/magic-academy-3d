@@ -1807,70 +1807,51 @@ export class LevelToyStory {
   }
 
   private setupCollectibles(): void {
-    // We need 50 coins scattered across the map
-    // Let's spawn them algorithmically and mathematically
     const coinPositions: THREE.Vector3[] = [];
 
-    // Castle front pathway (10 coins)
-    for (let i = 0; i < 10; i++) {
-      coinPositions.push(new THREE.Vector3(0, 0.5, 8 - i * 2));
+    // 1. Main Entrance Pathway (12 coins leading from Wukong spawn up to castle gate)
+    for (let i = 0; i < 12; i++) {
+      coinPositions.push(new THREE.Vector3(0, 0.6, 9.0 - i * 2.8));
     }
 
-    // Inside Castle ground floor (10 coins)
-    for (let x = -8; x <= 8; x += 4) {
-      for (let z = -48; z <= -35; z += 4) {
+    // 2. Ground Floor Atrium & Hall (14 coins)
+    for (let x = -6; x <= 6; x += 3) {
+      for (let z = -46; z <= -34; z += 4) {
         if (x !== 0 || z !== -40) {
-          coinPositions.push(new THREE.Vector3(x, 0.5, z));
+          coinPositions.push(new THREE.Vector3(x, 0.8, z));
         }
       }
     }
 
-    // Along the wrapping outer ramp (6 coins)
+    // 3. Grand East Staircase ascending to Mezzanine (6 coins)
     for (let i = 0; i < 6; i++) {
-      coinPositions.push(new THREE.Vector3(-15, 0.5 + i * 0.8, -29 - i * 2.2));
+      coinPositions.push(new THREE.Vector3(8.5, 1.0 + i * 0.8, -29.0 - i * 2.6));
     }
 
-    // Castle Second Floor balcony/terrace (6 coins)
-    coinPositions.push(new THREE.Vector3(-8, 5.5, -45));
-    coinPositions.push(new THREE.Vector3(-4, 5.5, -48));
-    coinPositions.push(new THREE.Vector3(4, 5.5, -48));
-    coinPositions.push(new THREE.Vector3(8, 5.5, -45));
-    coinPositions.push(new THREE.Vector3(0, 5.5, -33));
-    coinPositions.push(new THREE.Vector3(2, 5.5, -33));
+    // 4. Mezzanine Balcony Walkway (8 coins at y = 5.6)
+    coinPositions.push(new THREE.Vector3(-8.0, 5.6, -44.0));
+    coinPositions.push(new THREE.Vector3(-8.0, 5.6, -36.0));
+    coinPositions.push(new THREE.Vector3(-4.0, 5.6, -48.0));
+    coinPositions.push(new THREE.Vector3(0.0, 5.6, -48.0));
+    coinPositions.push(new THREE.Vector3(4.0, 5.6, -48.0));
+    coinPositions.push(new THREE.Vector3(8.0, 5.6, -44.0));
+    coinPositions.push(new THREE.Vector3(4.0, 5.6, -34.0));
+    coinPositions.push(new THREE.Vector3(-4.0, 5.6, -34.0));
 
-    // Outer plains & Boss Arena entrance (12 coins)
-    coinPositions.push(new THREE.Vector3(15, 0.5, -20));
-    coinPositions.push(new THREE.Vector3(20, 0.5, -25));
-    coinPositions.push(new THREE.Vector3(25, 0.5, -30));
-    coinPositions.push(new THREE.Vector3(25, 0.5, -50));
-    coinPositions.push(new THREE.Vector3(20, 0.5, -55));
-    coinPositions.push(new THREE.Vector3(15, 0.5, -60));
-    // Inside boss arena perimeter
-    coinPositions.push(new THREE.Vector3(45, 0.5, -30));
-    coinPositions.push(new THREE.Vector3(35, 0.5, -40));
-    coinPositions.push(new THREE.Vector3(55, 0.5, -40));
-    coinPositions.push(new THREE.Vector3(45, 0.5, -50));
-    coinPositions.push(new THREE.Vector3(40, 0.5, -45));
-    coinPositions.push(new THREE.Vector3(50, 0.5, -35));
+    // 5. Upper Roof Staircase & Terrace (6 coins)
+    for (let i = 0; i < 4; i++) {
+      coinPositions.push(new THREE.Vector3(7.0 - i * 3.0, 5.8 + i * 1.2, -48.0));
+    }
+    coinPositions.push(new THREE.Vector3(-3.0, 10.6, -42.0));
+    coinPositions.push(new THREE.Vector3(3.0, 10.6, -42.0));
 
-    // Platforming climbing spots (6 coins)
-    coinPositions.push(new THREE.Vector3(11, 7.0, -45));
-    coinPositions.push(new THREE.Vector3(8, 8.5, -52));
-    coinPositions.push(new THREE.Vector3(0, 9.7, -53));
-    coinPositions.push(new THREE.Vector3(0, 10.7, -44)); // Castle roof tower top
-    coinPositions.push(new THREE.Vector3(-4, 10.7, -44));
-    coinPositions.push(new THREE.Vector3(4, 10.7, -44));
-
-    // South ruins coins (3 coins)
-    coinPositions.push(new THREE.Vector3(-30, 0.5, 10));
-    coinPositions.push(new THREE.Vector3(-27, 0.5, 13));
-    coinPositions.push(new THREE.Vector3(-32, 0.5, 7));
-
-    // West ruins coins (4 coins)
-    coinPositions.push(new THREE.Vector3(-45, 0.5, -40)); // center of circle
-    coinPositions.push(new THREE.Vector3(-45, 0.5, -35));
-    coinPositions.push(new THREE.Vector3(-40, 0.5, -40));
-    coinPositions.push(new THREE.Vector3(-45, 5.2, -40)); // Top of broken arch
+    // 6. Boss Arena & East Garden Pathway (6 coins)
+    coinPositions.push(new THREE.Vector3(18.0, 0.6, -35.0));
+    coinPositions.push(new THREE.Vector3(26.0, 0.6, -38.0));
+    coinPositions.push(new THREE.Vector3(34.0, 0.6, -40.0));
+    coinPositions.push(new THREE.Vector3(42.0, 0.6, -35.0));
+    coinPositions.push(new THREE.Vector3(48.0, 0.6, -42.0));
+    coinPositions.push(new THREE.Vector3(42.0, 0.6, -46.0));
 
     // Ensure clean state before spawning
     this.collectibleSystem.clearAll();

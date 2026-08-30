@@ -189,9 +189,12 @@ export class ItemPickupVFX {
           }
         });
 
-        // Restore player control
+        // Restore player control and return to Idle
         player.isControlsLocked = false;
         player.isMovementLocked = false;
+        player.isInvulnerable = false;
+        player.velocity.set(0, 0, 0);
+        player.forceIdle();
 
         // Callback (awards item / unlocks doors / updates state)
         onComplete();

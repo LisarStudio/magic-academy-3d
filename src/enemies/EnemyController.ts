@@ -58,6 +58,14 @@ export class EnemyController {
     this.createProceduralCrab();
   }
 
+  public isAlive(): boolean {
+    return this.state !== 'DYING' && this.state !== 'DEAD' && !this.isDead && this.health > 0;
+  }
+
+  public getPosition(): THREE.Vector3 {
+    return this.mesh.position;
+  }
+
   public setScene(scene: THREE.Scene): void {
     this.scene = scene;
   }
@@ -668,14 +676,6 @@ export class EnemyController {
         this.mesh.position.y = terrainY;
       }
     }
-  }
-
-  public isAlive(): boolean {
-    return this.state !== 'DYING' && this.state !== 'DEAD';
-  }
-
-  public getPosition(): THREE.Vector3 {
-    return this.mesh.position;
   }
 
   public dispose(): void {

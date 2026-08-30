@@ -245,9 +245,12 @@ export class KeyPickupSequence {
     keyData.obtained = true;
     console.log(`[KEY] Added to inventory: '${keyData.id}'`);
 
-    // Restore player controls
+    // Restore player controls and return cleanly to Idle
     player.isControlsLocked = false;
     player.isMovementLocked = false;
+    player.isInvulnerable = false;
+    player.velocity.set(0, 0, 0);
+    player.forceIdle();
     this.isSequenceRunning = false;
 
     console.log(`[KEY] KeyPickupSequence completed for '${keyData.id}'`);
