@@ -2106,14 +2106,14 @@ export class LevelToyStory {
         window.removeEventListener('touchstart', touchSkipHandler);
         hud.hideDialogue();
         
-        await hud.fadeScreenOut(500);
+        await hud.fadeScreenOut(300);
         
         cinematicCamera.abort();
 
-        // Restore gameplay camera target
+        // Restore gameplay camera target smoothly behind player
         if (cameraController) {
           cameraController.setTarget(this.player.mesh);
-          cameraController.updateCameraPosition();
+          cameraController.snapBehindTarget();
         }
 
         this.player.isControlsLocked = false;
@@ -2131,7 +2131,8 @@ export class LevelToyStory {
         // Resume enemy AI!
         this.enemies.forEach(e => e.isPaused = false);
 
-        await hud.fadeScreenIn(500);
+        await hud.fadeScreenIn(300);
+        hud.showGameplayHUD();
       };
 
       const skipHandler = (e: KeyboardEvent) => {
@@ -2207,9 +2208,7 @@ export class LevelToyStory {
 
         // Position camera behind Wukong facing forward (-Z)
         if (cameraController) {
-          cameraController.yaw = Math.PI; // Look along -Z into the world
-          cameraController.pitch = -0.15;
-          cameraController.updateCameraPosition();
+          cameraController.snapBehindTarget();
         }
 
         // Ensure Wukong stays facing -Z (back to camera) and is completely unlocked
@@ -2293,29 +2292,30 @@ export class LevelToyStory {
         window.removeEventListener('touchstart', touchSkipHandler);
         hud.hideDialogue();
         
-        await hud.fadeScreenOut(400);
+        await hud.fadeScreenOut(300);
         
         cinematicCamera.abort();
         const cameraController = (window as any).gameInstance?.cameraController;
         if (cameraController) {
           cameraController.setTarget(this.player.mesh);
-          cameraController.updateCameraPosition();
+          cameraController.snapBehindTarget();
         }
 
         this.gekkoNPC.setTalking(false);
-        this.gekkoNPC.mesh.position.set(-4, 0, -10);
+        this.gekkoNPC.mesh.position.set(gekkoPos.x, gekkoY, gekkoPos.z);
         this.gekkoNPC.mesh.rotation.set(0, -Math.PI * 0.25, 0);
         
         // Hide Gekko badge from HUD as it's completed
         const gekkoBadge = document.getElementById('gekko-quest-complete');
         if (gekkoBadge) gekkoBadge.classList.add('hidden');
 
-        await hud.fadeScreenIn(400);
+        await hud.fadeScreenIn(300);
+        hud.showGameplayHUD();
 
         // ── FASE 2-5: KeyPickupSequence for Gekko Orange Key (key1_gekko) ──
         console.log('[GEKKO] Orange Key given');
         const keyData = this.keyDefinitions['key1_gekko'];
-        const spawnPos = new THREE.Vector3(-4, 1.2, -8.7);
+        const spawnPos = new THREE.Vector3(gekkoPos.x, gekkoY + 1.2, gekkoPos.z + 1.3);
 
         await KeyPickupSequence.runSequence(
           keyData,
