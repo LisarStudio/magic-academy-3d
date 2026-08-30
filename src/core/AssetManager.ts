@@ -434,18 +434,18 @@ export class AssetManager {
             mesh.name = 'atack_wood_staff';
             mesh.visible = false; // Hidden by default
             
-            let leftHand: THREE.Object3D | null = null;
+            let targetHand: THREE.Object3D | null = null;
             playerModel.traverse((child) => {
               const n = child.name.toLowerCase();
-              if (n.includes('lefthand') && !n.includes('thumb') && !n.includes('index') && !n.includes('middle') && !n.includes('ring') && !n.includes('pinky')) {
-                leftHand = child;
+              if ((n.includes('righthand') || n.includes('lefthand')) && !n.includes('thumb') && !n.includes('index') && !n.includes('middle') && !n.includes('ring') && !n.includes('pinky')) {
+                if (!targetHand || n.includes('righthand')) {
+                  targetHand = child;
+                }
               }
             });
-            if (leftHand) {
-              // Re-parent the cylinder to the player's left hand exactly where it was relative to the GLB's left hand
-              // Since it was already a child of mixamorig:LeftHand in the GLB, its position/rotation/scale is local to the hand.
-              (leftHand as THREE.Object3D).add(mesh);
-              console.log(`[AssetManager] Attached 'atack_wood_staff' to LeftHand`);
+            if (targetHand) {
+              (targetHand as THREE.Object3D).add(mesh);
+              console.log(`[AssetManager] Attached 'atack_wood_staff' to hand bone: ${(targetHand as THREE.Object3D).name}`);
             }
           }
         });

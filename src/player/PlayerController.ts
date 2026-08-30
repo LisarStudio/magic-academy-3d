@@ -99,7 +99,8 @@ export class PlayerController {
       ItemPickupVFX.playEpicPickup(this, scene, 'staff', () => {
         this.hasStaff = true;
         this.setStaffVisibility(true);
-        console.log('[PlayerController] Staff equipped! Spells unlocked and Armed animations active.');
+        this.attachStaffToBack();
+        console.log('[PlayerController] Staff equipped! Stored on back until attack.');
       });
     } else {
       this.isControlsLocked = true;
@@ -107,8 +108,9 @@ export class PlayerController {
       this.animationController.playTakeItemAnimation(() => {
         this.hasStaff = true;
         this.setStaffVisibility(true);
+        this.attachStaffToBack();
         this.isControlsLocked = false;
-        console.log('[PlayerController] Staff equipped! Spells unlocked and Armed animations active.');
+        console.log('[PlayerController] Staff equipped! Stored on back until attack.');
       });
     }
   }
