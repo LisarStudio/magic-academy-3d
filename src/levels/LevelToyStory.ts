@@ -1974,8 +1974,8 @@ export class LevelToyStory {
     });
     this.triggerZones.push(tBoss);
 
-    // Gekko conversation trigger zone — REPEATABLE so player can interact multiple times
-    const tGekko = new TriggerZone('trig_gekko', new THREE.Vector3(-8, -1, -14.0), new THREE.Vector3(1.0, 5, -6.0), async () => {
+    // Gekko conversation trigger zone — Compact 5m x 4m proximity zone around Gekko (-4, y, -10)
+    const tGekko = new TriggerZone('trig_gekko', new THREE.Vector3(-6.5, -1, -12.0), new THREE.Vector3(-1.5, 5, -8.0), async () => {
       if (this.isCinematicPlaying) return;
 
       if (this.gekkoMissionState === 'NOT_STARTED') {
@@ -2013,7 +2013,11 @@ export class LevelToyStory {
   }
 
   private async runGekkoCinematic(): Promise<void> {
+    if (this.isCinematicPlaying) return;
+    this.isCinematicPlaying = true;
+
     const cinematicCamera = (window as any).gameInstance?.cinematicCamera;
+    const cameraController = (window as any).gameInstance?.cameraController;
     const hud = (window as any).gameInstance?.hud;
 
     if (cinematicCamera && hud) {
@@ -2054,14 +2058,24 @@ export class LevelToyStory {
         cinematicSkipped = true;
         window.removeEventListener('keydown', skipHandler);
         window.removeEventListener('touchstart', touchSkipHandler);
-        window.removeEventListener('pointerdown', touchSkipHandler);
         hud.hideDialogue();
         
         await hud.fadeScreenOut(500);
         
         cinematicCamera.abort();
+
+        // Restore gameplay camera target
+        if (cameraController) {
+          cameraController.setTarget(this.player.mesh);
+          cameraController.updateCameraPosition();
+        }
+
         this.player.isControlsLocked = false;
         this.player.isMovementLocked = false;
+        this.player.isAttacking = false;
+        this.player.velocity.set(0, 0, 0);
+        this.player.forceIdle();
+        this.isCinematicPlaying = false;
         
         this.gekkoNPC.setTalking(false);
         this.gekkoNPC.mesh.position.set(-4, gekkoY, -10);
@@ -2086,7 +2100,6 @@ export class LevelToyStory {
 
       window.addEventListener('keydown', skipHandler);
       window.addEventListener('touchstart', touchSkipHandler, { passive: false });
-      window.addEventListener('pointerdown', touchSkipHandler, { passive: false });
 
       const gekkoMsg = hud.isTouchDevice()
         ? '¡Hola viajero! Consigue 50 monedas LISAR del mapa y te entregaré una de las cinco llaves mágicas del portal.'
@@ -2142,7 +2155,6 @@ export class LevelToyStory {
         introFinished = true;
         window.removeEventListener('keydown', keySkip);
         window.removeEventListener('touchstart', touchSkip);
-        window.removeEventListener('pointerdown', touchSkip);
 
         hud.hideDialogue();
         cinematicCamera.abort();
@@ -2178,7 +2190,6 @@ export class LevelToyStory {
 
       window.addEventListener('keydown', keySkip);
       window.addEventListener('touchstart', touchSkip, { passive: false });
-      window.addEventListener('pointerdown', touchSkip, { passive: false });
 
       // ZERO GEKKO DIALOGUE ON INTRO! Gekko stays completely idle until Wukong physically walks up to him!
       setTimeout(() => {
@@ -2231,12 +2242,17 @@ export class LevelToyStory {
         cinematicSkipped = true;
         window.removeEventListener('keydown', skipHandler);
         window.removeEventListener('touchstart', touchSkipHandler);
-        window.removeEventListener('pointerdown', touchSkipHandler);
         hud.hideDialogue();
         
         await hud.fadeScreenOut(400);
         
         cinematicCamera.abort();
+        const cameraController = (window as any).gameInstance?.cameraController;
+        if (cameraController) {
+          cameraController.setTarget(this.player.mesh);
+          cameraController.updateCameraPosition();
+        }
+
         this.gekkoNPC.setTalking(false);
         this.gekkoNPC.mesh.position.set(-4, 0, -10);
         this.gekkoNPC.mesh.rotation.set(0, -Math.PI * 0.25, 0);
@@ -2262,6 +2278,8 @@ export class LevelToyStory {
             this.coinsExchanged = true;
             this.awardKey('key1_gekko');
             this.enemies.forEach(e => e.isPaused = false);
+            this.player.isControlsLocked = false;
+            this.player.isMovementLocked = false;
             this.isCinematicPlaying = false;
             console.log('[GEKKO] Mission completed — REWARD_GIVEN state set');
           }
@@ -2279,7 +2297,6 @@ export class LevelToyStory {
       };
       window.addEventListener('keydown', skipHandler);
       window.addEventListener('touchstart', touchSkipHandler, { passive: false });
-      window.addEventListener('pointerdown', touchSkipHandler, { passive: false });
 
       hud.showTypewriterDialogue('Gekko', 'Vaya... realmente las encontraste todas.', () => {
         if (cinematicSkipped) return;
