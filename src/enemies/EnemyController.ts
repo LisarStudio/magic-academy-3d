@@ -447,22 +447,38 @@ export class EnemyController {
       });
     }
 
-    // ── Ground Snapping (Slabs, Stairs, and Terrain) ──
+    // ── Ground Snapping (Slabs, Stairs, and Terrain with Normal Validation) ──
+    const isSelfChild = (obj: THREE.Object3D): boolean => {
+      let curr: THREE.Object3D | null = obj;
+      while (curr) {
+        if (curr === this.mesh) return true;
+        curr = curr.parent;
+      }
+      return false;
+    };
+
     const levelInst = (window as any).gameInstance?.level01;
     let targetGroundY = levelInst ? levelInst.getTerrainHeight(this.mesh.position.x, this.mesh.position.z) : 0.0;
 
     if (colliders && colliders.length > 0) {
-      const origin = new THREE.Vector3().copy(this.mesh.position);
-      origin.y = Math.max(this.mesh.position.y + 3.0, 6.0);
+      const origin = new THREE.Vector3(this.mesh.position.x, this.mesh.position.y + 0.8, this.mesh.position.z);
       this.groundRaycaster.set(origin, new THREE.Vector3(0, -1, 0));
-      const hits = this.groundRaycaster.intersectObjects(colliders, true);
-      if (hits.length > 0 && hits[0].point.y >= targetGroundY) {
-        targetGroundY = hits[0].point.y;
+      this.groundRaycaster.far = 4.0;
+      const rawHits = this.groundRaycaster.intersectObjects(colliders, true);
+      for (const hit of rawHits) {
+        if (isSelfChild(hit.object)) continue;
+        if (!hit.face) continue;
+        const norm = hit.face.normal.clone();
+        norm.transformDirection(hit.object.matrixWorld);
+        if (norm.y >= 0.45) { // Walkable floor slab
+          targetGroundY = hit.point.y;
+          break;
+        }
       }
     }
 
-    if (this.state === 'FLIPPED') targetGroundY += 0.4;
-    this.mesh.position.y = THREE.MathUtils.lerp(this.mesh.position.y, targetGroundY, delta * 12);
+    if (this.state === 'FLIPPED') targetGroundY += 0.15;
+    this.mesh.position.y = THREE.MathUtils.lerp(this.mesh.position.y, targetGroundY, delta * 15);
 
     if (this.state !== 'FLIPPED') {
       this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, 0, delta * 8);

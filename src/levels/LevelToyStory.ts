@@ -56,6 +56,10 @@ export class LevelToyStory {
   public exitDoor!: Door;
   private gekkoNPC!: GekkoNPC;
   private floatingCoinMesh!: THREE.Group;
+  private dragonSwitchMesh!: THREE.Group;
+  private dragonLeverStick!: THREE.Mesh;
+  public isLavaVaultOpen = false;
+  private lavaVaultHatch!: THREE.Mesh;
   private grassUniforms: any = null;
   private cloudsUniforms: any = null;
 
@@ -1021,6 +1025,41 @@ export class LevelToyStory {
       this.levelColliders.push(roofPillar);
     }
 
+    // ── DRAGON SWITCH (Mezzanine Floor Balcony: x = -8.5, y = 5.2, z = -40) ──
+    const switchGroup = new THREE.Group();
+    switchGroup.position.set(-8.5, 5.2, castleCenterZ);
+
+    const switchPedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 0.9, 8), stoneMat);
+    switchPedestal.position.y = 0.45;
+    switchPedestal.castShadow = true;
+    switchGroup.add(switchPedestal);
+
+    const dragonHead = new THREE.Mesh(new THREE.DodecahedronGeometry(0.18), goldMat);
+    dragonHead.position.set(0, 0.95, 0);
+    switchGroup.add(dragonHead);
+
+    this.dragonLeverStick = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.55, 8), goldMat);
+    this.dragonLeverStick.position.set(0, 1.15, 0);
+    this.dragonLeverStick.rotation.x = Math.PI / 4; // Upright forward angle
+    switchGroup.add(this.dragonLeverStick);
+
+    const leverOrb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.08, 8, 8),
+      new THREE.MeshStandardMaterial({ color: 0xff3300, emissive: 0xffaa00, emissiveIntensity: 1.5 })
+    );
+    leverOrb.position.set(0, 0.28, 0);
+    this.dragonLeverStick.add(leverOrb);
+
+    const switchLight = new THREE.PointLight(0xffaa00, 2.5, 4.0);
+    switchLight.position.set(0, 1.2, 0);
+    switchGroup.add(switchLight);
+
+    scene.add(switchGroup);
+    this.dragonSwitchMesh = switchGroup;
+
+    // ── SUBTERRANEAN LAVA VAULT & TRAPDOOR (x = -10.0 to -35.0, z = -26.0 to -54.0, y = -6.0) ──
+    this.buildSubterraneanLavaVault(scene, stoneMat, castleCenterZ);
+
 
     // 4. Combat Boss Arena (to the East, broad sand circular area)
     const arenaCenter = new THREE.Vector3(45, 0.1, -40);
@@ -1056,6 +1095,119 @@ export class LevelToyStory {
     // Configure collision objects in controllers
     this.cameraController.setCollisionObjects(this.levelColliders);
     this.player.setColliders(this.levelColliders);
+  }
+
+  private buildSubterraneanLavaVault(
+    scene: THREE.Scene,
+    stoneMat: THREE.Material,
+    castleCenterZ: number
+  ): void {
+    // 1. Trapdoor Stone Slab at Ground Floor (x = -9.0, z = -32.0, y = 0.2)
+    this.lavaVaultHatch = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.35, 4.2), stoneMat);
+    this.lavaVaultHatch.position.set(-9.0, 0.2, castleCenterZ + 8.0);
+    this.lavaVaultHatch.receiveShadow = true;
+    scene.add(this.lavaVaultHatch);
+    this.levelColliders.push(this.lavaVaultHatch);
+
+    // 2. Secret Subterranean Stairs descending from y = 0.2 to y = -5.8
+    const stairsSteps = 12;
+    const stairLen = 8.0;
+    const stairDrop = 6.0;
+    for (let i = 0; i < stairsSteps; i++) {
+      const t = i / (stairsSteps - 1);
+      const stepY = 0.1 - t * stairDrop;
+      const stepZ = (castleCenterZ + 8.0) - t * stairLen;
+      const step = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.35, 1.0), stoneMat);
+      step.position.set(-9.0, stepY, stepZ);
+      step.castShadow = true;
+      step.receiveShadow = true;
+      scene.add(step);
+      this.levelColliders.push(step);
+    }
+
+    // 3. Subterranean Entrance Ledge at y = -5.8 (x = -9.0, z = castleCenterZ)
+    const ledge = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.5, 6.0), stoneMat);
+    ledge.position.set(-9.0, -5.8, castleCenterZ);
+    ledge.receiveShadow = true;
+    scene.add(ledge);
+    this.levelColliders.push(ledge);
+
+    // 4. Subterranean Chamber Walls
+    const wallN = new THREE.Mesh(new THREE.BoxGeometry(32.0, 8.0, 1.0), stoneMat);
+    wallN.position.set(-22.0, -4.0, castleCenterZ - 14.0);
+    const wallS = new THREE.Mesh(new THREE.BoxGeometry(32.0, 8.0, 1.0), stoneMat);
+    wallS.position.set(-22.0, -4.0, castleCenterZ + 14.0);
+    const wallW = new THREE.Mesh(new THREE.BoxGeometry(1.0, 8.0, 28.0), stoneMat);
+    wallW.position.set(-37.0, -4.0, castleCenterZ);
+    scene.add(wallN, wallS, wallW);
+    this.levelColliders.push(wallN, wallS, wallW);
+
+    // 5. Glowing Lava Floor at y = -8.2
+    const lavaMat = new THREE.MeshStandardMaterial({
+      color: 0xff2200,
+      emissive: 0xff3300,
+      emissiveIntensity: 1.8,
+      roughness: 0.2,
+      metalness: 0.1
+    });
+    const lavaMesh = new THREE.Mesh(new THREE.PlaneGeometry(30.0, 26.0), lavaMat);
+    lavaMesh.position.set(-22.0, -8.2, castleCenterZ);
+    lavaMesh.rotation.x = -Math.PI / 2;
+    scene.add(lavaMesh);
+
+    // Lava Ambient PointLights
+    const lavaLight1 = new THREE.PointLight(0xff4400, 3.5, 12.0);
+    lavaLight1.position.set(-16.0, -6.5, castleCenterZ);
+    const lavaLight2 = new THREE.PointLight(0xff4400, 3.5, 12.0);
+    lavaLight2.position.set(-28.0, -6.5, castleCenterZ);
+    scene.add(lavaLight1, lavaLight2);
+
+    // 6. 4 Moving Stone Platforms across the Lava Chasm (y = -5.8)
+    const plat1 = new MovingPlatform(
+      new THREE.Vector3(-14.5, -5.8, castleCenterZ - 6.0),
+      new THREE.Vector3(-14.5, -5.8, castleCenterZ + 6.0),
+      1.8,
+      3.2, 3.2
+    );
+    const plat2 = new MovingPlatform(
+      new THREE.Vector3(-19.5, -5.8, castleCenterZ + 6.0),
+      new THREE.Vector3(-19.5, -5.8, castleCenterZ - 6.0),
+      2.2,
+      3.2, 3.2
+    );
+    const plat3 = new MovingPlatform(
+      new THREE.Vector3(-24.5, -5.8, castleCenterZ - 6.0),
+      new THREE.Vector3(-24.5, -5.8, castleCenterZ + 6.0),
+      2.0,
+      3.2, 3.2
+    );
+    const plat4 = new MovingPlatform(
+      new THREE.Vector3(-29.5, -5.8, castleCenterZ + 5.0),
+      new THREE.Vector3(-29.5, -5.8, castleCenterZ - 5.0),
+      1.7,
+      3.2, 3.2
+    );
+
+    scene.add(plat1.mesh, plat2.mesh, plat3.mesh, plat4.mesh);
+    this.movingPlatforms.push(plat1, plat2, plat3, plat4);
+    this.levelColliders.push(plat1.mesh, plat2.mesh, plat3.mesh, plat4.mesh);
+
+    // 7. Ancient Fire Altar & Shrine Floor on the far west side (x = -34.0, z = castleCenterZ)
+    const shrineFloor = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.5, 6.0), stoneMat);
+    shrineFloor.position.set(-34.0, -5.8, castleCenterZ);
+    shrineFloor.receiveShadow = true;
+    scene.add(shrineFloor);
+    this.levelColliders.push(shrineFloor);
+
+    // Pedestal holding Key 4 (Llave del Secreto / Fuego Subterráneo)
+    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.0, 8), stoneMat);
+    pedestal.position.set(-34.0, -5.3, castleCenterZ);
+    pedestal.castShadow = true;
+    scene.add(pedestal);
+    this.levelColliders.push(pedestal);
+
+    // Spawn 3D Key 4 at the shrine altar!
+    this.spawn3DKey('key4_gargoyles', new THREE.Vector3(-34.0, -4.6, castleCenterZ));
   }
 
   private buildAncientRuinsAndLandmarks(): void {
@@ -2483,20 +2635,51 @@ export class LevelToyStory {
       }
     }
 
-    // ── Energy Item Pickup Check (Manual E key press) ─────────────────────
+    // ── Dragon Switch Interaction (Mezzanine Floor Balcony) ──
+    if (this.dragonSwitchMesh) {
+      const distToSwitch = this.dragonSwitchMesh.position.distanceTo(playerPos);
+      if (distToSwitch < 2.8 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
+        const hud = (window as any).gameInstance?.hud;
+        if (!this.isLavaVaultOpen) {
+          hud?.showInteractionPrompt('Activar Palanca del Dragón [E]');
+          if (this.inputManager.keys['KeyE'] || (hud?.isTouchDevice?.() && distToSwitch < 1.4)) {
+            this.isLavaVaultOpen = true;
+            this.dragonLeverStick.rotation.x = -Math.PI / 4;
+            this.lavaVaultHatch.position.y = -20; // Open hatch down
+            this.audioManager.playCardPickup();
+            this.subtitleSystem.show('Mecanismo Secreto', '¡Has activado la Palanca del Dragón! La Cripta de Lava Subterránea se ha abierto en la planta baja.');
+          }
+        } else {
+          hud?.showInteractionPrompt('Palanca Activada (Cripta de Lava Abierta)');
+        }
+      }
+    }
+
+    // ── Subterranean Lava Fall Check ──
+    if (playerPos.y < -7.2 && playerPos.x <= -10 && playerPos.x >= -36 && playerPos.z >= -54 && playerPos.z <= -26) {
+      this.player.takeDamage(15);
+      this.player.mesh.position.set(-9.0, -5.5, -40.0);
+      this.player.velocity.set(0, 0, 0);
+      this.audioManager.playPlayerHurt();
+      const hud = (window as any).gameInstance?.hud;
+      if (hud) hud.triggerDamageFlash();
+      this.subtitleSystem.show('Cripta de Lava', '¡Cuidado con la lava ardiente! Cruza usando las plataformas móviles.');
+    }
+
+    // ── Energy Item / Peach Pickup Check (Manual E key press with Zero Lag) ─────────────────────
     for (let i = this.energyItems.length - 1; i >= 0; i--) {
       const item = this.energyItems[i];
       item.rotation.y += delta * 2.0; // Slow magical spin
       const distToEnergy = item.position.distanceTo(playerPos);
-      if (distToEnergy < 2.0 && !this.player.isControlsLocked) {
+      if (distToEnergy < 2.2 && !this.player.isControlsLocked) {
         const hud = (window as any).gameInstance?.hud;
-        hud?.showInteractionPrompt('Recoger Durazno Celestial');
+        hud?.showInteractionPrompt('Recoger Durazno Celestial [E]');
 
         if (this.inputManager.keys['KeyE'] || (hud?.isTouchDevice?.() && distToEnergy < 1.3)) {
           hud?.hideInteractionPrompt();
           this.sceneManager.scene.remove(item);
           this.energyItems.splice(i, 1);
-          this.createSparks(item.position);
+          this.collectibleSystem.spawnSparks(item.position);
           this.audioManager.playCardPickup();
           this.player.heal(35);
           this.subtitleSystem.show('Durazno Celestial', '¡Has recogido un Durazno Celestial! (+35 ENERGÍA RESTAURADA)');
