@@ -991,25 +991,159 @@ export class LevelToyStory {
     const stoneTex = TextureGenerator.createStoneWallTexture();
     stoneTex.repeat.set(2, 2);
     const stoneMat = new THREE.MeshStandardMaterial({ map: stoneTex, roughness: 0.85 });
+    const redWoodMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.5 }); // Crimson red lacquered wood
+    const goldMat = new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.85, roughness: 0.2 }); // Gold trim
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x8b1a1a, roughness: 0.6 }); // Chinese vermillion roof tiles
+
+    // ── 1. CHINESE MEDIEVAL ARCHITECTURE DECORATIONS ON MAIN CASTLE ──
+    const castleCenterZ = -40;
+
+    // Chinese Curved Pagoda Roof Eaves over the 1st floor balcony (y = 5.2)
+    const roof1 = new THREE.Mesh(new THREE.ConeGeometry(19, 2.2, 4), roofMat);
+    roof1.position.set(0, 5.8, castleCenterZ);
+    roof1.rotation.y = Math.PI / 4;
+    scene.add(roof1);
+
+    // Chinese Tower Pagoda Crown Roof over the top cylinder (y = 10.4)
+    const roofTower = new THREE.Mesh(new THREE.ConeGeometry(9.5, 3.5, 4), roofMat);
+    roofTower.position.set(0, 12.0, castleCenterZ - 4);
+    roofTower.rotation.y = Math.PI / 4;
+    scene.add(roofTower);
+
+    // 8 Red Lacquered Wooden Columns with Gold Trim
+    const colPositions = [
+      [-12, 2.6, castleCenterZ + 12.8], [12, 2.6, castleCenterZ + 12.8],
+      [-5, 2.6, castleCenterZ + 12.8], [5, 2.6, castleCenterZ + 12.8],
+      [-12, 2.6, castleCenterZ - 12.8], [12, 2.6, castleCenterZ - 12.8],
+      [-12, 7.6, castleCenterZ - 4], [12, 7.6, castleCenterZ - 4]
+    ];
+    colPositions.forEach(([x, y, z]) => {
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, 5.0, 10), redWoodMat);
+      col.position.set(x, y, z);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 0.2, 10), goldMat);
+      cap.position.set(x, y + 2.5, z);
+      scene.add(col, cap);
+      this.levelColliders.push(col);
+    });
+
+    // Chinese Paifang Arch Gateway at Castle Entrance (z = -27)
+    const paifangGroup = new THREE.Group();
+    paifangGroup.position.set(0, 0, -26);
+    
+    const pPostL = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.35, 4.5, 10), redWoodMat);
+    pPostL.position.set(-3.5, 2.25, 0);
+    const pPostR = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.35, 4.5, 10), redWoodMat);
+    pPostR.position.set(3.5, 2.25, 0);
+    const pBeam = new THREE.Mesh(new THREE.BoxGeometry(8.2, 0.4, 0.6), redWoodMat);
+    pBeam.position.set(0, 4.2, 0);
+    const pRoof = new THREE.Mesh(new THREE.ConeGeometry(6.2, 1.4, 4), roofMat);
+    pRoof.position.set(0, 5.1, 0);
+    pRoof.rotation.y = Math.PI / 4;
+
+    paifangGroup.add(pPostL, pPostR, pBeam, pRoof);
+    scene.add(paifangGroup);
+    this.levelColliders.push(pPostL, pPostR);
+
+    // Hanging Red Chinese Lanterns with Warm Glow
+    const lanternPositions = [
+      [-3.5, 3.6, -26], [3.5, 3.6, -26],
+      [-5.0, 4.6, castleCenterZ + 12.8], [5.0, 4.6, castleCenterZ + 12.8],
+      [0, 9.8, castleCenterZ - 4]
+    ];
+    lanternPositions.forEach(([lx, ly, lz]) => {
+      const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, emissive: 0xff3300, emissiveIntensity: 1.2 });
+      const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.35, 10, 10), lanternMat);
+      lantern.position.set(lx, ly, lz);
+      const light = new THREE.PointLight(0xff7700, 2.2, 6.0);
+      light.position.set(lx, ly, lz);
+      scene.add(lantern, light);
+    });
+
+    // ── 2. DISTANT HORIZON CASTLES / FORTRESSES (SEGUNDOS CASTILLOS LEJANOS) ──
+
+    // Helper: Build a distant Chinese Citadel / Pagoda Fortress
+    const buildDistantCitadel = (cx: number, cy: number, cz: number, isStaffCastle: boolean) => {
+      const cit = new THREE.Group();
+      cit.position.set(cx, cy, cz);
+
+      // Base Mountain Knoll
+      const mountainGeo = new THREE.ConeGeometry(35, 25, 8);
+      const mountainMat = new THREE.MeshStandardMaterial({ color: 0x2d3a2e, roughness: 0.95 });
+      const mountain = new THREE.Mesh(mountainGeo, mountainMat);
+      mountain.position.y = -12.5;
+      cit.add(mountain);
+
+      // Citadel Base Fortress Wall
+      const baseWall = new THREE.Mesh(new THREE.BoxGeometry(24, 8, 24), stoneMat);
+      baseWall.position.y = 4;
+      cit.add(baseWall);
+
+      // Pagoda Tier 1
+      const tier1Roof = new THREE.Mesh(new THREE.ConeGeometry(18, 4.5, 4), roofMat);
+      tier1Roof.position.y = 10;
+      tier1Roof.rotation.y = Math.PI / 4;
+      cit.add(tier1Roof);
+
+      // Pagoda Tier 2
+      const tier2Wall = new THREE.Mesh(new THREE.BoxGeometry(14, 6, 14), redWoodMat);
+      tier2Wall.position.y = 14;
+      cit.add(tier2Wall);
+
+      const tier2Roof = new THREE.Mesh(new THREE.ConeGeometry(12, 3.8, 4), roofMat);
+      tier2Roof.position.y = 18;
+      tier2Roof.rotation.y = Math.PI / 4;
+      cit.add(tier2Roof);
+
+      // Pagoda Crown Spire
+      const crown = new THREE.Mesh(new THREE.ConeGeometry(6, 6, 4), goldMat);
+      crown.position.y = 22;
+      crown.rotation.y = Math.PI / 4;
+      cit.add(crown);
+
+      if (isStaffCastle) {
+        // Glowing staff emblem on the crown
+        const staffEmblem = new THREE.Mesh(new THREE.OctahedronGeometry(1.8, 0), new THREE.MeshStandardMaterial({
+          color: 0x00e5ff, emissive: 0x00bfff, emissiveIntensity: 2.0
+        }));
+        staffEmblem.position.y = 26;
+        const emblemLight = new THREE.PointLight(0x00e5ff, 5.0, 15.0);
+        emblemLight.position.y = 26;
+        cit.add(staffEmblem, emblemLight);
+      }
+
+      scene.add(cit);
+      return cit;
+    };
+
+    // Distant Castle 1: Western Ridge Fortress
+    buildDistantCitadel(-90, 12, -140, false);
+
+    // Distant Castle 2: Eastern Peak Citadel ("Castillo del Báculo")
+    buildDistantCitadel(85, 18, -150, true);
+
+    // Scenic Mountain Bridge Path leading to the Eastern Citadel
+    const bridgeGeo = new THREE.BoxGeometry(45, 0.4, 2.5);
+    const bridge = new THREE.Mesh(bridgeGeo, stoneMat);
+    bridge.position.set(55, 9.2, -95);
+    bridge.rotation.y = -0.5;
+    scene.add(bridge);
+    this.levelColliders.push(bridge);
 
     // ── South Ruins ──
     const ruins1 = new THREE.Group();
     ruins1.position.set(-30, 0, 10);
     scene.add(ruins1);
 
-    // Broken wall
     const wall1 = new THREE.Mesh(new THREE.BoxGeometry(8, 3, 0.8), stoneMat);
     wall1.position.set(0, 1.5, 0);
     ruins1.add(wall1);
     this.levelColliders.push(wall1);
 
-    // Pillar
     const pillar1 = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 4, 8), stoneMat);
     pillar1.position.set(-3, 2, 3);
     ruins1.add(pillar1);
     this.levelColliders.push(pillar1);
 
-    // Fallen pillar
     const fallenPillar = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 3.5, 8), stoneMat);
     fallenPillar.position.set(1, 0.5, 2);
     fallenPillar.rotation.set(0, Math.PI / 4, Math.PI / 2 - 0.1);
@@ -1021,7 +1155,6 @@ export class LevelToyStory {
     ruins2.position.set(-45, 0, -40);
     scene.add(ruins2);
 
-    // Stone pillars in a circle
     for (let i = 0; i < 6; i++) {
       const angle = (i / 6) * Math.PI * 2;
       const rx = Math.cos(angle) * 5;
@@ -1034,7 +1167,6 @@ export class LevelToyStory {
       this.levelColliders.push(col);
     }
 
-    // Broken arch on top of pillars
     const arch = new THREE.Mesh(new THREE.BoxGeometry(6, 0.6, 1.2), stoneMat);
     arch.position.set(Math.cos(0.5/6 * Math.PI*2)*5, 4.8, Math.sin(0.5/6*Math.PI*2)*5);
     arch.rotation.y = -0.5/6 * Math.PI*2;
@@ -1054,8 +1186,8 @@ export class LevelToyStory {
   private setupInteractiveProps(): void {
     const scene = this.sceneManager.scene;
 
-    // Place Chest inside Castle Second Floor Room (Library/Sanctum)
-    this.staffChest = new TreasureChest(new THREE.Vector3(0, 5.0, -46), Math.PI);
+    // Relocate Staff Chest inside the Shrine of the Eastern Citadel ("Castillo del Báculo")
+    this.staffChest = new TreasureChest(new THREE.Vector3(75.0, 18.2, -145.0), Math.PI);
     scene.add(this.staffChest.mesh);
     this.chests.push(this.staffChest);
     this.spellSystem.registerChest(this.staffChest);
@@ -1358,20 +1490,20 @@ export class LevelToyStory {
     let emissiveColor = 0xffaa00;
 
     if (id === 'key1_gekko') {
-      baseColor = 0x00ff88;     // Lisar Emerald Green for Gekko 50 coins quest!
-      emissiveColor = 0x00cc66;
+      baseColor = 0xff6600;     // Vivid Orange for Gekko 50 coins quest!
+      emissiveColor = 0xff8800;
     } else if (id === 'key2_boss') {
-      baseColor = 0xff3300;     // Crimson Gold for Boss Victory
-      emissiveColor = 0xffaa00;
+      baseColor = 0xff2200;     // Crimson Red for Boss Victory
+      emissiveColor = 0xff4400;
     } else if (id === 'key3_platform') {
-      baseColor = 0x00e5ff;     // Electric Cyan for Castle Roof
-      emissiveColor = 0x00bfff;
+      baseColor = 0x00ff88;     // Emerald Green for Castle Roof
+      emissiveColor = 0x00cc66;
     } else if (id === 'key4_gargoyles') {
       baseColor = 0xa855f7;     // Arcane Violet for Gargoyles
       emissiveColor = 0x9333ea;
     } else if (id === 'key5_pots') {
-      baseColor = 0xffa500;     // Amber Orange for Gem Pots
-      emissiveColor = 0xff8800;
+      baseColor = 0x00e5ff;     // Cyan Blue for Gem Pots
+      emissiveColor = 0x00bfff;
     }
 
     const keyMat = new THREE.MeshStandardMaterial({
@@ -1419,18 +1551,18 @@ export class LevelToyStory {
     if (hud) hud.setKeyCount(this.totalKeysCount);
 
     let keyName = '';
-    if (keyId === 'key1_gekko') keyName = 'Llave de Gekko (Monedas)';
-    if (keyId === 'key2_boss') keyName = 'Llave de Combate (Jefe Cangrejo)';
-    if (keyId === 'key3_platform') keyName = 'Llave de Plataformas (Tejado)';
+    if (keyId === 'key1_gekko') keyName = 'Llave Naranja de Gekko (50 Monedas)';
+    if (keyId === 'key2_boss') keyName = 'Llave Carmesí de Combate (Jefe Cangrejo)';
+    if (keyId === 'key3_platform') keyName = 'Llave Esmeralda de Plataformas (Tejado)';
     if (keyId === 'key4_gargoyles') keyName = 'Llave del Secreto (Gárgolas)';
     if (keyId === 'key5_pots') keyName = 'Llave de Destrucción (Gemas)';
 
-    this.subtitleSystem.show('LISAR', `¡Has obtenido la ${keyName}! (${this.totalKeysCount}/5)`);
+    this.subtitleSystem.show('LISAR', `¡Has obtenido la ${keyName}! (${this.totalKeysCount}/3 Requeridas)`);
 
-    // Check if exit door is now unlocked (2 or more keys open exit)
-    if (this.totalKeysCount >= 2 && this.exitDoor && !this.exitDoor.isOpen) {
+    // Check if exit door is now unlocked (STRICT VALIDATION: EXACTLY 3 OR MORE KEYS REQUIRED)
+    if (this.totalKeysCount >= 3 && this.exitDoor && !this.exitDoor.isOpen) {
       this.exitDoor.open();
-      this.subtitleSystem.show('LISAR', '¡Portón Abierto! El portal de salida en el castillo trasero está desbloqueado.');
+      this.subtitleSystem.show('LISAR', '¡PORTÓN ABIERTO! Has reunido las 3 llaves místicas. El portal de salida en el castillo está desbloqueado.');
     }
   }
 
@@ -1741,6 +1873,8 @@ export class LevelToyStory {
         if (cinematicSkipped) return;
         cinematicSkipped = true;
         window.removeEventListener('keydown', skipHandler);
+        window.removeEventListener('touchstart', touchSkipHandler);
+        window.removeEventListener('pointerdown', touchSkipHandler);
         hud.hideDialogue();
         
         await hud.fadeScreenOut(400);
@@ -1756,8 +1890,8 @@ export class LevelToyStory {
 
         await hud.fadeScreenIn(400);
 
-        // ── FASE 2-5: KeyPickupSequence for Gekko Emerald Wealth Key (key1_gekko) ──
-        console.log('[GEKKO] Wealth Key given');
+        // ── FASE 2-5: KeyPickupSequence for Gekko Orange Key (key1_gekko) ──
+        console.log('[GEKKO] Orange Key given');
         const keyData = this.keyDefinitions['key1_gekko'];
         const spawnPos = new THREE.Vector3(-4, 1.2, -8.7);
 
@@ -1782,7 +1916,13 @@ export class LevelToyStory {
           finishCinematic();
         }
       };
+      const touchSkipHandler = (e: Event) => {
+        e.preventDefault();
+        finishCinematic();
+      };
       window.addEventListener('keydown', skipHandler);
+      window.addEventListener('touchstart', touchSkipHandler, { passive: false });
+      window.addEventListener('pointerdown', touchSkipHandler, { passive: false });
 
       hud.showTypewriterDialogue('Gekko', 'Vaya... realmente las encontraste todas.', () => {
         if (cinematicSkipped) return;
