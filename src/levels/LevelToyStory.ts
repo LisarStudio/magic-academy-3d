@@ -1073,17 +1073,51 @@ export class LevelToyStory {
     // TEMPLO 01: MAIN IMPERIAL PALACE FORTRESS (Center at 0, 0, -40)
     // (Broad monumental fortress wall base, red lacquered columns, Paifang archway, double eave roofs)
 
-    // TEMPLO 02: VERTICAL 5-TIER MOUNTAIN PAGODA SHRINE (West Ridge at -65, 0, -85)
+    // TEMPLO 02: VERTICAL 5-TIER MOUNTAIN PAGODA SHRINE (West Ridge at -55, 0, -75)
     const buildMountainPagoda = (cx: number, cz: number) => {
       const cy = this.getTerrainHeight(cx, cz);
       const pag = new THREE.Group();
       pag.position.set(cx, cy, cz);
 
       // Base Octagonal Foundation (grounded)
-      const baseWall = new THREE.Mesh(new THREE.CylinderGeometry(8, 9, 2.5, 8), stoneMat);
+      const baseWall = new THREE.Mesh(new THREE.CylinderGeometry(8.5, 9.5, 2.5, 8), stoneMat);
       baseWall.position.y = 1.25;
       pag.add(baseWall);
       this.levelColliders.push(baseWall);
+
+      // Grand Entrance Steps on Front Threshold (z = +8.5)
+      for (let s = 0; s < 4; s++) {
+        const stepWidth = 4.2 - s * 0.3;
+        const step = new THREE.Mesh(new THREE.BoxGeometry(stepWidth, 0.4, 1.2), stoneMat);
+        step.position.set(0, s * 0.35 + 0.2, 8.5 + (3 - s) * 1.0);
+        pag.add(step);
+        this.levelColliders.push(step);
+      }
+
+      // Torii / Paifang Entrance Archway Gateway at Pagoda Entrance
+      const archL = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, 4.5, 10), redWoodMat);
+      archL.position.set(-2.2, 2.25, 8.2);
+      const archR = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, 4.5, 10), redWoodMat);
+      archR.position.set(2.2, 2.25, 8.2);
+      const archBeam = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.4, 0.6), redWoodMat);
+      archBeam.position.set(0, 4.2, 8.2);
+      const archRoof = new THREE.Mesh(new THREE.ConeGeometry(4.2, 1.2, 4), roofMat);
+      archRoof.position.y = 5.0;
+      archRoof.position.z = 8.2;
+      archRoof.rotation.y = Math.PI / 4;
+
+      const eLightL = new THREE.PointLight(0xffaa00, 2.5, 7.0);
+      eLightL.position.set(-2.2, 3.5, 8.2);
+      const eLightR = new THREE.PointLight(0xffaa00, 2.5, 7.0);
+      eLightR.position.set(2.2, 3.5, 8.2);
+
+      pag.add(archL, archR, archBeam, archRoof, eLightL, eLightR);
+      this.levelColliders.push(archL, archR);
+
+      // Open Entrance Doorway Cutout
+      const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(3.2, 3.2, 0.6), redWoodMat);
+      doorFrame.position.set(0, 2.6, 7.8);
+      pag.add(doorFrame);
 
       // 5 Tiered Pagoda Roofs tapering upward
       const tierRadii = [10, 8.5, 7, 5.5, 4];
@@ -1108,7 +1142,7 @@ export class LevelToyStory {
       scene.add(pag);
     };
 
-    // TEMPLO 03: TEMPLO DEL BÁCULO / CÁMARA DEL SECRETO (East Peak at 65, 0, -85)
+    // TEMPLO 03: TEMPLO DEL BÁCULO / CÁMARA DEL SECRETO (East Peak at 55, 0, -75)
     const buildDragonCitadel = (cx: number, cz: number) => {
       const cy = this.getTerrainHeight(cx, cz);
       const cit = new THREE.Group();
@@ -1120,6 +1154,25 @@ export class LevelToyStory {
       cit.add(rampart);
       this.levelColliders.push(rampart);
 
+      // Grand Entrance Portal Steps on Front (z = +15)
+      for (let s = 0; s < 4; s++) {
+        const stepWidth = 5.0 - s * 0.3;
+        const step = new THREE.Mesh(new THREE.BoxGeometry(stepWidth, 0.4, 1.2), stoneMat);
+        step.position.set(0, s * 0.35 + 0.2, 15 + (3 - s) * 1.0);
+        cit.add(step);
+        this.levelColliders.push(step);
+      }
+
+      // Entrance Dragon Pillars
+      const eColL = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 5.0, 10), redWoodMat);
+      eColL.position.set(-2.8, 2.5, 14.8);
+      const eColR = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 5.0, 10), redWoodMat);
+      eColR.position.set(2.8, 2.5, 14.8);
+      const eBeam = new THREE.Mesh(new THREE.BoxGeometry(6.5, 0.4, 0.6), redWoodMat);
+      eBeam.position.set(0, 4.8, 14.8);
+      cit.add(eColL, eColR, eBeam);
+      this.levelColliders.push(eColL, eColR);
+
       // Central Pillar for Spiral Staircase
       const centralPillar = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 14.0, 12), redWoodMat);
       centralPillar.position.y = 7.8;
@@ -1127,7 +1180,6 @@ export class LevelToyStory {
       this.levelColliders.push(centralPillar);
 
       // ── WALKABLE SPIRAL STAIRCASE (ESCALERA EN ESPIRAL DEL TEMPLO DEL BÁCULO) ──
-      // Helical steps winding from lower floor (y = 0.8) up to Upper Secret Sanctum Chamber (y = 14.8)
       const numSteps = 24;
       const startH = 0.8;
       const totalH = 14.0;
@@ -1203,32 +1255,112 @@ export class LevelToyStory {
     };
 
     // Instantiate Templo 02 & Templo 03 firmly grounded on terrain
-    buildMountainPagoda(-65, -85);
-    buildDragonCitadel(65, -85);
+    buildMountainPagoda(-55, -75);
+    buildDragonCitadel(55, -75);
 
-    // ── GROUNDED STONE PATHWAYS TO TEMPLO 02 AND TEMPLO 03 ──
-    // 1. West Scenic Ground Pathway to Templo 02 (Mountain Pagoda)
-    for (let i = 0; i < 12; i++) {
-      const t = i / 11;
-      const rx = THREE.MathUtils.lerp(-20, -65, t);
-      const rz = THREE.MathUtils.lerp(-40, -85, t);
-      const ry = this.getTerrainHeight(rx, rz) + 0.05;
-      const pathSlab = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.1, 4.5), stoneMat);
-      pathSlab.position.set(rx, ry, rz);
-      pathSlab.receiveShadow = true;
-      scene.add(pathSlab);
+    // ── ZELDA BOTW-GRADE CONTINUOUS COBBLESTONE HIGHWAYS WITH TŌRŌ LANTERNS ──
+    // Helper function to build stone Tōrō lanterns
+    const createToroLantern = (lx: number, lz: number, emissiveColorHex: number) => {
+      const ly = this.getTerrainHeight(lx, lz);
+      const toro = new THREE.Group();
+      toro.position.set(lx, ly, lz);
+
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, 0.8, 6), stoneMat);
+      base.position.y = 0.4;
+      const chamber = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.5, 0.45), redWoodMat);
+      chamber.position.y = 1.05;
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(0.65, 0.35, 4), roofMat);
+      cap.position.y = 1.45;
+      cap.rotation.y = Math.PI / 4;
+
+      const light = new THREE.PointLight(emissiveColorHex, 2.2, 6.5);
+      light.position.y = 1.05;
+
+      toro.add(base, chamber, cap, light);
+      scene.add(toro);
+      this.levelColliders.push(base);
+    };
+
+    // 1. Ruta Imperial del Oeste (Palacio → Templo 02 Pagoda de la Montaña)
+    const westWaypoints = [
+      new THREE.Vector3(-12, 0, -35),
+      new THREE.Vector3(-22, 0, -45),
+      new THREE.Vector3(-35, 0, -58),
+      new THREE.Vector3(-48, 0, -68),
+      new THREE.Vector3(-55, 0, -75)
+    ];
+
+    for (let w = 0; w < westWaypoints.length - 1; w++) {
+      const pA = westWaypoints[w];
+      const pB = westWaypoints[w + 1];
+      const steps = 8;
+      for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        const rx = THREE.MathUtils.lerp(pA.x, pB.x, t);
+        const rz = THREE.MathUtils.lerp(pA.z, pB.z, t);
+        const ry = this.getTerrainHeight(rx, rz) + 0.04;
+
+        const pathSlab = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.08, 4.2), stoneMat);
+        pathSlab.position.set(rx, ry, rz);
+        pathSlab.rotation.y = Math.atan2(pB.x - pA.x, pB.z - pA.z);
+        pathSlab.receiveShadow = true;
+        scene.add(pathSlab);
+
+        // Place Tōrō lantern every 4 steps on alternating sides of the road
+        if (s % 4 === 0) {
+          const sideOffset = (s % 8 === 0 ? 2.6 : -2.6);
+          const perpX = -Math.sin(pathSlab.rotation.y) * sideOffset;
+          const perpZ = Math.cos(pathSlab.rotation.y) * sideOffset;
+          createToroLantern(rx + perpX, rz + perpZ, 0xff9900);
+        }
+      }
     }
 
-    // 2. East Scenic Ground Pathway to Templo 03 (Templo del Báculo)
-    for (let i = 0; i < 12; i++) {
-      const t = i / 11;
-      const rx = THREE.MathUtils.lerp(20, 65, t);
-      const rz = THREE.MathUtils.lerp(-40, -85, t);
-      const ry = this.getTerrainHeight(rx, rz) + 0.05;
-      const pathSlab = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.1, 4.5), stoneMat);
-      pathSlab.position.set(rx, ry, rz);
-      pathSlab.receiveShadow = true;
-      scene.add(pathSlab);
+    // 2. Ruta Imperial del Este (Palacio → Templo 03 Santuario del Báculo)
+    const eastWaypoints = [
+      new THREE.Vector3(12, 0, -35),
+      new THREE.Vector3(22, 0, -45),
+      new THREE.Vector3(35, 0, -58),
+      new THREE.Vector3(48, 0, -68),
+      new THREE.Vector3(55, 0, -75)
+    ];
+
+    for (let w = 0; w < eastWaypoints.length - 1; w++) {
+      const pA = eastWaypoints[w];
+      const pB = eastWaypoints[w + 1];
+      const steps = 8;
+      for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        const rx = THREE.MathUtils.lerp(pA.x, pB.x, t);
+        const rz = THREE.MathUtils.lerp(pA.z, pB.z, t);
+        const ry = this.getTerrainHeight(rx, rz) + 0.04;
+
+        const pathSlab = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.08, 4.2), stoneMat);
+        pathSlab.position.set(rx, ry, rz);
+        pathSlab.rotation.y = Math.atan2(pB.x - pA.x, pB.z - pA.z);
+        pathSlab.receiveShadow = true;
+        scene.add(pathSlab);
+
+        if (s % 4 === 0) {
+          const sideOffset = (s % 8 === 0 ? 2.6 : -2.6);
+          const perpX = -Math.sin(pathSlab.rotation.y) * sideOffset;
+          const perpZ = Math.cos(pathSlab.rotation.y) * sideOffset;
+          createToroLantern(rx + perpX, rz + perpZ, 0x00e5ff);
+        }
+      }
+    }
+
+    // 3. Ruta de la Cresta Norte (Conexión entre Templo 02 y Templo 03)
+    for (let s = 0; s <= 15; s++) {
+      const t = s / 15;
+      const rx = THREE.MathUtils.lerp(-55, 55, t);
+      const rz = -75;
+      const ry = this.getTerrainHeight(rx, rz) + 0.04;
+
+      const ridgeSlab = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.08, 3.6), stoneMat);
+      ridgeSlab.position.set(rx, ry, rz);
+      ridgeSlab.receiveShadow = true;
+      scene.add(ridgeSlab);
     }
 
     // ── South Ruins ──
@@ -1289,7 +1421,7 @@ export class LevelToyStory {
     const scene = this.sceneManager.scene;
 
     // Relocate Staff Chest on top of the Altar inside the Secret Chamber of Templo 03 ("Templo del Báculo")
-    this.staffChest = new TreasureChest(new THREE.Vector3(65.0, 15.9, -85.0), Math.PI);
+    this.staffChest = new TreasureChest(new THREE.Vector3(55.0, 15.9, -75.0), Math.PI);
     scene.add(this.staffChest.mesh);
     this.chests.push(this.staffChest);
     this.spellSystem.registerChest(this.staffChest);
