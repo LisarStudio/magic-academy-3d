@@ -6,17 +6,45 @@ export class TriggerZone {
   public isTriggered = false;
   public onTrigger: () => void;
   public debugMesh: THREE.Mesh | null = null;
+  public repeatable = false;
+  private wasInside = false;
+  private cooldownTimer = 0;
+  private static readonly COOLDOWN = 2.0; // seconds before re-triggering
 
-  constructor(id: string, min: THREE.Vector3, max: THREE.Vector3, onTrigger: () => void) {
+  constructor(id: string, min: THREE.Vector3, max: THREE.Vector3, onTrigger: () => void, repeatable = false) {
     this.id = id;
     this.boundingBox = new THREE.Box3(min, max);
     this.onTrigger = onTrigger;
+    this.repeatable = repeatable;
   }
 
-  public check(position: THREE.Vector3): boolean {
+  public check(position: THREE.Vector3, delta?: number): boolean {
+    // Tick cooldown
+    if (delta && this.cooldownTimer > 0) {
+      this.cooldownTimer -= delta;
+    }
+
+    const inside = this.boundingBox.containsPoint(position);
+
+    if (this.repeatable) {
+      // For repeatable zones: trigger on each fresh entry after cooldown
+      if (inside && !this.wasInside && this.cooldownTimer <= 0) {
+        this.wasInside = true;
+        this.cooldownTimer = TriggerZone.COOLDOWN;
+        console.log(`[TriggerZone] Triggered repeatable zone '${this.id}'`);
+        this.onTrigger();
+        return true;
+      }
+      if (!inside) {
+        this.wasInside = false;
+      }
+      return false;
+    }
+
+    // Non-repeatable: original one-shot behavior
     if (this.isTriggered) return false;
 
-    if (this.boundingBox.containsPoint(position)) {
+    if (inside) {
       this.isTriggered = true;
       console.log(`[TriggerZone] Triggered zone '${this.id}'`);
       this.onTrigger();

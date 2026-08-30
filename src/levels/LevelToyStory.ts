@@ -1159,18 +1159,19 @@ export class LevelToyStory {
       cit.add(centralPillar);
       this.levelColliders.push(centralPillar);
 
-      // ── WALKABLE SPIRAL STAIRCASE (ESCALERA EN ESPIRAL DEL TEMPLO DEL BÁCULO) ──
-      const numSteps = 24;
+      // ── WALKABLE SPIRAL RAMP (RAMPA EN ESPIRAL — ancha y segura, imposible caer) ──
+      const numSteps = 48; // Dense overlapping segments create smooth ramp surface
       const startH = 0.8;
       const totalH = 14.0;
-      const stepRadius = 4.8;
+      const stepRadius = 4.5;
 
       for (let i = 0; i < numSteps; i++) {
         const progress = i / (numSteps - 1);
-        const angle = progress * Math.PI * 2.8; // ~500 degrees spiral rotation
+        const angle = progress * Math.PI * 2.8;
         const h = startH + progress * totalH;
 
-        const stepGeo = new THREE.BoxGeometry(3.5, 0.35, 1.8);
+        // Wide overlapping ramp segments (4.5m wide × 2.5m deep) that overlap to form continuous surface
+        const stepGeo = new THREE.BoxGeometry(4.5, 0.5, 2.5);
         const step = new THREE.Mesh(stepGeo, stoneMat);
         const sx = Math.cos(angle) * stepRadius;
         const sz = Math.sin(angle) * stepRadius;
@@ -1180,26 +1181,26 @@ export class LevelToyStory {
         cit.add(step);
         this.levelColliders.push(step);
 
-        // ── DOUBLE-SIDED SAFETY BARRIERS (Barandillas a ambos lados para evitar caídas) ──
-        // 1. Inner Balustrade Railing (Radius 2.2m)
-        const innerRail = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.2, 8), redWoodMat);
-        innerRail.position.set(Math.cos(angle) * 2.2, h + 0.6, Math.sin(angle) * 2.2);
-        cit.add(innerRail);
-        this.levelColliders.push(innerRail);
+        // ── THICK SAFETY WALLS on both sides (not thin rail posts, REAL WALLS) ──
+        // Inner wall (height 1.5m, can't jump over)
+        const innerWall = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.5, 2.5), redWoodMat);
+        innerWall.position.set(Math.cos(angle) * 2.0, h + 0.75, Math.sin(angle) * 2.0);
+        innerWall.rotation.y = -angle + Math.PI / 2;
+        cit.add(innerWall);
+        this.levelColliders.push(innerWall);
 
-        // 2. Outer Balustrade Railing (Radius 5.8m)
-        const outerRail = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.2, 8), redWoodMat);
-        outerRail.position.set(Math.cos(angle) * 5.8, h + 0.6, Math.sin(angle) * 5.8);
-        cit.add(outerRail);
-        this.levelColliders.push(outerRail);
+        // Outer wall (height 1.5m)
+        const outerWall = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.5, 2.5), redWoodMat);
+        outerWall.position.set(Math.cos(angle) * 6.5, h + 0.75, Math.sin(angle) * 6.5);
+        outerWall.rotation.y = -angle + Math.PI / 2;
+        cit.add(outerWall);
+        this.levelColliders.push(outerWall);
 
-        if (i % 6 === 0) {
+        if (i % 12 === 0) {
           const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, emissive: 0xff4400, emissiveIntensity: 1.5 });
           const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), lanternMat);
-          lantern.position.set(sx * 1.2, h + 1.5, sz * 1.2);
-          const lLight = new THREE.PointLight(0xff7700, 2.0, 6.0);
-          lLight.position.set(sx * 1.2, h + 1.5, sz * 1.2);
-          cit.add(lantern, lLight);
+          lantern.position.set(Math.cos(angle) * 6.8, h + 2.0, Math.sin(angle) * 6.8);
+          cit.add(lantern);
         }
       }
 
@@ -1924,8 +1925,8 @@ export class LevelToyStory {
     });
     this.triggerZones.push(tBoss);
 
-    // Gekko conversation trigger zone
-    const tGekko = new TriggerZone('trig_gekko', new THREE.Vector3(-7, -1, -13.0), new THREE.Vector3(-1.0, 5, -7.0), async () => {
+    // Gekko conversation trigger zone — REPEATABLE so player can interact multiple times
+    const tGekko = new TriggerZone('trig_gekko', new THREE.Vector3(-8, -1, -14.0), new THREE.Vector3(1.0, 5, -6.0), async () => {
       if (this.isCinematicPlaying) return;
 
       if (this.gekkoMissionState === 'NOT_STARTED') {
@@ -1948,7 +1949,7 @@ export class LevelToyStory {
       } else if (this.gekkoMissionState === 'REWARD_GIVEN') {
         this.subtitleSystem.show('Gekko', '¡Gracias por ayudarme con las 50 Lisar Coins! Usa esa llave para abrir el portón principal.');
       }
-    });
+    }, true); // true = repeatable
     this.triggerZones.push(tGekko);
 
     // Exit portal trigger at the back
@@ -2263,7 +2264,7 @@ export class LevelToyStory {
     this.movingPlatforms.forEach(p => p.update(delta));
 
     // Check triggers
-    this.triggerZones.forEach(t => t.check(playerPos));
+    this.triggerZones.forEach(t => t.check(playerPos, delta));
     
     // Update doors
     this.doors.forEach(d => d.update(delta));

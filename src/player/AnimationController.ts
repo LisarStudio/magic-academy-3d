@@ -122,8 +122,8 @@ export class AnimationController {
 
     let hasCast = false;
     const clipDuration = action.getClip().duration;
-    // Release spell at 80% of atack_wood.glb animation gesture for a snappier release
-    const castTimeThreshold = clipDuration * 0.80;
+    // Release spell at 30% of atack_wood.glb animation — during the forward swing of the attack, not after
+    const castTimeThreshold = clipDuration * 0.30;
 
     const checkMarker = () => {
       if (!hasCast && action.time >= castTimeThreshold) {
