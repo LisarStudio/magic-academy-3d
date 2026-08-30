@@ -191,17 +191,39 @@ export class PlayerController {
       return;
     }
 
-    // 1. Ground Check
+    const isPlayerChild = (obj: THREE.Object3D): boolean => {
+      let curr: THREE.Object3D | null = obj;
+      while (curr) {
+        if (curr === this.mesh) return true;
+        curr = curr.parent;
+      }
+      return false;
+    };
+
+    // 1. Ground Check (Surface normal validation + Self-mesh exclusion)
     PlayerController.TEMP_GROUND_ORIGIN.copy(this.mesh.position).add(PlayerController.RAY_OFFSET);
     this.groundRaycaster.set(PlayerController.TEMP_GROUND_ORIGIN, PlayerController.DOWN_DIR);
-    const groundHits = this.groundRaycaster.intersectObjects(this.colliders, true);
+    this.groundRaycaster.far = 1.2;
+    const rawGroundHits = this.groundRaycaster.intersectObjects(this.colliders, true);
+
+    let validGroundHit: THREE.Intersection | null = null;
+    for (const hit of rawGroundHits) {
+      if (isPlayerChild(hit.object)) continue;
+      if (!hit.face) continue;
+      const norm = hit.face.normal.clone();
+      norm.transformDirection(hit.object.matrixWorld);
+      if (norm.y >= 0.4) { // Walkable floor or ramp slope
+        validGroundHit = hit;
+        break;
+      }
+    }
 
     const prevVelY = this.velocity.y;
-    this.isGrounded = groundHits.length > 0 && groundHits[0].distance <= 0.8; // Slope tolerance
+    this.isGrounded = validGroundHit !== null && validGroundHit.distance <= 0.85;
 
-    if (this.isGrounded && this.velocity.y <= 0) {
+    if (this.isGrounded && validGroundHit && this.velocity.y <= 0) {
       this.velocity.y = 0;
-      this.mesh.position.y = groundHits[0].point.y; // feet snap to floor surface
+      this.mesh.position.y = validGroundHit.point.y; // feet snap cleanly to floor
       
       const dangerousFall = prevVelY < -12.0;
 
@@ -303,8 +325,6 @@ export class PlayerController {
       }
     }
 
-    // 3. Jump (handled by input.onJumpPress callback)
-
     // 4. Wall Collision — Raycast in movement direction before applying position
     const horizontalVel = new THREE.Vector3(this.velocity.x, 0, this.velocity.z);
     const horizontalSpeed = horizontalVel.length();
@@ -318,7 +338,8 @@ export class PlayerController {
       this.wallRaycaster.set(rayOrigin, moveNorm);
       this.wallRaycaster.far = this.PLAYER_RADIUS + moveAmount;
 
-      const wallHits = this.wallRaycaster.intersectObjects(this.colliders, true);
+      const rawWallHits = this.wallRaycaster.intersectObjects(this.colliders, true);
+      const wallHits = rawWallHits.filter(h => !isPlayerChild(h.object));
 
       if (wallHits.length > 0 && wallHits[0].distance < this.PLAYER_RADIUS + moveAmount) {
         const hitObject = wallHits[0].object;
@@ -330,8 +351,8 @@ export class PlayerController {
           const wallNormal = wallHits[0].face?.normal?.clone() || new THREE.Vector3(0, 0, 1);
           wallNormal.transformDirection(hitObject.matrixWorld);
 
-          // Only treat as a wall if it is a steep vertical surface (abs(normal.y) < 0.3)
-          if (Math.abs(wallNormal.y) < 0.3) {
+          // Only treat as a wall if it is a steep vertical surface (abs(normal.y) < 0.35)
+          if (Math.abs(wallNormal.y) < 0.35) {
             wallNormal.y = 0;
             wallNormal.normalize();
 
@@ -349,7 +370,8 @@ export class PlayerController {
       const lowRayOrigin = this.mesh.position.clone().add(new THREE.Vector3(0, 0.15, 0));
       this.wallRaycaster.set(lowRayOrigin, moveNorm);
       this.wallRaycaster.far = this.PLAYER_RADIUS + 0.3;
-      const stepHits = this.wallRaycaster.intersectObjects(this.colliders, true);
+      const rawStepHits = this.wallRaycaster.intersectObjects(this.colliders, true);
+      const stepHits = rawStepHits.filter(h => !isPlayerChild(h.object));
       if (stepHits.length > 0 && stepHits[0].distance <= this.PLAYER_RADIUS + 0.3) {
         const stepPt = stepHits[0].point;
         const stepHeight = stepPt.y - this.mesh.position.y;
@@ -364,41 +386,21 @@ export class PlayerController {
     this.mesh.position.y += this.velocity.y * delta;
     this.mesh.position.z += this.velocity.z * delta;
 
-    // ── NPC & Boss Physical Cylinder Separation Pass ──
-    // Guarantees Wukong physically cannot walk through Gekko or Crab Boss
-    const levelInst = (window as any).gameInstance?.level01;
-    const gekkoPos = levelInst?.gekkoNPC?.mesh?.position || new THREE.Vector3(-4, 0, -10);
-    const distGekko = Math.hypot(this.mesh.position.x - gekkoPos.x, this.mesh.position.z - gekkoPos.z);
-    if (distGekko < 1.5) {
-      const pushX = (this.mesh.position.x - gekkoPos.x) / (distGekko || 1);
-      const pushZ = (this.mesh.position.z - gekkoPos.z) / (distGekko || 1);
-      this.mesh.position.x = gekkoPos.x + pushX * 1.5;
-      this.mesh.position.z = gekkoPos.z + pushZ * 1.5;
-    }
-
-    if (levelInst && levelInst.enemies) {
-      const boss = levelInst.enemies.find((e: any) => e.id === 'crab_boss');
-      if (boss && boss.isAlive()) {
-        const bossPos = boss.getPosition();
-        const distBoss = Math.hypot(this.mesh.position.x - bossPos.x, this.mesh.position.z - bossPos.z);
-        if (distBoss < 3.2) {
-          const pushX = (this.mesh.position.x - bossPos.x) / (distBoss || 1);
-          const pushZ = (this.mesh.position.z - bossPos.z) / (distBoss || 1);
-          this.mesh.position.x = bossPos.x + pushX * 3.2;
-          this.mesh.position.z = bossPos.z + pushZ * 3.2;
-        }
-      }
-    }
-
-    // Post-movement ground re-snap for smooth slope traversal
-    // Without this, moving horizontally on a slope causes one frame of being airborne
-    // which triggers gravity and makes uphill movement feel heavy
+    // Post-movement ground re-snap for smooth slope and ramp traversal
     if (this.isGrounded && this.velocity.y === 0 && this.colliders.length > 0) {
-      const snapOrigin = this.mesh.position.clone().add(new THREE.Vector3(0, 1.0, 0));
-      this.groundRaycaster.set(snapOrigin, new THREE.Vector3(0, -1, 0));
-      const snapHits = this.groundRaycaster.intersectObjects(this.colliders, true);
-      if (snapHits.length > 0 && snapHits[0].distance <= 1.8) {
-        this.mesh.position.y = snapHits[0].point.y;
+      const snapOrigin = this.mesh.position.clone().add(new THREE.Vector3(0, 0.8, 0));
+      this.groundRaycaster.set(snapOrigin, PlayerController.DOWN_DIR);
+      this.groundRaycaster.far = 1.6;
+      const rawSnapHits = this.groundRaycaster.intersectObjects(this.colliders, true);
+      for (const hit of rawSnapHits) {
+        if (isPlayerChild(hit.object)) continue;
+        if (!hit.face) continue;
+        const norm = hit.face.normal.clone();
+        norm.transformDirection(hit.object.matrixWorld);
+        if (norm.y >= 0.4 && hit.distance <= 1.4) {
+          this.mesh.position.y = hit.point.y;
+          break;
+        }
       }
     }
 
