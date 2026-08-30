@@ -392,24 +392,34 @@ export class EnemyController {
       if (!this.deathVfxSpawned) {
         this.deathVfxSpawned = true;
         this.spawnDeathVFX();
+        console.log(`[BOSS] Entering DYING — defeat sequence started`);
       }
 
       this.dyingTimer -= delta;
-      const t = Math.max(0, this.dyingTimer / this.dyingDuration); // 1→0
 
-      // Squash: initially squash Y, then scale to zero
-      const phase1 = Math.min(1, (1 - t) * 3); // 0→1 in first third
-      const squashY = 1.0 - phase1 * 0.6; // squash down
-      const squashXZ = 1.0 + phase1 * 0.3; // expand sides
-      // Then shrink to zero in last two thirds
+      if (this.id === 'crab_boss') {
+        // Boss Defeat Pose: falls upside down onto back, remains VISUALLY PRESENT on arena floor
+        this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, Math.PI, delta * 5.0);
+        this.mesh.visible = true; // Remained present for cinematic!
+        if (this.dyingTimer <= 0) {
+          this.state = 'DEAD';
+          this.isDead = true;
+          console.log(`[BOSS] Death sequence completed — lying defeated on floor`);
+        }
+        return;
+      }
+
+      // Regular crabs: squash, spin, shrink to zero
+      const t = Math.max(0, this.dyingTimer / this.dyingDuration); // 1→0
+      const phase1 = Math.min(1, (1 - t) * 3);
+      const squashY = 1.0 - phase1 * 0.6;
+      const squashXZ = 1.0 + phase1 * 0.3;
       const shrink = Math.max(0.001, t);
       this.mesh.scale.set(
         this.dyingScaleStart * squashXZ * shrink,
         this.dyingScaleStart * squashY * shrink,
         this.dyingScaleStart * squashXZ * shrink,
       );
-
-      // Spin wildly
       this.mesh.rotation.y += delta * 8.0;
       this.mesh.rotation.z += delta * 5.0;
 

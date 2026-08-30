@@ -19,7 +19,7 @@ import { AudioManager } from '../core/AudioManager';
 import { EnemyController } from '../enemies/EnemyController';
 import { GekkoNPC } from '../npc/GekkoNPC';
 import { MovingPlatform } from '../world/MovingPlatform';
-import { ItemPickupVFX } from '../player/ItemPickupVFX';
+import { KeyPickupSequence, type KeyData } from '../player/KeyPickupSequence';
 
 export class LevelToyStory {
   private sceneManager: SceneManager;
@@ -59,11 +59,22 @@ export class LevelToyStory {
   private grassUniforms: any = null;
   private cloudsUniforms: any = null;
 
-  // Quest states
+  // Quest states & Gekko Mission State Machine
+  public gekkoMissionState: 'NOT_STARTED' | 'MISSION_ACTIVE' | 'MISSION_COMPLETE' | 'REWARD_GIVEN' = 'NOT_STARTED';
+  private isCinematicPlaying = false;
   private coinsExchanged = false;
   private litGargoylesCount = 0;
   private specialPotsSmashed = 0;
   private totalSpecialPots = 5;
+
+  // Generic Key Registry with Color Data
+  public keyDefinitions: Record<string, KeyData> = {
+    key1_gekko: { id: 'key1_gekko', name: 'Llave de la Riqueza (Gekko)', color: 0x00ff88, emissiveColor: 0x00cc66, obtained: false },
+    key2_boss: { id: 'key2_boss', name: 'Llave de Combate (Jefe Cangrejo)', color: 0xff2200, emissiveColor: 0xff4400, obtained: false },
+    key3_platform: { id: 'key3_platform', name: 'Llave de Plataformas (Tejado)', color: 0x00e5ff, emissiveColor: 0x00bfff, obtained: false },
+    key4_gargoyles: { id: 'key4_gargoyles', name: 'Llave del Secreto (Gárgolas)', color: 0xa855f7, emissiveColor: 0x9333ea, obtained: false },
+    key5_pots: { id: 'key5_pots', name: 'Llave de Destrucción (Gemas)', color: 0xffa500, emissiveColor: 0xff8800, obtained: false },
+  };
 
   // Visual markers for keys
   private keysMeshes: THREE.Group[] = [];
@@ -1008,22 +1019,27 @@ export class LevelToyStory {
     coinPositions.push(new THREE.Vector3(-40, 0.5, -40));
     coinPositions.push(new THREE.Vector3(-45, 5.2, -40)); // Top of broken arch
 
-    // Make sure we have enough margin
-    while (coinPositions.length < 54) {
-      coinPositions.push(new THREE.Vector3((Math.random() - 0.5) * 60, 0.5, -30 - Math.random() * 30));
+    // Guarantee EXACTLY 50 deterministic coin positions
+    const EXPECTED_LISAR_COINS = 50;
+    const finalCoins = coinPositions.slice(0, EXPECTED_LISAR_COINS);
+    while (finalCoins.length < EXPECTED_LISAR_COINS) {
+      finalCoins.push(new THREE.Vector3((Math.random() - 0.5) * 50, 0.5, -20 - Math.random() * 30));
     }
-    // Truncate to exactly 54 if somehow exceeded (ensures 4 coins margin above 50 goal)
-    const finalCoins = coinPositions.slice(0, 54);
+
+    console.log(`[COINS] Initializing spawn sequence for EXACTLY ${finalCoins.length}/${EXPECTED_LISAR_COINS} Lisar Coins.`);
 
     let index = 0;
     const spawnNext = () => {
-      if (index >= finalCoins.length) return;
+      if (index >= finalCoins.length) {
+        console.log(`[COINS] Spawned: ${finalCoins.length}/${EXPECTED_LISAR_COINS}`);
+        return;
+      }
       const pos = finalCoins[index];
       this.createSparks(pos);
       this.collectibleSystem.spawnCoin(`coin_${index}`, pos);
       this.audioManager.playCoinSpawnHarmonic(index);
       index++;
-      setTimeout(spawnNext, 80);
+      setTimeout(spawnNext, 40);
     };
     spawnNext();
   }
@@ -1105,10 +1121,49 @@ export class LevelToyStory {
         if (hud) hud.triggerDamageFlash();
       };
 
-      e.onDeath = () => {
+      e.onDeath = async () => {
         if (e.id === 'crab_boss') {
-          this.spawn3DKey('key2_boss', new THREE.Vector3(45, 1.2, -40));
-          this.subtitleSystem.show('Jefe Cangrejo', '¡Derrotaste al Jefe Cangrejo! La Llave de Combate ha aparecido flotando en la arena.');
+          console.log('[BOSS] HP: 0 -> Entering DYING state. Defeat sequence started.');
+          if (this.isCinematicPlaying) return;
+          this.isCinematicPlaying = true;
+
+          // Pause other enemies
+          this.enemies.forEach(other => {
+            if (other.id !== 'crab_boss') other.isPaused = true;
+          });
+
+          // Focus camera on defeated boss lying on the ground
+          const cinematicCamera = (window as any).gameInstance?.cinematicCamera;
+          if (cinematicCamera) {
+            const bossPos = e.mesh.position.clone();
+            const camPos = bossPos.clone().add(new THREE.Vector3(-6.0, 3.5, 6.0));
+            const lookAt = bossPos.clone().add(new THREE.Vector3(0, 0.5, 0));
+            cinematicCamera.moveCamera(camPos, camPos, lookAt, lookAt, 999.0);
+          }
+
+          this.subtitleSystem.show('Jefe Cangrejo', '¡El Jefe Cangrejo ha sido derrotado!');
+
+          // Wait 1.0s to view defeated boss lying on arena floor
+          await new Promise(r => setTimeout(r, 1000));
+
+          // Run KeyPickupSequence for Crimson Boss Key (key2_boss)
+          console.log('[BOSS] Reward key spawned — flying to player');
+          const bossKeyData = this.keyDefinitions['key2_boss'];
+          const keySpawnPos = e.mesh.position.clone().add(new THREE.Vector3(0, 1.2, 0));
+
+          await KeyPickupSequence.runSequence(
+            bossKeyData,
+            keySpawnPos,
+            this.player,
+            this.sceneManager.scene,
+            () => {
+              console.log('[BOSS] Death sequence completed — gameplay resumed');
+              this.awardKey('key2_boss');
+              if (cinematicCamera) cinematicCamera.abort();
+              this.enemies.forEach(other => other.isPaused = false);
+              this.isCinematicPlaying = false;
+            }
+          );
         }
       };
     });
@@ -1272,19 +1327,27 @@ export class LevelToyStory {
 
     // Gekko conversation trigger zone
     const tGekko = new TriggerZone('trig_gekko', new THREE.Vector3(-7, -1, -13.0), new THREE.Vector3(-1.0, 5, -7.0), async () => {
-      if (this.coinsExchanged) return;
+      if (this.isCinematicPlaying) return;
 
-      if (!this.stateFlags.gekkoTalked) {
+      if (this.gekkoMissionState === 'NOT_STARTED') {
+        this.gekkoMissionState = 'MISSION_ACTIVE';
         this.stateFlags.gekkoTalked = true;
+        console.log('[GEKKO] State transition: NOT_STARTED -> MISSION_ACTIVE');
         this.runGekkoCinematic();
-      } else {
+      } else if (this.gekkoMissionState === 'MISSION_COMPLETE') {
+        console.log('[GEKKO] Triggering 2nd cinematic for 50 coins reward...');
+        this.runGekkoSecondCinematic();
+      } else if (this.gekkoMissionState === 'MISSION_ACTIVE') {
         const currentCoins = this.collectibleSystem.coinCount;
-        if (currentCoins >= 50 && !this.coinsExchanged) {
-          this.coinsExchanged = true;
+        if (currentCoins >= 50) {
+          this.gekkoMissionState = 'MISSION_COMPLETE';
+          console.log('[GEKKO] State transition: MISSION_ACTIVE -> MISSION_COMPLETE');
           this.runGekkoSecondCinematic();
-        } else if (!this.coinsExchanged) {
+        } else {
           this.subtitleSystem.show('Gekko', `Aún no tienes las 50 monedas Lisar (tienes ${currentCoins}/50). ¡Búscalas por todo el escenario!`);
         }
+      } else if (this.gekkoMissionState === 'REWARD_GIVEN') {
+        this.subtitleSystem.show('Gekko', '¡Gracias por ayudarme con las 50 Lisar Coins! Usa esa llave para abrir el portón principal.');
       }
     });
     this.triggerZones.push(tGekko);
@@ -1377,6 +1440,10 @@ export class LevelToyStory {
   }
 
   private async runGekkoSecondCinematic(): Promise<void> {
+    if (this.isCinematicPlaying) return;
+    this.isCinematicPlaying = true;
+    console.log('[GEKKO] Mission state: COMPLETE -> Starting Reward Cinematic');
+
     const cinematicCamera = (window as any).gameInstance?.cinematicCamera;
     const hud = (window as any).gameInstance?.hud;
 
@@ -1398,6 +1465,9 @@ export class LevelToyStory {
       this.gekkoNPC.mesh.rotation.set(0, 0, 0);
       this.gekkoNPC.setTalking(true);
 
+      // NO LISAR COIN FLOATING IN 2ND CINEMATIC!
+      if (this.floatingCoinMesh) this.floatingCoinMesh.visible = false;
+
       // Camera view
       const endPos = new THREE.Vector3(-1.5, 1.25, -8.75); 
       const endLookAt = new THREE.Vector3(-4.0, 1.1, -8.75); 
@@ -1414,28 +1484,38 @@ export class LevelToyStory {
         window.removeEventListener('keydown', skipHandler);
         hud.hideDialogue();
         
-        await hud.fadeScreenOut(500);
+        await hud.fadeScreenOut(400);
         
         cinematicCamera.abort();
-        this.player.isControlsLocked = false;
-        this.player.isMovementLocked = false;
-        
         this.gekkoNPC.setTalking(false);
         this.gekkoNPC.mesh.position.set(-4, 0, -10);
         this.gekkoNPC.mesh.rotation.set(0, -Math.PI * 0.25, 0);
         
-        // Spawn Gekko's 3D Emerald Key in front of Gekko
-        this.spawn3DKey('key1_gekko', new THREE.Vector3(-4, 1.2, -8.7));
-        this.subtitleSystem.show('Gekko', '¡Gekko te ha entregado la Llave Esmeralda! Tómala para guardarla en tu inventario.');
-
         // Hide Gekko badge from HUD as it's completed
         const gekkoBadge = document.getElementById('gekko-quest-complete');
         if (gekkoBadge) gekkoBadge.classList.add('hidden');
 
-        // Resume enemy AI!
-        this.enemies.forEach(e => e.isPaused = false);
+        await hud.fadeScreenIn(400);
 
-        await hud.fadeScreenIn(500);
+        // ── FASE 2-5: KeyPickupSequence for Gekko Emerald Wealth Key (key1_gekko) ──
+        console.log('[GEKKO] Wealth Key given');
+        const keyData = this.keyDefinitions['key1_gekko'];
+        const spawnPos = new THREE.Vector3(-4, 1.2, -8.7);
+
+        await KeyPickupSequence.runSequence(
+          keyData,
+          spawnPos,
+          this.player,
+          this.sceneManager.scene,
+          () => {
+            this.gekkoMissionState = 'REWARD_GIVEN';
+            this.coinsExchanged = true;
+            this.awardKey('key1_gekko');
+            this.enemies.forEach(e => e.isPaused = false);
+            this.isCinematicPlaying = false;
+            console.log('[GEKKO] Mission completed — REWARD_GIVEN state set');
+          }
+        );
       };
 
       const skipHandler = (e: KeyboardEvent) => {
@@ -1445,13 +1525,21 @@ export class LevelToyStory {
       };
       window.addEventListener('keydown', skipHandler);
 
-      hud.showTypewriterDialogue('Gekko', '¡Lo lograste! Reuniste las 50 monedas LISAR. Tal como prometí, esta llave es tuya.', () => {
+      hud.showTypewriterDialogue('Gekko', 'Vaya... realmente las encontraste todas.', () => {
         if (cinematicSkipped) return;
-        setTimeout(() => {
+        hud.showTypewriterDialogue('Gekko', 'Las 50 Lisar Coins. No pensé que alguien fuera capaz de reunirlas.', () => {
           if (cinematicSkipped) return;
-          finishCinematic();
-        }, 5000);
+          hud.showTypewriterDialogue('Gekko', 'Cumpliste tu parte del trato. Esta Llave de la Riqueza ahora te pertenece.', () => {
+            if (cinematicSkipped) return;
+            setTimeout(() => {
+              if (cinematicSkipped) return;
+              finishCinematic();
+            }, 2500);
+          });
+        });
       });
+    } else {
+      this.isCinematicPlaying = false;
     }
   }
 
@@ -1491,17 +1579,23 @@ export class LevelToyStory {
       kMesh.position.y += Math.sin(Date.now() * 0.003) * 0.001;
 
       // Check distance for collection
-      if (kMesh.position.distanceTo(playerPos) < 1.4 && !this.player.isControlsLocked) {
-        const keyName = kMesh.name as any;
+      if (kMesh.position.distanceTo(playerPos) < 1.4 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
+        const keyId = kMesh.name;
         const keyPos = kMesh.position.clone();
+        const keyData = this.keyDefinitions[keyId] || {
+          id: keyId,
+          name: 'Llave Mágica',
+          color: 0xffd700,
+          emissiveColor: 0xffaa00,
+          obtained: false,
+        };
 
         // Remove key mesh from scene and array immediately
         this.sceneManager.scene.remove(kMesh);
         this.keysMeshes.splice(idx, 1);
 
-        // Lock player controls & play epic item pickup presentation
-        ItemPickupVFX.playEpicPickup(this.player, this.sceneManager.scene, 'key', () => {
-          this.awardKey(keyName, keyPos);
+        KeyPickupSequence.runSequence(keyData, keyPos, this.player, this.sceneManager.scene, () => {
+          this.awardKey(keyId as any, keyPos);
         });
       }
     }
