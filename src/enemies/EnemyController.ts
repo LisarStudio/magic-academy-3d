@@ -151,7 +151,7 @@ export class EnemyController {
   // ─────────────────────────────────────────────────────────────────
   // takeHit — STUNNED/FLIPPED accept damage, DYING/DEAD are immune
   // ─────────────────────────────────────────────────────────────────
-  public takeHit(fromPos?: THREE.Vector3): void {
+  public takeHit(fromPos?: THREE.Vector3, damageAmount: number = 1): void {
     // Only block if already dying or dead
     if (this.state === 'DYING' || this.state === 'DEAD') return;
 
@@ -160,9 +160,9 @@ export class EnemyController {
         console.log('[Boss] Immune while active!');
         return;
       }
-      this.health = Math.max(0, this.health - 1);
+      this.health = Math.max(0, this.health - damageAmount);
       this.hitFlashTimer = 0.25;
-      console.log(`[Boss] Hit! HP: ${this.health}`);
+      console.log(`[Boss] Hit with damage ${damageAmount}! HP: ${this.health}`);
       if (this.health <= 0) {
         this.triggerDeath();
       } else {
@@ -172,9 +172,9 @@ export class EnemyController {
     }
 
     // Regular crabs — accept damage in ANY non-dying state
-    this.health = Math.max(0, this.health - 1);
+    this.health = Math.max(0, this.health - damageAmount);
     this.hitFlashTimer = 0.25;
-    console.log(`[Enemy ${this.id}] Hit! HP: ${this.health}/${this.maxHealth}`);
+    console.log(`[Enemy ${this.id}] Hit with damage ${damageAmount}! HP: ${this.health}/${this.maxHealth}`);
 
     if (this.health <= 0) {
       this.triggerDeath();

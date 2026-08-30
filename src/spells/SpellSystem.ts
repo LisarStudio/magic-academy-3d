@@ -357,7 +357,7 @@ export class SpellSystem {
         if (enemy.isAlive()) {
           const enemyPos = enemy.getPosition();
           if (proj.mesh.position.distanceTo(enemyPos) < 1.2) {
-            enemy.takeHit();
+            enemy.takeHit(proj.mesh.position, 2); // Staff spell deals DOUBLE DAMAGE (2) compared to Kick (1)
             this.audioManager.playEnemyStun();
             this.createImpactParticles(proj.mesh.position, 0x3df3ff);
             proj.isDead = true;

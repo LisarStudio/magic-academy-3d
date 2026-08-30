@@ -849,12 +849,12 @@ export class LevelToyStory {
     scene.add(secondFloorRight);
     this.levelColliders.push(secondFloorRight);
 
-    // Second Floor Interior Room (Library/Sanctum) divider walls
-    // Leaving a doorway in the middle at x = 0
-    const roomWallL = new THREE.Mesh(new THREE.BoxGeometry(10, 3, 0.6), stoneMat);
-    roomWallL.position.set(-8, 6.5, castleCenterZ - 5);
-    const roomWallR = new THREE.Mesh(new THREE.BoxGeometry(10, 3, 0.6), stoneMat);
-    roomWallR.position.set(8, 6.5, castleCenterZ - 5);
+    // Second Floor Interior Room (Library/Sanctum) side walls
+    // Wide open illuminated entryway in the middle (x: -7 to +7) so the staircase leads directly into the sanctum
+    const roomWallL = new THREE.Mesh(new THREE.BoxGeometry(6, 3, 0.6), stoneMat);
+    roomWallL.position.set(-13, 6.5, castleCenterZ - 5);
+    const roomWallR = new THREE.Mesh(new THREE.BoxGeometry(6, 3, 0.6), stoneMat);
+    roomWallR.position.set(13, 6.5, castleCenterZ - 5);
     scene.add(roomWallL, roomWallR);
     this.levelColliders.push(roomWallL, roomWallR);
 
