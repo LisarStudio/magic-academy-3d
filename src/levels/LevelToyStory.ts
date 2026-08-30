@@ -1180,13 +1180,18 @@ export class LevelToyStory {
         cit.add(step);
         this.levelColliders.push(step);
 
-        // Outer Safety Balustrade Railing along the spiral edge (prevents falling off)
-        const railPost = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.2, 8), redWoodMat);
-        const rx = Math.cos(angle) * (stepRadius + 1.5);
-        const rz = Math.sin(angle) * (stepRadius + 1.5);
-        railPost.position.set(rx, h + 0.6, rz);
-        cit.add(railPost);
-        this.levelColliders.push(railPost);
+        // ── DOUBLE-SIDED SAFETY BARRIERS (Barandillas a ambos lados para evitar caídas) ──
+        // 1. Inner Balustrade Railing (Radius 2.2m)
+        const innerRail = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.2, 8), redWoodMat);
+        innerRail.position.set(Math.cos(angle) * 2.2, h + 0.6, Math.sin(angle) * 2.2);
+        cit.add(innerRail);
+        this.levelColliders.push(innerRail);
+
+        // 2. Outer Balustrade Railing (Radius 5.8m)
+        const outerRail = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.2, 8), redWoodMat);
+        outerRail.position.set(Math.cos(angle) * 5.8, h + 0.6, Math.sin(angle) * 5.8);
+        cit.add(outerRail);
+        this.levelColliders.push(outerRail);
 
         if (i % 6 === 0) {
           const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, emissive: 0xff4400, emissiveIntensity: 1.5 });
@@ -1198,11 +1203,20 @@ export class LevelToyStory {
         }
       }
 
-      // ── PISO SUPERIOR / CÁMARA DEL SECRETO (Y = 14.8) ──
-      const upperFloor = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 0.6, 16), stoneMat);
-      upperFloor.position.y = 14.8;
-      cit.add(upperFloor);
-      this.levelColliders.push(upperFloor);
+      // ── PISO SUPERIOR / CÁMARA DEL SECRETO CON HOYO DE SALIDA AMPLIO (Y = 14.8) ──
+      // Ring Floor with central 5m hole so Wukong emerges smoothly onto the altar floor
+      const upperFloorGroup = new THREE.Group();
+      upperFloorGroup.position.y = 14.8;
+
+      const upperFloorSlab = new THREE.Mesh(new THREE.RingGeometry(5.0, 13.0, 16), stoneMat);
+      upperFloorSlab.rotation.x = -Math.PI / 2;
+      upperFloorSlab.receiveShadow = true;
+      upperFloorGroup.add(upperFloorSlab);
+
+      const upperFloorCollider = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 0.6, 16), new THREE.MeshBasicMaterial({ visible: false }));
+      upperFloorCollider.position.y = 14.8;
+      cit.add(upperFloorGroup, upperFloorCollider);
+      this.levelColliders.push(upperFloorCollider);
 
       // 8 Perimeter Dragon Pillars with Gold Rings in Secret Chamber
       for (let i = 0; i < 8; i++) {

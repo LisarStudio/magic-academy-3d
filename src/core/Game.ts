@@ -111,6 +111,14 @@ export class Game {
       this.subtitleSystem.show('Báculo Mágico', '¡Has encontrado el Báculo Mágico en el cofre! Hechizos desbloqueados.');
     };
 
+    // Bind Pause Menu Save / Load buttons
+    document.getElementById('btn-save-game')?.addEventListener('click', () => {
+      this.saveGame();
+    });
+    document.getElementById('btn-load-game')?.addEventListener('click', () => {
+      this.loadGame();
+    });
+
     // 7. Bind Input Actions
     this.inputManager.onLeftClick = () => {
       if (this.player.hasStaff && !this.player.isControlsLocked && !this.player.isAttacking) {
@@ -394,5 +402,64 @@ export class Game {
     );
 
     // Render is handled in loop()
+  }
+
+  public saveGame(): void {
+    const saveData = {
+      playerPos: { x: this.player.mesh.position.x, y: this.player.mesh.position.y, z: this.player.mesh.position.z },
+      playerRotY: this.player.mesh.rotation.y,
+      health: this.player.health,
+      maxHealth: this.player.maxHealth,
+      mana: this.player.mana,
+      maxMana: this.player.maxMana,
+      hasStaff: this.player.hasStaff,
+      coinsCount: this.collectibleSystem.coinCount,
+      gekkoMissionState: this.level01.gekkoMissionState,
+      timestamp: Date.now()
+    };
+    localStorage.setItem('lisar_savegame', JSON.stringify(saveData));
+    this.subtitleSystem.show('Guardado', '¡Partida guardada exitosamente!');
+    console.log('[SaveSystem] Game saved:', saveData);
+  }
+
+  public loadGame(): void {
+    const raw = localStorage.getItem('lisar_savegame');
+    if (!raw) {
+      this.subtitleSystem.show('Guardado', 'No se encontró ninguna partida guardada.');
+      return;
+    }
+    try {
+      const data = JSON.parse(raw);
+      if (data.playerPos) {
+        this.player.mesh.position.set(data.playerPos.x, data.playerPos.y, data.playerPos.z);
+      }
+      if (data.playerRotY !== undefined) {
+        this.player.mesh.rotation.y = data.playerRotY;
+      }
+      if (data.health !== undefined) {
+        this.player.health = data.health;
+        this.hud.setHealth(this.player.health, this.player.maxHealth);
+      }
+      if (data.mana !== undefined) {
+        this.player.mana = data.mana;
+        this.hud.setMana(this.player.mana, this.player.maxMana);
+      }
+      if (data.hasStaff) {
+        this.player.hasStaff = true;
+        this.player.setStaffVisibility(true);
+        this.player.attachStaffToBack();
+      }
+      if (data.coinsCount !== undefined) {
+        this.collectibleSystem.coinCount = data.coinsCount;
+        this.hud.setCoinCount(this.collectibleSystem.coinCount);
+      }
+      if (data.gekkoMissionState) {
+        this.level01.gekkoMissionState = data.gekkoMissionState;
+      }
+      this.subtitleSystem.show('Cargado', '¡Partida cargada exitosamente!');
+      console.log('[SaveSystem] Game loaded:', data);
+    } catch (e) {
+      console.error('[SaveSystem] Error loading savegame:', e);
+    }
   }
 }

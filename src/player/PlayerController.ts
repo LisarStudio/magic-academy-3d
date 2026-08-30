@@ -294,8 +294,13 @@ export class PlayerController {
       while (diff > Math.PI) diff -= Math.PI * 2;
       this.mesh.rotation.y += diff * Math.min(1.0, delta * 15.0);
     } else {
-      this.velocity.x *= 0.8; // Friction — original value
-      this.velocity.z *= 0.8;
+      if (this.isGrounded) {
+        this.velocity.x = 0;
+        this.velocity.z = 0;
+      } else {
+        this.velocity.x *= 0.85;
+        this.velocity.z *= 0.85;
+      }
     }
 
     // 3. Jump (handled by input.onJumpPress callback)
