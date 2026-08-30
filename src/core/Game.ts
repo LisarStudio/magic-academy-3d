@@ -105,6 +105,7 @@ export class Game {
 
     // 6. Bind Player & HUD Status Callbacks
     this.player.onHealthChange = (hp, maxHp) => this.hud.setHealth(hp, maxHp);
+    this.hud.setupMobileControls(this.inputManager);
     this.spellSystem.onCollectStaffCallback = () => {
       this.player.equipStaff();
       this.subtitleSystem.show('Báculo Mágico', '¡Has encontrado el Báculo Mágico en el cofre! Hechizos desbloqueados.');
@@ -153,7 +154,7 @@ export class Game {
 
     this.inputManager.onKick = () => {
       console.log('[Game] onKick callback triggered. HasStaff:', this.player.hasStaff, 'isControlsLocked:', this.player.isControlsLocked, 'isAttacking:', this.player.isAttacking);
-      if (!this.player.hasStaff && !this.player.isControlsLocked && !this.player.isAttacking) {
+      if (!this.player.isControlsLocked && !this.player.isAttacking) {
         this.player.isAttacking = true;
         this.player.isMovementLocked = true;
         this.player.isControlsLocked = true;

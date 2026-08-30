@@ -125,6 +125,42 @@ export class HUD {
     }
   }
 
+  public setupMobileControls(inputManager: any): void {
+    const btnKick = document.getElementById('btn-mobile-kick');
+    const btnJump = document.getElementById('btn-mobile-jump');
+    const btnAttack = document.getElementById('btn-mobile-attack');
+
+    if (btnKick) {
+      const handleKick = (e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        inputManager.triggerKick();
+      };
+      btnKick.addEventListener('touchstart', handleKick, { passive: false });
+      btnKick.addEventListener('click', handleKick);
+    }
+
+    if (btnJump) {
+      const handleJump = (e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        inputManager.triggerJump();
+      };
+      btnJump.addEventListener('touchstart', handleJump, { passive: false });
+      btnJump.addEventListener('click', handleJump);
+    }
+
+    if (btnAttack) {
+      const handleAttack = (e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        inputManager.triggerMagicSpell();
+      };
+      btnAttack.addEventListener('touchstart', handleAttack, { passive: false });
+      btnAttack.addEventListener('click', handleAttack);
+    }
+  }
+
   public showPauseMenu(visible: boolean): void {
     if (visible) {
       this.pauseScreenEl.classList.remove('hidden');

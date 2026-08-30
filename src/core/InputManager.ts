@@ -139,10 +139,20 @@ export class InputManager {
   public touchAnalogZ = 0;
   public touchIsRunning = false;
 
-  public triggerAttack(): void {
-    // Calls existing gameplay attack action (kick if unarmed, left-click spell if staff equipped)
+  public triggerKick(): void {
     if (this.onKick) this.onKick();
+  }
+
+  public triggerMagicSpell(): void {
     if (this.onLeftClick) this.onLeftClick();
+  }
+
+  public triggerAttack(): void {
+    if (this.onLeftClick) {
+      this.onLeftClick();
+    } else if (this.onKick) {
+      this.onKick();
+    }
   }
 
   public triggerJump(): void {
