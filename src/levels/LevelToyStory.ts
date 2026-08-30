@@ -2037,46 +2037,7 @@ export class LevelToyStory {
   }
 
   private createSparks(pos: THREE.Vector3): void {
-    const geom = new THREE.BufferGeometry();
-    const count = 25;
-    const positions = new Float32Array(count * 3);
-    const velocities: number[] = [];
-    for(let i=0; i<count; i++) {
-      positions[i*3] = pos.x + (Math.random() - 0.5)*0.8;
-      positions[i*3+1] = pos.y + Math.random()*0.8;
-      positions[i*3+2] = pos.z + (Math.random() - 0.5)*0.8;
-      velocities.push(
-        (Math.random() - 0.5) * 3,
-        Math.random() * 3 + 2,
-        (Math.random() - 0.5) * 3
-      );
-    }
-    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const mat = new THREE.PointsMaterial({ color: 0x3df3ff, size: 0.15, transparent: true });
-    const points = new THREE.Points(geom, mat);
-    this.sceneManager.scene.add(points);
-    
-    let age = 0;
-    const animate = () => {
-      age += 0.016;
-      if (age > 0.6) {
-        this.sceneManager.scene.remove(points);
-        geom.dispose();
-        mat.dispose();
-        return;
-      }
-      const p = geom.attributes.position.array as Float32Array;
-      for(let i=0; i<count; i++) {
-        p[i*3] += velocities[i*3] * 0.016;
-        p[i*3+1] += velocities[i*3+1] * 0.016;
-        p[i*3+2] += velocities[i*3+2] * 0.016;
-        velocities[i*3+1] -= 9.8 * 0.016; // gravity
-      }
-      geom.attributes.position.needsUpdate = true;
-      mat.opacity = 1 - (age / 0.6);
-      requestAnimationFrame(animate);
-    };
-    animate();
+    this.collectibleSystem.spawnSparks(pos);
   }
 
   private setupTriggers(): void {

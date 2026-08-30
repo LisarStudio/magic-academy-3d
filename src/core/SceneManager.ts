@@ -23,17 +23,21 @@ export class SceneManager {
     this.camera.position.set(0, 3, 5);
 
     // 3. Renderer
+    const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
-      powerPreference: 'high-performance'
+      antialias: !isMobile, // Disable heavy MSAA on mobile for 60 FPS performance
+      powerPreference: 'high-performance',
+      precision: isMobile ? 'mediump' : 'highp'
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const maxDPR = isMobile ? 1.35 : 1.75;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxDPR));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = isMobile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.3; // Slightly brighter for dramatic night scene
+    this.renderer.toneMappingExposure = 1.3; // Bright, readable night scene
 
     // 4. Lighting
     this.setupLighting();
@@ -43,6 +47,8 @@ export class SceneManager {
   }
 
   private setupLighting(): void {
+    const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+
     // Ambient moon glow
     this.ambientLight = new THREE.AmbientLight(0x404870, 1.0); // Stronger ambient for night scene readability
     this.scene.add(this.ambientLight);
@@ -51,11 +57,11 @@ export class SceneManager {
     this.dirLight = new THREE.DirectionalLight(0x7588c4, 1.8); // Stronger for dramatic shadows
     this.dirLight.position.set(20, 40, -10);
     this.dirLight.castShadow = true;
-    this.dirLight.shadow.mapSize.width = 2048;
-    this.dirLight.shadow.mapSize.height = 2048;
+    this.dirLight.shadow.mapSize.width = isMobile ? 1024 : 2048;
+    this.dirLight.shadow.mapSize.height = isMobile ? 1024 : 2048;
     this.dirLight.shadow.camera.near = 0.5;
     this.dirLight.shadow.camera.far = 150;
-    this.dirLight.shadow.radius = 3; // Soft shadow edges
+    this.dirLight.shadow.radius = isMobile ? 1 : 2.5; // Optimized shadow radius
 
     const shadowSize = 50; // Larger shadow frustum for better coverage
     this.dirLight.shadow.camera.left = -shadowSize;

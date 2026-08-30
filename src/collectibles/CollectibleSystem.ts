@@ -164,9 +164,44 @@ export class CollectibleSystem {
   private audioManager: AudioManager;
   private scene: THREE.Scene;
 
+  // High performance pre-allocated Particle Pool for item pickups (0 runtime allocations, 0 GC pauses)
+  private static readonly MAX_SPARKS = 240;
+  private sparkGeom: THREE.BufferGeometry;
+  private sparkPositions = new Float32Array(CollectibleSystem.MAX_SPARKS * 3);
+  private sparkColors = new Float32Array(CollectibleSystem.MAX_SPARKS * 3);
+  private sparkVelocities = new Float32Array(CollectibleSystem.MAX_SPARKS * 3);
+  private sparkAges = new Float32Array(CollectibleSystem.MAX_SPARKS);
+  private sparkMaxAges = new Float32Array(CollectibleSystem.MAX_SPARKS);
+  private sparkPointsMesh: THREE.Points;
+  private nextSparkIdx = 0;
+
   constructor(scene: THREE.Scene, audioManager: AudioManager) {
     this.scene = scene;
     this.audioManager = audioManager;
+
+    // Initialize all particles hidden underground
+    for (let i = 0; i < CollectibleSystem.MAX_SPARKS; i++) {
+      this.sparkPositions[i * 3 + 1] = -999;
+      this.sparkAges[i] = 999;
+      this.sparkMaxAges[i] = 1;
+    }
+
+    this.sparkGeom = new THREE.BufferGeometry();
+    this.sparkGeom.setAttribute('position', new THREE.BufferAttribute(this.sparkPositions, 3));
+    this.sparkGeom.setAttribute('color', new THREE.BufferAttribute(this.sparkColors, 3));
+
+    const sparkMat = new THREE.PointsMaterial({
+      size: 0.20,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+
+    this.sparkPointsMesh = new THREE.Points(this.sparkGeom, sparkMat);
+    this.sparkPointsMesh.frustumCulled = false;
+    this.scene.add(this.sparkPointsMesh);
   }
 
   public clearAll(): void {
@@ -225,6 +260,27 @@ export class CollectibleSystem {
     onCollectPotion?: (type: 'POTION_HP' | 'POTION_MP' | 'CHOCOLATE_FROG') => void,
     inputKeys?: Record<string, boolean>
   ): void {
+    // 1. Update Spark Particle Pool in-place (Zero Allocation)
+    let activeSparks = false;
+    const pArr = this.sparkPositions;
+    for (let i = 0; i < CollectibleSystem.MAX_SPARKS; i++) {
+      if (this.sparkAges[i] < this.sparkMaxAges[i]) {
+        activeSparks = true;
+        this.sparkAges[i] += delta;
+        pArr[i * 3] += this.sparkVelocities[i * 3] * delta;
+        pArr[i * 3 + 1] += this.sparkVelocities[i * 3 + 1] * delta;
+        pArr[i * 3 + 2] += this.sparkVelocities[i * 3 + 2] * delta;
+        this.sparkVelocities[i * 3 + 1] -= 9.8 * delta; // Gravity
+      } else if (pArr[i * 3 + 1] !== -999) {
+        pArr[i * 3 + 1] = -999;
+        activeSparks = true;
+      }
+    }
+    if (activeSparks) {
+      this.sparkGeom.attributes.position.needsUpdate = true;
+    }
+
+    // 2. Proximity & Collection check
     let nearestItem: Collectible | null = null;
     let minDistance = Infinity;
 
@@ -234,7 +290,7 @@ export class CollectibleSystem {
       item.update(delta);
 
       const dist = item.mesh.position.distanceTo(playerPos);
-      if (dist < 2.0 && dist < minDistance) {
+      if (dist < 2.2 && dist < minDistance) {
         minDistance = dist;
         nearestItem = item;
       }
@@ -264,6 +320,7 @@ export class CollectibleSystem {
         if (nearestItem.type === 'CARD') {
           this.collectedCount++;
           this.audioManager.playCardPickup();
+          this.spawnSparks(nearestItem.mesh.position);
           onCollectCard(this.collectedCount);
         } else if (nearestItem.type === 'COIN') {
           this.coinCount++;
@@ -272,9 +329,11 @@ export class CollectibleSystem {
           onCollectCoin?.(this.coinCount);
         } else if (nearestItem.type === 'CHOCOLATE_FROG') {
           this.audioManager.playFrogPickup();
+          this.spawnSparks(nearestItem.mesh.position);
           onCollectPotion?.('CHOCOLATE_FROG');
         } else if (nearestItem.type === 'POTION_HP' || nearestItem.type === 'POTION_MP') {
           this.audioManager.playPotionPickup();
+          this.spawnSparks(nearestItem.mesh.position);
           onCollectPotion?.(nearestItem.type);
         }
       }
@@ -283,68 +342,28 @@ export class CollectibleSystem {
     }
   }
 
-  private spawnSparks(pos: THREE.Vector3): void {
-    const particleCount = 20;
-    const geom = new THREE.BufferGeometry();
-    const positions = new Float32Array(particleCount * 3);
-    const colors = new Float32Array(particleCount * 3);
-    const velocities: number[] = [];
+  public spawnSparks(pos: THREE.Vector3): void {
+    const count = 18;
+    for (let i = 0; i < count; i++) {
+      const idx = (this.nextSparkIdx + i) % CollectibleSystem.MAX_SPARKS;
+      this.sparkPositions[idx * 3] = pos.x + (Math.random() - 0.5) * 0.15;
+      this.sparkPositions[idx * 3 + 1] = pos.y + 0.35 + (Math.random() - 0.5) * 0.15;
+      this.sparkPositions[idx * 3 + 2] = pos.z + (Math.random() - 0.5) * 0.15;
 
-    const baseColor = new THREE.Color().setHSL(Math.random(), 1.0, 0.5);
+      this.sparkVelocities[idx * 3] = (Math.random() - 0.5) * 3.5;
+      this.sparkVelocities[idx * 3 + 1] = Math.random() * 3.5 + 2.0;
+      this.sparkVelocities[idx * 3 + 2] = (Math.random() - 0.5) * 3.5;
 
-    for (let i = 0; i < particleCount; i++) {
-      positions[i * 3] = pos.x;
-      positions[i * 3 + 1] = pos.y + 0.5;
-      positions[i * 3 + 2] = pos.z;
+      // Golden & amber sparkling hues
+      this.sparkColors[idx * 3] = 1.0;
+      this.sparkColors[idx * 3 + 1] = 0.75 + Math.random() * 0.25;
+      this.sparkColors[idx * 3 + 2] = 0.15;
 
-      // Random color variation for each spark
-      const c = baseColor.clone().offsetHSL(Math.random() * 0.2 - 0.1, 0, Math.random() * 0.2);
-      colors[i * 3] = c.r;
-      colors[i * 3 + 1] = c.g;
-      colors[i * 3 + 2] = c.b;
-
-      velocities.push(
-        (Math.random() - 0.5) * 4,
-        Math.random() * 4 + 2,
-        (Math.random() - 0.5) * 4
-      );
+      this.sparkAges[idx] = 0;
+      this.sparkMaxAges[idx] = 0.45 + Math.random() * 0.2;
     }
-
-    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-    const mat = new THREE.PointsMaterial({
-      size: 0.15,
-      vertexColors: true,
-      transparent: true,
-      opacity: 1,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
-    });
-
-    const points = new THREE.Points(geom, mat);
-    this.scene.add(points);
-
-    let age = 0;
-    const animate = () => {
-      age += 0.016;
-      if (age > 0.6) {
-        this.scene.remove(points);
-        geom.dispose();
-        mat.dispose();
-        return;
-      }
-      const p = geom.attributes.position.array as Float32Array;
-      for (let i = 0; i < particleCount; i++) {
-        p[i * 3] += velocities[i * 3] * 0.016;
-        p[i * 3 + 1] += velocities[i * 3 + 1] * 0.016;
-        p[i * 3 + 2] += velocities[i * 3 + 2] * 0.016;
-        velocities[i * 3 + 1] -= 9.8 * 0.016; // gravity
-      }
-      geom.attributes.position.needsUpdate = true;
-      mat.opacity = 1 - (age / 0.6);
-      requestAnimationFrame(animate);
-    };
-    animate();
+    this.nextSparkIdx = (this.nextSparkIdx + count) % CollectibleSystem.MAX_SPARKS;
+    this.sparkGeom.attributes.position.needsUpdate = true;
+    this.sparkGeom.attributes.color.needsUpdate = true;
   }
 }
