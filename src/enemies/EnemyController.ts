@@ -81,10 +81,10 @@ export class EnemyController {
       bbox.getSize(size);
       const scale = (0.8 / Math.max(size.x, size.y, size.z)) * scaleMultiplier;
       model.scale.setScalar(scale);
+      model.updateMatrixWorld(true);
 
-      // Recompute scaled bounding box and shift model down so bottom-most vertex of feet sits exactly at y = 0
       const scaledBBox = new THREE.Box3().setFromObject(model);
-      model.position.y = -scaledBBox.min.y;
+      model.position.set(0, -scaledBBox.min.y, 0);
 
       model.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
@@ -495,22 +495,11 @@ export class EnemyController {
     // ── Boss arena constraint ──
     if (this.arenaCenter) {
       const playerDistToArena = playerPos.distanceTo(this.arenaCenter);
-      const bossDistToArena = this.mesh.position.distanceTo(this.arenaCenter);
-      if (playerDistToArena > this.arenaRadius || bossDistToArena > this.arenaRadius + 1.0) {
-        const spawnPos = this.patrolWaypoints[0];
-        const distToSpawn = this.mesh.position.distanceTo(spawnPos);
-        if (distToSpawn > 0.5) {
-          this.state = 'IDLE';
-          const dir = new THREE.Vector3().subVectors(spawnPos, this.mesh.position);
-          dir.y = 0;
-          this.safeNormalize(dir);
-          this.mesh.position.addScaledVector(dir, this.moveSpeed * delta);
-          this.mesh.rotation.y = Math.atan2(dir.x, dir.z);
-        } else {
-          this.state = 'IDLE';
-          this.mesh.rotation.y = 0;
-        }
-        this.animateLegs(delta);
+      if (playerDistToArena > this.arenaRadius) {
+        // Player is outside arena -> Boss stays passively idle waiting at arena center!
+        this.state = 'IDLE';
+        this.mesh.position.set(this.arenaCenter.x, 0.1, this.arenaCenter.z);
+        this.mesh.rotation.set(0, 0, 0);
         return;
       }
     }

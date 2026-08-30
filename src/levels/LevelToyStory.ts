@@ -2301,6 +2301,11 @@ export class LevelToyStory {
     const cameraController = (window as any).gameInstance?.cameraController;
     const hud = (window as any).gameInstance?.hud;
 
+    if (hud) {
+      hud.showGameplayHUD();
+      hud.fadeScreenIn(100);
+    }
+
     if (cinematicCamera && hud) {
       this.isCinematicPlaying = true;
       this.enemies.forEach(e => e.isPaused = true);
@@ -2311,9 +2316,6 @@ export class LevelToyStory {
       this.player.mesh.position.set(0, 0.2, 10);
       this.player.mesh.rotation.set(0, Math.PI, 0);
       this.player.forceIdle();
-
-      // Ensure screen fade is 100% hidden so 3D world is immediately visible
-      hud.fadeScreenIn(100);
 
       // High scenic camera sweep over the meadow and mountain pagodas down to behind Wukong
       const startCamPos = new THREE.Vector3(22.0, 16.0, 32.0);
