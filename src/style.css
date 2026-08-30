@@ -247,6 +247,201 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
 }
 .gekko-badge-text {
   font-size: 11px;
+position: absolute;
+  width: 16px; height: 16px;
+  border: 1px solid rgba(61, 255, 245, 0.4);
+  border-radius: 50%;
+  animation: pulse-ring 2s infinite ease-in-out;
+}
+@keyframes pulse-ring {
+  0%, 100% { transform: scale(1); opacity: 0.4; }
+  50%       { transform: scale(1.25); opacity: 0.8; }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   MODERN AAA HUD — TOP LEFT
+══════════════════════════════════════════════════════════════ */
+#hud-top-left {
+  position: absolute;
+  top: 24px; left: 24px;
+  pointer-events: auto;
+}
+
+.modern-hud {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(12, 16, 28, 0.78);
+  border: 1.5px solid rgba(245, 200, 66, 0.65);
+  border-radius: 16px;
+  padding: 12px 18px;
+  box-shadow:
+    0 0 25px rgba(245, 200, 66, 0.2),
+    0 8px 32px rgba(0, 0, 0, 0.75),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.character-portrait-frame {
+  position: relative;
+  width: 58px; height: 58px;
+  border-radius: 50%;
+  border: 2.5px solid #f5c842;
+  background: radial-gradient(circle at 35% 35%, #1a1530, #080410);
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: 0 0 16px rgba(245, 200, 66, 0.4), inset 0 0 8px rgba(0, 0, 0, 0.8);
+}
+.character-portrait-frame img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+}
+.portrait-glow-ring {
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  pointer-events: none;
+  animation: portrait-pulse 3s infinite ease-in-out;
+}
+@keyframes portrait-pulse {
+  0%, 100% { box-shadow: inset 0 0 4px rgba(245, 200, 66, 0.3); }
+  50%       { box-shadow: inset 0 0 14px rgba(245, 200, 66, 0.7); }
+}
+
+.modern-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 160px;
+}
+
+.bar-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bar-label {
+  color: var(--gold); letter-spacing: 1px;
+  width: 20px; text-align: center;
+  text-shadow: 0 0 6px var(--gold-glow);
+}
+
+/* Segmented Megaman bar */
+.bar-bg {
+  flex: 1; height: 16px;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+.bar-bg.segmented {
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(0,0,0,0.5) 0px, rgba(0,0,0,0.5) 5px,
+    rgba(0,0,0,0.85) 5px, rgba(0,0,0,0.85) 6px
+  );
+}
+.bar-fill {
+  height: 100%;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 2px;
+}
+.bar-fill.hp-fill {
+  background: linear-gradient(90deg, #b91c1c, #ef4444, #fca5a5);
+  box-shadow: 0 0 10px var(--hp-glow), inset 0 1px 0 rgba(255,255,255,0.2);
+}
+.bar-fill.mp-fill {
+  background: linear-gradient(90deg, #1d4ed8, #3b82f6, #93c5fd);
+  box-shadow: 0 0 10px var(--mp-glow), inset 0 1px 0 rgba(255,255,255,0.2);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   OBJECTIVE — TOP RIGHT
+══════════════════════════════════════════════════════════════ */
+#objective-container {
+  position: absolute;
+  top: 20px; right: 20px;
+  background: var(--bg-panel);
+  border: var(--border-gold);
+  border-radius: 8px;
+  padding: 10px 16px;
+  max-width: 280px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--border-glow), 0 4px 20px rgba(0,0,0,0.5);
+}
+.hud-title {
+  font-family: var(--font-title);
+  font-size: 10px; letter-spacing: 3px;
+  color: var(--gold);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  text-shadow: 0 0 8px var(--gold-glow);
+}
+#objective-text { font-size: 13px; font-weight: 600; color: #e8e0ff; line-height: 1.4; }
+
+/* ══════════════════════════════════════════════════════════════
+   COIN COUNTER — TOP RIGHT SECONDARY
+══════════════════════════════════════════════════════════════ */
+#hud-top-right {
+  position: absolute;
+  top: 20px; right: 20px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.hud-item {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg-panel);
+  border: var(--border-gold);
+  border-radius: 8px;
+  padding: 8px 14px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--border-glow);
+  font-family: var(--font-title);
+  font-size: 15px;
+  color: var(--gold);
+  text-shadow: 0 0 8px var(--gold-glow);
+}
+.icon-coin {
+  width: 18px; height: 18px;
+  background: radial-gradient(circle at 35% 35%, #f5c842, #c8941a);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--gold-glow);
+}
+#coin-count { font-weight: 700; color: var(--gold); text-shadow: 0 0 8px var(--gold-glow); }
+
+/* Gekko quest-complete badge — visible only when coins >= 33 */
+.gekko-quest-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  background: rgba(0, 200, 80, 0.18);
+  border: 1px solid rgba(0, 255, 100, 0.5);
+  border-radius: 20px;
+  padding: 3px 10px 3px 4px;
+  animation: gekko-badge-pulse 1.8s ease-in-out infinite;
+}
+.gekko-badge-portrait {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: 1.5px solid #00ff64;
+  object-fit: cover;
+}
+.gekko-badge-icon {
+  font-size: 16px;
+  color: #00ff64;
+  font-weight: 900;
+  text-shadow: 0 0 8px #00ff64;
+}
+.gekko-badge-text {
+  font-size: 11px;
   color: #a0ffb8;
   font-family: var(--font-ui);
   white-space: nowrap;
@@ -389,10 +584,14 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
   background: #000;
   z-index: 9999;
   opacity: 1;
-  transition: opacity 0.6s ease-in-out;
+  transition: opacity 0.4s ease-in-out;
   pointer-events: none;
 }
-.screen-fade-overlay.hidden { opacity: 0; }
+.screen-fade-overlay.hidden {
+  opacity: 0 !important;
+  visibility: hidden;
+  display: none !important;
+}
 
 .damage-flash-screen {
   position: absolute; top: 0; left: 0; width: 100%; height: 100%;

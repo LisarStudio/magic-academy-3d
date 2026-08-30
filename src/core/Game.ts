@@ -327,28 +327,12 @@ export class Game {
         this.inputManager.requestPointerLock();
       }
       this.audioManager.startBGM();
-      this.hud.showGameplayHUD();
       this.inputManager.resetInputs();
 
-      // Position Wukong facing forward (-Z) down the main entry avenue
-      this.player.mesh.position.set(0, 0.2, 10);
-      this.player.mesh.rotation.set(0, Math.PI, 0);
-
-      // Snap camera directly behind Wukong with 0 delay and 0 black screen
-      this.cameraController.setTarget(this.player.mesh);
-      this.cameraController.snapBehindTarget();
-
-      this.player.isControlsLocked = false;
-      this.player.isMovementLocked = false;
-      this.player.isAttacking = false;
-      this.player.forceIdle();
-
+      // Launch scenic world presentation cinematic down to Wukong
       if (this.level01) {
-        (this.level01 as any).isCinematicPlaying = false;
-        this.level01.stateFlags.introCompleted = true;
+        this.level01.runGameIntroSequence();
       }
-
-      this.subtitleSystem.show('LISAR', '¡Bienvenido al Reino Místico! Habla con Gekko en el camino para iniciar tu aventura.', 4500);
     };
 
     btnStart?.addEventListener('click', onStartGame);

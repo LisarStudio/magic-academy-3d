@@ -2175,26 +2175,21 @@ export class LevelToyStory {
 
       // Position Wukong facing FORWARD along -Z (with his BACK to the camera +Z!)
       this.player.mesh.position.set(0, 0.2, 10);
-      this.player.mesh.rotation.set(0, Math.PI, 0); // Math.PI = facing -Z into the world!
+      this.player.mesh.rotation.set(0, Math.PI, 0);
       this.player.forceIdle();
 
-      // Start black fade
-      await hud.fadeScreenOut(0);
+      // Ensure screen fade is 100% hidden so 3D world is immediately visible
+      hud.fadeScreenIn(100);
 
-      // High scenic camera sweep over the meadow and mountain pagodas
-      const startCamPos = new THREE.Vector3(25.0, 18.0, 35.0);
-      const startLookAt = new THREE.Vector3(0, 4.0, -40.0);
+      // High scenic camera sweep over the meadow and mountain pagodas down to behind Wukong
+      const startCamPos = new THREE.Vector3(22.0, 16.0, 32.0);
+      const startLookAt = new THREE.Vector3(0, 3.5, -35.0);
 
       // End camera position: Placed smoothly BEHIND Wukong, looking forward into the kingdom
       const endCamPos = new THREE.Vector3(0, 2.8, 15.5);
       const endLookAt = new THREE.Vector3(0, 1.8, -25.0);
 
-      cinematicCamera.moveCamera(startCamPos, endCamPos, startLookAt, endLookAt, 4.0);
-
-      // Fade screen in
-      await hud.fadeScreenIn(1000);
-
-      this.subtitleSystem.show('LISAR', '¡Bienvenido al Reino Místico del Rey Mono! Se ha iniciado la aventura.', 4000);
+      this.subtitleSystem.show('LISAR', '¡Bienvenido al Reino Místico del Rey Mono!', 4000);
 
       let introFinished = false;
       const finishIntro = async () => {
@@ -2208,10 +2203,12 @@ export class LevelToyStory {
 
         // Position camera behind Wukong facing forward (-Z)
         if (cameraController) {
+          cameraController.setTarget(this.player.mesh);
           cameraController.snapBehindTarget();
         }
 
         // Ensure Wukong stays facing -Z (back to camera) and is completely unlocked
+        this.player.mesh.position.set(0, 0.2, 10);
         this.player.mesh.rotation.set(0, Math.PI, 0);
 
         this.isCinematicPlaying = false;
@@ -2223,6 +2220,7 @@ export class LevelToyStory {
 
         this.enemies.forEach(e => e.isPaused = false);
         hud.showGameplayHUD();
+        this.subtitleSystem.show('LISAR', 'Habla con Gekko en el camino para iniciar tu aventura.', 4500);
       };
 
       const keySkip = (e: KeyboardEvent) => {
@@ -2236,10 +2234,9 @@ export class LevelToyStory {
       window.addEventListener('keydown', keySkip);
       window.addEventListener('touchstart', touchSkip, { passive: false });
 
-      // ZERO GEKKO DIALOGUE ON INTRO! Gekko stays completely idle until Wukong physically walks up to him!
-      setTimeout(() => {
-        if (!introFinished) finishIntro();
-      }, 4200);
+      cinematicCamera.moveCamera(startCamPos, endCamPos, startLookAt, endLookAt, 3.5).then(() => {
+        finishIntro();
+      });
     }
   }
 
