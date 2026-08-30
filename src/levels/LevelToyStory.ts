@@ -844,11 +844,22 @@ export class LevelToyStory {
     this.levelColliders.push(pLeft, pRight);
 
     // Castle Second Floor Balcony & Sanctum Floor (y = 5.0)
-    const secondFloorBack = new THREE.Mesh(new THREE.BoxGeometry(28, 0.4, 14), floorMat);
-    secondFloorBack.position.set(0, 5.0, castleCenterZ - 7);
-    secondFloorBack.receiveShadow = true;
-    scene.add(secondFloorBack);
-    this.levelColliders.push(secondFloorBack);
+    // Castle Second Floor Balcony & Sanctum Floor (y = 5.0)
+    // ── STAIRWELL CUTOUT FIX: Split floor slab so stairs exit cleanly into open space (no ceiling collision) ──
+    const secondFloorBackLeft = new THREE.Mesh(new THREE.BoxGeometry(3, 0.4, 14), floorMat);
+    secondFloorBackLeft.position.set(-12.5, 5.0, castleCenterZ - 7);
+    secondFloorBackLeft.receiveShadow = true;
+
+    const secondFloorBackRight = new THREE.Mesh(new THREE.BoxGeometry(19, 0.4, 14), floorMat);
+    secondFloorBackRight.position.set(4.5, 5.0, castleCenterZ - 7);
+    secondFloorBackRight.receiveShadow = true;
+
+    const secondFloorBackRear = new THREE.Mesh(new THREE.BoxGeometry(6, 0.4, 7.5), floorMat);
+    secondFloorBackRear.position.set(-8, 5.0, castleCenterZ - 10.25);
+    secondFloorBackRear.receiveShadow = true;
+
+    scene.add(secondFloorBackLeft, secondFloorBackRight, secondFloorBackRear);
+    this.levelColliders.push(secondFloorBackLeft, secondFloorBackRight, secondFloorBackRear);
 
     const secondFloorFront = new THREE.Mesh(new THREE.BoxGeometry(12, 0.4, 14), floorMat);
     secondFloorFront.position.set(4, 5.0, castleCenterZ + 7);
@@ -887,7 +898,17 @@ export class LevelToyStory {
     scene.add(stairsCollider);
     this.levelColliders.push(stairsCollider);
 
-    // Second Floor Guardrails
+    // ── STAIRWELL 2ND FLOOR BALUSTRADE SAFETY RAILINGS (Around opening) ──
+    const stairRailL = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.1, 7.0), stoneMat);
+    stairRailL.position.set(-11.0, 5.65, castleCenterZ - 3.5);
+    const stairRailR = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.1, 7.0), stoneMat);
+    stairRailR.position.set(-5.0, 5.65, castleCenterZ - 3.5);
+    const stairRailBack = new THREE.Mesh(new THREE.BoxGeometry(6.3, 1.1, 0.3), stoneMat);
+    stairRailBack.position.set(-8.0, 5.65, castleCenterZ - 7.0);
+    scene.add(stairRailL, stairRailR, stairRailBack);
+    this.levelColliders.push(stairRailL, stairRailR, stairRailBack);
+
+    // Second Floor Outer Guardrails
     const guardrailL = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.2, 28), stoneMat);
     guardrailL.position.set(-13.8, 5.6, castleCenterZ);
     const guardrailR = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.2, 28), stoneMat);
@@ -897,20 +918,40 @@ export class LevelToyStory {
     scene.add(guardrailL, guardrailR, guardrailB);
     this.levelColliders.push(guardrailL, guardrailR, guardrailB);
 
-    // Castle High Tower (Central cylinder on the roof) from y = 5 to 10
-    const towerGeo = new THREE.CylinderGeometry(6, 6, 5, 12);
-    const highTower = new THREE.Mesh(towerGeo, stoneMat);
-    highTower.position.set(0, 7.5, castleCenterZ - 4);
-    highTower.castShadow = true;
-    highTower.receiveShadow = true;
-    scene.add(highTower);
-    this.levelColliders.push(highTower);
+    // ── HOLLOW HIGH TOWER (Central ring wall from y = 5 to 10 with internal open space) ──
+    const towerRadius = 6.0;
+    const towerWallCount = 8;
+    for (let i = 0; i < towerWallCount; i++) {
+      if (i === 0) continue; // Arch doorway entrance into tower at front
+      const angle = (i / towerWallCount) * Math.PI * 2;
+      const wx = Math.cos(angle) * towerRadius;
+      const wz = (castleCenterZ - 4) + Math.sin(angle) * towerRadius;
+      const wallSeg = new THREE.Mesh(new THREE.BoxGeometry(4.2, 5.0, 0.5), stoneMat);
+      wallSeg.position.set(wx, 7.5, wz);
+      wallSeg.rotation.y = -angle + Math.PI / 2;
+      scene.add(wallSeg);
+      this.levelColliders.push(wallSeg);
+    }
 
-    // Tower Roof/Platform at y = 10.2
-    const towerRoof = new THREE.Mesh(new THREE.CylinderGeometry(6.4, 6.4, 0.4, 12), floorMat);
-    towerRoof.position.set(0, 10.2, castleCenterZ - 4);
-    scene.add(towerRoof);
-    this.levelColliders.push(towerRoof);
+    // Tower Roof Platform at y = 10.2 (Ring floor slab with central hole for stairs exit)
+    const towerRoofGroup = new THREE.Group();
+    towerRoofGroup.position.set(0, 10.2, castleCenterZ - 4);
+    const towerRoofSlab = new THREE.Mesh(new THREE.RingGeometry(2.5, 6.4, 16), floorMat);
+    towerRoofSlab.rotation.x = -Math.PI / 2;
+    towerRoofSlab.receiveShadow = true;
+    towerRoofGroup.add(towerRoofSlab);
+    scene.add(towerRoofGroup);
+
+    // Tower Roof Outer Collider Ring
+    for (let i = 0; i < 4; i++) {
+      const angle = (i / 4) * Math.PI * 2;
+      const cx = Math.cos(angle) * 4.5;
+      const cz = (castleCenterZ - 4) + Math.sin(angle) * 4.5;
+      const ringCol = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.4, 4.0), new THREE.MeshBasicMaterial({ visible: false }));
+      ringCol.position.set(cx, 10.2, cz);
+      scene.add(ringCol);
+      this.levelColliders.push(ringCol);
+    }
 
     // Elevator (MovingPlatform) connecting ground floor to 2nd floor (y: 0.2 to 5.0)
     const elevator = new MovingPlatform(
@@ -1214,10 +1255,18 @@ export class LevelToyStory {
       upperFloorSlab.receiveShadow = true;
       upperFloorGroup.add(upperFloorSlab);
 
-      const upperFloorCollider = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 0.6, 16), new THREE.MeshBasicMaterial({ visible: false }));
-      upperFloorCollider.position.y = 14.8;
-      cit.add(upperFloorGroup, upperFloorCollider);
-      this.levelColliders.push(upperFloorCollider);
+      cit.add(upperFloorGroup);
+
+      // Outer ring colliders around perimeter (radius 6.0 to 13.0) — keeping central 5m hole open!
+      for (let i = 0; i < 4; i++) {
+        const angle = (i / 4) * Math.PI * 2;
+        const cx = Math.cos(angle) * 9.0;
+        const cz = Math.sin(angle) * 9.0;
+        const ringCol = new THREE.Mesh(new THREE.BoxGeometry(8.0, 0.6, 8.0), new THREE.MeshBasicMaterial({ visible: false }));
+        ringCol.position.set(cx, 14.8, cz);
+        cit.add(ringCol);
+        this.levelColliders.push(ringCol);
+      }
 
       // 8 Perimeter Dragon Pillars with Gold Rings in Secret Chamber
       for (let i = 0; i < 8; i++) {
