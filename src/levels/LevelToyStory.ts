@@ -810,233 +810,193 @@ export class LevelToyStory {
     // ── Castle: 28w × 28d × 15h Monumental Imperial Palace, centered at (0, 0, -40) ──
     const castleCenterZ = -40;
     const redWoodMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.5 });
+    const goldMat = new THREE.MeshStandardMaterial({ color: 0xf5c842, metalness: 0.8, roughness: 0.2 });
 
-    // Castle Base / Ground Floor Foundation
+    // Castle Base / Ground Floor Foundation (y = 0.4)
     const castleGroundFloor = new THREE.Mesh(new THREE.BoxGeometry(28, 0.4, 28), floorMat);
-    castleGroundFloor.position.set(0, 0.1, castleCenterZ);
+    castleGroundFloor.position.set(0, 0.2, castleCenterZ);
     castleGroundFloor.receiveShadow = true;
     scene.add(castleGroundFloor);
     this.levelColliders.push(castleGroundFloor);
 
-    // Front Grand Entrance Staircase (z = -23 to z = -27)
-    for (let s = 0; s < 5; s++) {
-      const stepW = 8.0 - s * 0.4;
-      const step = new THREE.Mesh(new THREE.BoxGeometry(stepW, 0.35, 1.2), stoneMat);
-      step.position.set(0, s * 0.25 + 0.15, -23.5 - s * 0.9);
+    // Symmetrical Front Grand Entrance Staircase (z = -23.5 to z = -26.5, rising smoothly from y = 0.0 to y = 0.4)
+    const frontStepCount = 4;
+    for (let s = 0; s < frontStepCount; s++) {
+      const stepW = 10.0 - s * 0.4;
+      const stepH = 0.15 + s * 0.1;
+      const stepZ = -23.5 - s * 0.8;
+      const step = new THREE.Mesh(new THREE.BoxGeometry(stepW, stepH, 1.0), stoneMat);
+      step.position.set(0, stepH / 2, stepZ);
+      step.castShadow = true;
+      step.receiveShadow = true;
       scene.add(step);
       this.levelColliders.push(step);
     }
 
-    // Outer Fortress Walls (Left, Right, Back)
+    // Outer Fortress Walls (Left, Right, Back) — 5.0m height
     const wallHeight = 5.0;
     const castleLeftWall = new THREE.Mesh(new THREE.BoxGeometry(0.6, wallHeight, 28), stoneMat);
-    castleLeftWall.position.set(-14, wallHeight / 2, castleCenterZ);
+    castleLeftWall.position.set(-14, wallHeight / 2 + 0.2, castleCenterZ);
     const castleRightWall = new THREE.Mesh(new THREE.BoxGeometry(0.6, wallHeight, 28), stoneMat);
-    castleRightWall.position.set(14, wallHeight / 2, castleCenterZ);
+    castleRightWall.position.set(14, wallHeight / 2 + 0.2, castleCenterZ);
     const castleBackWall = new THREE.Mesh(new THREE.BoxGeometry(28, wallHeight, 0.6), stoneMat);
-    castleBackWall.position.set(0, wallHeight / 2, castleCenterZ - 14);
+    castleBackWall.position.set(0, wallHeight / 2 + 0.2, castleCenterZ - 14);
     scene.add(castleLeftWall, castleRightWall, castleBackWall);
     this.levelColliders.push(castleLeftWall, castleRightWall, castleBackWall);
 
-    // Front Façade Monumental Pillars
-    const pLeft = new THREE.Mesh(new THREE.BoxGeometry(2.5, wallHeight, 2.5), stoneMat);
-    pLeft.position.set(-8, wallHeight / 2, castleCenterZ + 14);
-    const pRight = new THREE.Mesh(new THREE.BoxGeometry(2.5, wallHeight, 2.5), stoneMat);
-    pRight.position.set(8, wallHeight / 2, castleCenterZ + 14);
-    scene.add(pLeft, pRight);
+    // Front Façade Symmetrical Outer Wing Walls (x = -14 to -5 and x = +5 to +14), leaving wide 10m central entrance
+    const frontWallL = new THREE.Mesh(new THREE.BoxGeometry(9, wallHeight, 0.6), stoneMat);
+    frontWallL.position.set(-9.5, wallHeight / 2 + 0.2, castleCenterZ + 14);
+    const frontWallR = new THREE.Mesh(new THREE.BoxGeometry(9, wallHeight, 0.6), stoneMat);
+    frontWallR.position.set(9.5, wallHeight / 2 + 0.2, castleCenterZ + 14);
+    scene.add(frontWallL, frontWallR);
+    this.levelColliders.push(frontWallL, frontWallR);
+
+    // Front Façade Monumental Red & Gold Entrance Pillars flanking the 10m gateway
+    const pLeft = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.55, wallHeight, 12), redWoodMat);
+    pLeft.position.set(-5.0, wallHeight / 2 + 0.2, castleCenterZ + 14);
+    const pRight = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.55, wallHeight, 12), redWoodMat);
+    pRight.position.set(5.0, wallHeight / 2 + 0.2, castleCenterZ + 14);
+    const capL = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 0.3, 12), goldMat);
+    capL.position.set(-5.0, wallHeight + 0.2, castleCenterZ + 14);
+    const capR = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 0.3, 12), goldMat);
+    capR.position.set(5.0, wallHeight + 0.2, castleCenterZ + 14);
+    scene.add(pLeft, pRight, capL, capR);
     this.levelColliders.push(pLeft, pRight);
 
-    // Castle Second Floor Balcony & Sanctum Floor (y = 5.0)
-    // Castle Second Floor Balcony & Sanctum Floor (y = 5.0)
-    // ── STAIRWELL CUTOUT FIX: Split floor slab so stairs exit cleanly into open space (no ceiling collision) ──
-    const secondFloorBackLeft = new THREE.Mesh(new THREE.BoxGeometry(3, 0.4, 14), floorMat);
-    secondFloorBackLeft.position.set(-12.5, 5.0, castleCenterZ - 7);
-    secondFloorBackLeft.receiveShadow = true;
+    // ── SECOND FLOOR MEZZANINE (y = 5.2) — Open Gallery around perimeter ──
+    const mezzanineL = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.4, 28), floorMat);
+    mezzanineL.position.set(-11.0, 5.2, castleCenterZ);
+    const mezzanineR = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.4, 28), floorMat);
+    mezzanineR.position.set(11.0, 5.2, castleCenterZ);
+    const mezzanineBack = new THREE.Mesh(new THREE.BoxGeometry(16.0, 0.4, 8.0), floorMat);
+    mezzanineBack.position.set(0, 5.2, castleCenterZ - 10.0);
+    const mezzanineFront = new THREE.Mesh(new THREE.BoxGeometry(16.0, 0.4, 5.0), floorMat);
+    mezzanineFront.position.set(0, 5.2, castleCenterZ + 11.5);
 
-    const secondFloorBackRight = new THREE.Mesh(new THREE.BoxGeometry(19, 0.4, 14), floorMat);
-    secondFloorBackRight.position.set(4.5, 5.0, castleCenterZ - 7);
-    secondFloorBackRight.receiveShadow = true;
+    scene.add(mezzanineL, mezzanineR, mezzanineBack, mezzanineFront);
+    this.levelColliders.push(mezzanineL, mezzanineR, mezzanineBack, mezzanineFront);
 
-    const secondFloorBackRear = new THREE.Mesh(new THREE.BoxGeometry(6, 0.4, 7.5), floorMat);
-    secondFloorBackRear.position.set(-8, 5.0, castleCenterZ - 10.25);
-    secondFloorBackRear.receiveShadow = true;
+    // Protective Mezzanine Balustrades (along internal open atrium edge)
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.6 });
+    const atriRailL = new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.0, 16.5), railMat);
+    atriRailL.position.set(-8.0, 5.9, castleCenterZ + 0.75);
+    const atriRailFront = new THREE.Mesh(new THREE.BoxGeometry(16.0, 1.0, 0.25), railMat);
+    atriRailFront.position.set(0, 5.9, castleCenterZ + 9.0);
+    const atriRailBack = new THREE.Mesh(new THREE.BoxGeometry(16.0, 1.0, 0.25), railMat);
+    atriRailBack.position.set(0, 5.9, castleCenterZ - 6.0);
 
-    scene.add(secondFloorBackLeft, secondFloorBackRight, secondFloorBackRear);
-    this.levelColliders.push(secondFloorBackLeft, secondFloorBackRight, secondFloorBackRear);
+    scene.add(atriRailL, atriRailFront, atriRailBack);
+    this.levelColliders.push(atriRailL, atriRailFront, atriRailBack);
 
-    const secondFloorFront = new THREE.Mesh(new THREE.BoxGeometry(12, 0.4, 14), floorMat);
-    secondFloorFront.position.set(4, 5.0, castleCenterZ + 7);
-    secondFloorFront.receiveShadow = true;
-    scene.add(secondFloorFront);
-    this.levelColliders.push(secondFloorFront);
+    // ── MONUMENTAL IMPERIAL GRAND STAIRCASE (Ground Floor y=0.4 to Mezzanine y=5.2) ──
+    // Positioned cleanly along the East inner wall (x = 8.5, from z = -28 rising to z = -44)
+    const stairLength = 16.0;
+    const stairRise = 4.8;
+    const stairAngle = Math.atan(stairRise / stairLength);
+    const stairRampDist = Math.hypot(stairLength, stairRise);
 
-    // Second Floor Interior Room (Library/Sanctum) side walls
-    const roomWallL = new THREE.Mesh(new THREE.BoxGeometry(6, 3, 0.6), stoneMat);
-    roomWallL.position.set(-13, 6.5, castleCenterZ - 5);
-    const roomWallR = new THREE.Mesh(new THREE.BoxGeometry(6, 3, 0.6), stoneMat);
-    roomWallR.position.set(13, 6.5, castleCenterZ - 5);
-    scene.add(roomWallL, roomWallR);
-    this.levelColliders.push(roomWallL, roomWallR);
+    // 1. Solid Stone Foundation Ramp
+    const stairBase = new THREE.Mesh(new THREE.BoxGeometry(4.2, 2.0, stairRampDist + 0.5), stoneMat);
+    stairBase.position.set(8.5, 1.6, castleCenterZ + 4.0);
+    stairBase.rotation.x = stairAngle;
+    scene.add(stairBase);
+    this.levelColliders.push(stairBase);
 
-    // ── MONUMENTAL CASTLE STAIRCASE (Ground Floor y=0.1 to 2nd Floor Balcony y=5.0) ──
-    // 1. Solid Imperial Stone Foundation Base underneath the staircase (No floating steps!)
-    const stairRampLength = Math.hypot(14, 4.9) + 2.0;
-    const stairAngle = Math.atan(4.9 / 14);
-
-    const solidStairFoundation = new THREE.Mesh(new THREE.BoxGeometry(4.6, 2.5, stairRampLength), stoneMat);
-    solidStairFoundation.position.set(-8, 1.2, -37);
-    solidStairFoundation.rotation.x = stairAngle;
-    scene.add(solidStairFoundation);
-    this.levelColliders.push(solidStairFoundation);
-
-    // 2. Step risers & treads
-    const stepCount = 16;
-    for (let i = 0; i < stepCount; i++) {
-      const t = i / (stepCount - 1);
-      const stepY = 0.1 + t * 4.9;
-      const stepZ = -30 - t * 14;
-      const step = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.35, 1.3), stoneMat);
-      step.position.set(-8, stepY, stepZ);
+    // 2. Individual Stone Steps
+    const numSteps = 16;
+    for (let i = 0; i < numSteps; i++) {
+      const t = i / (numSteps - 1);
+      const stepY = 0.4 + t * stairRise;
+      const stepZ = -28.0 - t * stairLength;
+      const step = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.35, 1.15), stoneMat);
+      step.position.set(8.5, stepY, stepZ);
       step.castShadow = true;
       step.receiveShadow = true;
       scene.add(step);
     }
 
-    // 3. Side Balustrade Railings along the slope (Crimson red wood with gold caps)
-    const balustradeL = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.0, stairRampLength), redWoodMat);
-    balustradeL.position.set(-10.4, 2.8, -37);
-    balustradeL.rotation.x = stairAngle;
-    const balustradeR = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.0, stairRampLength), redWoodMat);
-    balustradeR.position.set(-5.6, 2.8, -37);
-    balustradeR.rotation.x = stairAngle;
-    scene.add(balustradeL, balustradeR);
-    this.levelColliders.push(balustradeL, balustradeR);
+    // 3. Smooth Ramp Collider (100% fluid ascent/descent)
+    const stairSmoothRamp = new THREE.Mesh(
+      new THREE.BoxGeometry(4.4, 0.35, stairRampDist),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    stairSmoothRamp.position.set(8.5, 2.9, castleCenterZ + 4.0);
+    stairSmoothRamp.rotation.x = stairAngle;
+    scene.add(stairSmoothRamp);
+    this.levelColliders.push(stairSmoothRamp);
 
-    // 4. Lantern posts at bottom and top landings
+    // 4. Crimson Red Wood Balustrade Railings with Lanterns
+    const balustradeR = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.0, stairRampDist), redWoodMat);
+    balustradeR.position.set(6.3, 3.4, castleCenterZ + 4.0);
+    balustradeR.rotation.x = stairAngle;
+    scene.add(balustradeR);
+    this.levelColliders.push(balustradeR);
+
+    // Lantern posts at bottom & top of main staircase
     const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, emissive: 0xff4400, emissiveIntensity: 1.5 });
     const postL1 = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 1.6, 8), redWoodMat);
-    postL1.position.set(-10.4, 1.0, -30);
-    const postR1 = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 1.6, 8), redWoodMat);
-    postR1.position.set(-5.6, 1.0, -30);
-    const lant1L = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), lanternMat);
-    lant1L.position.set(-10.4, 1.9, -30);
-    const lant1R = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), lanternMat);
-    lant1R.position.set(-5.6, 1.9, -30);
-    scene.add(postL1, postR1, lant1L, lant1R);
+    postL1.position.set(6.3, 1.2, -28.0);
+    const lant1L = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), lanternMat);
+    lant1L.position.set(6.3, 2.1, -28.0);
+    const postL2 = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 1.6, 8), redWoodMat);
+    postL2.position.set(6.3, 6.0, -44.0);
+    const lant1R = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), lanternMat);
+    lant1R.position.set(6.3, 6.9, -44.0);
+    scene.add(postL1, lant1L, postL2, lant1R);
 
-    // ── SECOND-TIER ROOF ACCESS STAIRCASE (2nd Floor Balcony y=5.0 to Temple Roof Terrace y=10.2) ──
-    const roofStairSteps = 16;
-    for (let i = 0; i < roofStairSteps; i++) {
-      const t = i / (roofStairSteps - 1);
-      const stepY = 5.0 + t * 5.2;
-      const stepZ = (castleCenterZ + 5) - t * 9.0;
-      const stepX = 4.0 - t * 4.0;
-      const step = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.35, 1.2), stoneMat);
-      step.name = `roof_step_${i}`;
-      step.position.set(stepX, stepY, stepZ);
+    // ── UPPER ROOF ACCESS STAIRCASE (Mezzanine y=5.2 to Roof Terrace y=10.0) ──
+    // Starts at North-East landing (x = 8.0, z = -48.0) and rises along North/Back wall to (x = -4.0, z = -48.0)
+    const upperSteps = 15;
+    const upperRise = 4.8;
+    const upperLength = 12.0;
+    const upperAngle = Math.atan(upperRise / upperLength);
+    const upperRampDist = Math.hypot(upperLength, upperRise);
+
+    const upperRampBase = new THREE.Mesh(new THREE.BoxGeometry(upperRampDist + 0.5, 2.0, 3.8), stoneMat);
+    upperRampBase.position.set(2.0, 6.4, castleCenterZ - 10.0);
+    upperRampBase.rotation.z = upperAngle;
+    scene.add(upperRampBase);
+    this.levelColliders.push(upperRampBase);
+
+    for (let i = 0; i < upperSteps; i++) {
+      const t = i / (upperSteps - 1);
+      const stepX = 8.0 - t * upperLength;
+      const stepY = 5.2 + t * upperRise;
+      const step = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.35, 3.8), stoneMat);
+      step.position.set(stepX, stepY, castleCenterZ - 10.0);
       step.castShadow = true;
       step.receiveShadow = true;
       scene.add(step);
-      this.levelColliders.push(step);
     }
 
-    const roofStairCollider = new THREE.Mesh(
-      new THREE.BoxGeometry(3.8, 0.35, Math.hypot(9.0, 5.2)),
+    const upperRampCollider = new THREE.Mesh(
+      new THREE.BoxGeometry(upperRampDist, 0.35, 4.0),
       new THREE.MeshBasicMaterial({ visible: false })
     );
-    roofStairCollider.name = 'roof_stair_ramp_collider';
-    roofStairCollider.position.set(2.0, 7.6, castleCenterZ + 0.5);
-    roofStairCollider.rotation.x = Math.atan(5.2 / 9.0);
-    scene.add(roofStairCollider);
-    this.levelColliders.push(roofStairCollider);
+    upperRampCollider.position.set(2.0, 7.7, castleCenterZ - 10.0);
+    upperRampCollider.rotation.z = upperAngle;
+    scene.add(upperRampCollider);
+    this.levelColliders.push(upperRampCollider);
 
-    // Side balustrades along the 2nd-tier roof staircase
-    const roofStairLength = Math.hypot(9.0, 5.2) + 1.0;
-    const roofStairAngle = Math.atan(5.2 / 9.0);
-    const roofBalustradeL = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.0, roofStairLength), redWoodMat);
-    roofBalustradeL.position.set(3.8, 8.2, castleCenterZ + 0.5);
-    roofBalustradeL.rotation.x = roofStairAngle;
-    const roofBalustradeR = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.0, roofStairLength), redWoodMat);
-    roofBalustradeR.position.set(0.2, 8.2, castleCenterZ + 0.5);
-    roofBalustradeR.rotation.x = roofStairAngle;
-    scene.add(roofBalustradeL, roofBalustradeR);
-    this.levelColliders.push(roofBalustradeL, roofBalustradeR);
+    // ── 100% SOLID WALKABLE ROOF TERRACE PLATFORM (y = 10.0) ──
+    const roofFloorSlab = new THREE.Mesh(new THREE.BoxGeometry(20.0, 0.4, 20.0), floorMat);
+    roofFloorSlab.position.set(0, 10.0, castleCenterZ - 2.0);
+    roofFloorSlab.receiveShadow = true;
+    scene.add(roofFloorSlab);
+    this.levelColliders.push(roofFloorSlab);
 
-    // ── STAIRWELL 2ND FLOOR BALUSTRADE SAFETY RAILINGS (Around opening) ──
-    const stairRailL = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.1, 7.0), stoneMat);
-    stairRailL.position.set(-11.0, 5.65, castleCenterZ - 3.5);
-    const stairRailR = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.1, 7.0), stoneMat);
-    stairRailR.position.set(-5.0, 5.65, castleCenterZ - 3.5);
-    const stairRailBack = new THREE.Mesh(new THREE.BoxGeometry(6.3, 1.1, 0.3), stoneMat);
-    stairRailBack.position.set(-8.0, 5.65, castleCenterZ - 7.0);
-    scene.add(stairRailL, stairRailR, stairRailBack);
-    this.levelColliders.push(stairRailL, stairRailR, stairRailBack);
-
-    // ── OUTDOOR GRAND WRAPPING STAIRCASE (West Outer Wall x = -15, z = -23 to -42, y = 0.5 to 5.0) ──
-    const outdoorStairSteps = 18;
-    const outdoorRampLength = Math.hypot(19, 4.8) + 2.0;
-    const outdoorAngle = Math.atan(4.8 / 19);
-
-    const solidOutdoorFoundation = new THREE.Mesh(new THREE.BoxGeometry(4.2, 2.2, outdoorRampLength), stoneMat);
-    solidOutdoorFoundation.position.set(-15, 1.3, castleCenterZ + 7.5);
-    solidOutdoorFoundation.rotation.x = outdoorAngle;
-    scene.add(solidOutdoorFoundation);
-    this.levelColliders.push(solidOutdoorFoundation);
-
-    for (let i = 0; i < outdoorStairSteps; i++) {
-      const t = i / (outdoorStairSteps - 1);
-      const stepY = 0.5 + t * 4.6;
-      const stepZ = -23 - t * 19;
-      const step = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.35, 1.2), stoneMat);
-      step.name = `outdoor_step_${i}`;
-      step.position.set(-15, stepY, stepZ);
-      step.castShadow = true;
-      step.receiveShadow = true;
-      scene.add(step);
-      this.levelColliders.push(step);
-    }
-
-    const outdoorRampCollider = new THREE.Mesh(
-      new THREE.BoxGeometry(4.4, 0.35, outdoorRampLength),
-      new THREE.MeshBasicMaterial({ visible: false })
-    );
-    outdoorRampCollider.name = 'outdoor_ramp_collider';
-    outdoorRampCollider.position.set(-15, 2.7, castleCenterZ + 7.5);
-    outdoorRampCollider.rotation.x = outdoorAngle;
-    scene.add(outdoorRampCollider);
-    this.levelColliders.push(outdoorRampCollider);
-
-    // ── HOLLOW HIGH TOWER (Central ring wall from y = 5 to 10 with internal open space) ──
-    const towerRadius = 6.0;
-    const towerWallCount = 8;
-    for (let i = 0; i < towerWallCount; i++) {
-      if (i === 0) continue; // Arch doorway entrance into tower at front
-      const angle = (i / towerWallCount) * Math.PI * 2;
-      const wx = Math.cos(angle) * towerRadius;
-      const wz = (castleCenterZ - 4) + Math.sin(angle) * towerRadius;
-      const wallSeg = new THREE.Mesh(new THREE.BoxGeometry(4.2, 5.0, 0.5), stoneMat);
-      wallSeg.position.set(wx, 7.5, wz);
-      wallSeg.rotation.y = -angle + Math.PI / 2;
-      scene.add(wallSeg);
-      this.levelColliders.push(wallSeg);
-    }
-
-    // ── 100% SOLID WALKABLE ROOF TERRACE PLATFORM (y = 10.2) ──
-    // Zero holes, zero gaps. 8 dense overlapping solid stone floor slabs covering the entire terrace.
-    const towerRoofGroup = new THREE.Group();
-    towerRoofGroup.position.set(0, 10.2, castleCenterZ - 4);
-    
-    // 8 solid overlapping stone slab sections arranged around the central stairwell
-    for (let i = 0; i < 8; i++) {
-      const angle = (i / 8) * Math.PI * 2;
-      const rx = Math.cos(angle) * 4.2;
-      const rz = Math.sin(angle) * 4.2;
-      const roofFloorSlab = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.4, 5.2), floorMat);
-      roofFloorSlab.position.set(rx, 10.2, (castleCenterZ - 4) + rz);
-      roofFloorSlab.receiveShadow = true;
-      scene.add(roofFloorSlab);
-      this.levelColliders.push(roofFloorSlab);
-    }
+    // Roof Balustrade Railings around terrace
+    const rRailN = new THREE.Mesh(new THREE.BoxGeometry(20.0, 1.0, 0.3), railMat);
+    rRailN.position.set(0, 10.7, castleCenterZ - 12.0);
+    const rRailS = new THREE.Mesh(new THREE.BoxGeometry(20.0, 1.0, 0.3), railMat);
+    rRailS.position.set(0, 10.7, castleCenterZ + 8.0);
+    const rRailW = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.0, 20.0), railMat);
+    rRailW.position.set(-10.0, 10.7, castleCenterZ - 2.0);
+    const rRailE = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.0, 20.0), railMat);
+    rRailE.position.set(10.0, 10.7, castleCenterZ - 2.0);
+    scene.add(rRailN, rRailS, rRailW, rRailE);
+    this.levelColliders.push(rRailN, rRailS, rRailW, rRailE);
 
     // Solid Perimeter Parapet / Balustrade Safety Railings around the roof edge (y = 10.2 to 11.4)
     for (let i = 0; i < 8; i++) {
@@ -2129,6 +2089,17 @@ export class LevelToyStory {
       }
     });
     this.triggerZones.push(tIntro);
+
+    // Gekko First Encounter Trigger Zone (Tutorial Level Proven Architecture)
+    const tGekko = new TriggerZone('trig_gekko', new THREE.Vector3(-8.0, -2.0, -14.0), new THREE.Vector3(0.0, 6.0, -6.0), () => {
+      if (this.gekkoMissionState === 'NOT_STARTED') {
+        this.gekkoMissionState = 'MISSION_ACTIVE';
+        this.stateFlags.gekkoTalked = true;
+        console.log('[GEKKO] TriggerZone entered -> Starting First Cinematic');
+        this.runGekkoCinematic();
+      }
+    });
+    this.triggerZones.push(tGekko);
 
     // Boss arena entrance trigger zone
     const tBoss = new TriggerZone('trig_boss_arena', new THREE.Vector3(26.0, -1, -47.0), new THREE.Vector3(34.0, 6, -33.0), () => {
