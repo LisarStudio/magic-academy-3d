@@ -42,7 +42,8 @@ export class ItemPickupVFX {
     player: PlayerController,
     _scene: THREE.Scene,
     itemType: 'key' | 'staff' | 'coin',
-    onComplete: () => void
+    onComplete: () => void,
+    itemColor?: number
   ): void {
     // 1. Lock controls
     player.isControlsLocked = true;
@@ -55,35 +56,36 @@ export class ItemPickupVFX {
     const itemGroup = new THREE.Group();
     itemGroup.name = 'epic_held_item';
 
+    const baseColor = itemColor !== undefined ? itemColor : (itemType === 'staff' ? 0x00e5ff : 0xffd700);
+
     if (itemType === 'key') {
-      // Golden key geometry with glowing emissive core
+      // Golden / Colored key geometry with glowing emissive core
       const ringGeo = new THREE.TorusGeometry(0.12, 0.035, 12, 24);
       const shaftGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.4, 12);
       const tooth1 = new THREE.BoxGeometry(0.08, 0.03, 0.08);
       const tooth2 = new THREE.BoxGeometry(0.06, 0.03, 0.06);
 
-      const goldMat = new THREE.MeshStandardMaterial({
-        color: 0xffd700,
-        metalness: 0.9,
+      const keyMat = new THREE.MeshStandardMaterial({
+        color: baseColor,
+        metalness: 0.85,
         roughness: 0.2,
-        emissive: 0xaa6600,
-        emissiveIntensity: 0.6,
+        emissive: baseColor,
+        emissiveIntensity: 0.9,
       });
 
-      const ring = new THREE.Mesh(ringGeo, goldMat);
+      const ring = new THREE.Mesh(ringGeo, keyMat);
       ring.position.y = 0.2;
 
-      const shaft = new THREE.Mesh(shaftGeo, goldMat);
+      const shaft = new THREE.Mesh(shaftGeo, keyMat);
       shaft.position.y = -0.05;
 
-      const t1 = new THREE.Mesh(tooth1, goldMat);
+      const t1 = new THREE.Mesh(tooth1, keyMat);
       t1.position.set(0.04, -0.18, 0);
 
-      const t2 = new THREE.Mesh(tooth2, goldMat);
+      const t2 = new THREE.Mesh(tooth2, keyMat);
       t2.position.set(0.03, -0.23, 0);
 
       itemGroup.add(ring, shaft, t1, t2);
-      itemGroup.scale.setScalar(1.2);
     } else if (itemType === 'staff') {
       // Magic Staff with glowing orb
       const staffGeo = new THREE.CylinderGeometry(0.03, 0.035, 1.4, 12);
@@ -91,8 +93,8 @@ export class ItemPickupVFX {
 
       const woodMat = new THREE.MeshStandardMaterial({ color: 0x5c3a21, roughness: 0.7 });
       const orbMat = new THREE.MeshStandardMaterial({
-        color: 0x00e5ff,
-        emissive: 0x00bfff,
+        color: baseColor,
+        emissive: baseColor,
         emissiveIntensity: 1.5,
         roughness: 0.1,
       });
@@ -104,26 +106,26 @@ export class ItemPickupVFX {
       itemGroup.add(shaft, orb);
     }
 
-    // Attach item to hand
+    // Attach item to hand & compensate parent bone scale (0.158) -> 7.6 scale = 1.2m world size inside hand!
+    itemGroup.position.set(0, 0.18, 0.08);
+    itemGroup.scale.setScalar(7.6);
     handNode.add(itemGroup);
 
-    // 3. Create hero PointLight near hand/torso to illuminate Wukong
-    const lightColor = itemType === 'staff' ? 0x00e5ff : 0xffaa00;
-    const heroLight = new THREE.PointLight(lightColor, 4.5, 6.0);
-    heroLight.position.set(0, 0.2, 0.2);
+    // 3. Create hero PointLight near hand/torso in matching item color
+    const heroLight = new THREE.PointLight(baseColor, 5.5, 6.5);
+    heroLight.position.set(0, 0.3, 0.3);
     itemGroup.add(heroLight);
 
-    // 4. Create swirling stars/sparks around player
+    // 4. Create swirling stars/sparks in matching item color
     const sparkCount = 18;
     const sparks: THREE.Mesh[] = [];
     const sparkVels: THREE.Vector3[] = [];
 
     const sparkGeo = new THREE.OctahedronGeometry(0.04, 0);
-    const sparkColors = [0xffd700, 0xffaa00, 0xffffff, 0xffe066];
 
     for (let i = 0; i < sparkCount; i++) {
       const mat = new THREE.MeshBasicMaterial({
-        color: sparkColors[i % sparkColors.length],
+        color: baseColor,
         transparent: true,
         opacity: 0.9,
       });

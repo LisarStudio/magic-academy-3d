@@ -138,20 +138,34 @@ export class KeyPickupSequence {
     });
 
     // ── FASE 4: Attach physically to Wukong's RightHand bone ──
-    console.log(`[KEY] Attached to hand`);
+    console.log(`[KEY] Attached to hand '${keyData.id}' with color 0x${keyData.color.toString(16)}`);
     scene.remove(keyGroup); // Remove from world scene
 
     const handNode = ItemPickupVFX.findHandNode(player);
     handNode.add(keyGroup); // ATTACH TO PLAYER HAND BONE
 
-    // Reset local transform relative to hand
-    keyGroup.position.set(0.02, 0.08, 0.04);
+    // Account for parent bone scale (0.158) so the key is PROMINENT and clearly visible in Wukong's hand (7.6 * 0.158 = 1.2m world scale)
+    keyGroup.position.set(0.0, 0.18, 0.08);
     keyGroup.rotation.set(0, Math.PI / 2, Math.PI / 4);
-    keyGroup.scale.setScalar(0.9);
+    keyGroup.scale.setScalar(7.6);
 
-    // Dynamic light illuminating Wukong's torso/face
-    const heroLight = new THREE.PointLight(keyData.emissiveColor, 4.5, 6.0);
-    heroLight.position.set(0, 0.2, 0.2);
+    // Burst ring shockwave in exact key color
+    const burstRingGeo = new THREE.RingGeometry(0.1, 0.6, 24);
+    const burstRingMat = new THREE.MeshBasicMaterial({
+      color: keyData.color,
+      transparent: true,
+      opacity: 1.0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const burstRing = new THREE.Mesh(burstRingGeo, burstRingMat);
+    burstRing.position.copy(player.mesh.position).add(new THREE.Vector3(0, 1.2, 0));
+    burstRing.rotation.x = -Math.PI / 2;
+    scene.add(burstRing);
+
+    // Dynamic light illuminating Wukong's torso/face in matching key color
+    const heroLight = new THREE.PointLight(keyData.emissiveColor, 6.0, 7.0);
+    heroLight.position.set(0, 0.3, 0.3);
     keyGroup.add(heroLight);
 
     // Play Wukong TakeItem animation
@@ -166,11 +180,15 @@ export class KeyPickupSequence {
         holdElapsed += 0.016;
         const t = Math.min(1.0, holdElapsed / holdDuration);
 
+        // Animate burst ring expanding & fading in matching key color
+        burstRing.scale.setScalar(1.0 + t * 8.0);
+        (burstRingMat as THREE.MeshBasicMaterial).opacity = Math.max(0, 1.0 - t * 2.5);
+
         // Rotate key slowly in hand
         keyGroup.rotation.z += 0.04;
 
         // Pulse light
-        heroLight.intensity = (4.0 + Math.sin(holdElapsed * 10) * 1.5) * (1.0 - Math.max(0, (t - 0.7) / 0.3));
+        heroLight.intensity = (5.0 + Math.sin(holdElapsed * 10) * 2.0) * (1.0 - Math.max(0, (t - 0.7) / 0.3));
 
         // Particles fade out as key is stored
         particles.forEach((p) => {
@@ -181,6 +199,10 @@ export class KeyPickupSequence {
           requestAnimationFrame(holdStep);
         } else {
           // Detach from hand and dispose local resources
+          scene.remove(burstRing);
+          burstRingGeo.dispose();
+          burstRingMat.dispose();
+
           handNode.remove(keyGroup);
           keyGroup.traverse((child) => {
             if ((child as THREE.Mesh).isMesh) {

@@ -1600,9 +1600,9 @@ export class LevelToyStory {
       }
     }
 
-    // Update enemies
+    // Update enemies (including DYING state for death VFX execution and memory cleanup)
     this.enemies.forEach(e => {
-      if (e.isAlive()) e.update(delta, playerPos, this.levelColliders);
+      if (e.state !== 'DEAD') e.update(delta, playerPos, this.levelColliders);
     });
 
     // Update collectibles
