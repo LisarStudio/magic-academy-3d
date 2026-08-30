@@ -14,8 +14,8 @@ export class PlayerController {
 
   public velocity = new THREE.Vector3();
   public isGrounded = true;
-  public moveSpeed = 4.5;
-  public runSpeed = 7.5;
+  public moveSpeed = 5.2;
+  public runSpeed = 8.5;
   public jumpForce = 8.0;
   public gravity = -20.0;
 
@@ -259,7 +259,9 @@ export class PlayerController {
       .normalize();
 
     const isMoving = moveDir.lengthSq() > 0.01;
-    const currentSpeed = input.isRunning ? this.runSpeed : this.moveSpeed;
+    const touchMag = Math.hypot(input.touchAnalogX, input.touchAnalogZ);
+    const isSprinting = input.isRunning || touchMag > 0.45;
+    const currentSpeed = isSprinting ? this.runSpeed : this.moveSpeed;
 
     if (isMoving) {
       this.velocity.x = moveDir.x * currentSpeed;
