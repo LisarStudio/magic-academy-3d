@@ -100,9 +100,6 @@ export class Game {
     // Focus camera on target AFTER the level is initialized and player is spawned at Checkpoint 0!
     this.cameraController.setTarget(this.player.mesh);
 
-    // Trigger Game Intro Sequence (Cinemática Inicial con Gekko)
-    this.level01.runGameIntroSequence();
-
     // 6. Bind Player & HUD Status Callbacks
     this.player.onHealthChange = (hp, maxHp) => this.hud.setHealth(hp, maxHp);
     this.hud.setupMobileControls(this.inputManager);
@@ -332,13 +329,26 @@ export class Game {
       this.audioManager.startBGM();
       this.hud.showGameplayHUD();
       this.inputManager.resetInputs();
+
+      // Position Wukong facing forward (-Z) down the main entry avenue
+      this.player.mesh.position.set(0, 0.2, 10);
+      this.player.mesh.rotation.set(0, Math.PI, 0);
+
+      // Snap camera directly behind Wukong with 0 delay and 0 black screen
+      this.cameraController.setTarget(this.player.mesh);
+      this.cameraController.snapBehindTarget();
+
       this.player.isControlsLocked = false;
       this.player.isMovementLocked = false;
       this.player.isAttacking = false;
+      this.player.forceIdle();
+
       if (this.level01) {
         (this.level01 as any).isCinematicPlaying = false;
         this.level01.stateFlags.introCompleted = true;
       }
+
+      this.subtitleSystem.show('LISAR', '¡Bienvenido al Reino Místico! Habla con Gekko en el camino para iniciar tu aventura.', 4500);
     };
 
     btnStart?.addEventListener('click', onStartGame);

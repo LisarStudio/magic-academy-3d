@@ -42,6 +42,24 @@ export class CameraController {
     }
   }
 
+  public snapBehindTarget(): void {
+    if (!this.target) return;
+    this.yaw = Math.PI; // Look along -Z
+    this.pitch = 0.22;
+    this.distance = 5.5;
+    this.currentDistance = 5.5;
+    this.currentLookAt.copy(this.target.position).add(new THREE.Vector3(0, this.heightOffset, 0));
+    
+    const dir = new THREE.Vector3(
+      Math.sin(this.yaw) * Math.cos(this.pitch),
+      Math.sin(this.pitch),
+      Math.cos(this.yaw) * Math.cos(this.pitch),
+    );
+    this.currentPosition.copy(this.currentLookAt).addScaledVector(dir, this.currentDistance);
+    this.camera.position.copy(this.currentPosition);
+    this.camera.lookAt(this.currentLookAt);
+  }
+
   public setCollisionObjects(objects: THREE.Object3D[]): void {
     // Only store major solid structural meshes (filter out small sub-children)
     this.collisionObjects = objects.filter(o => o.type === 'Mesh' && (o as THREE.Mesh).geometry);
