@@ -99,6 +99,14 @@ export class PlayerController {
     this.staffBackMesh = backStaff;
 
     if (spineBone) {
+      this.mesh.updateMatrixWorld(true);
+      const spineWorldScale = new THREE.Vector3();
+      (spineBone as THREE.Object3D).getWorldScale(spineWorldScale);
+      const invX = spineWorldScale.x > 0.00001 ? 1.0 / spineWorldScale.x : 1.0;
+      const invY = spineWorldScale.y > 0.00001 ? 1.0 / spineWorldScale.y : 1.0;
+      const invZ = spineWorldScale.z > 0.00001 ? 1.0 / spineWorldScale.z : 1.0;
+      backStaff.scale.set(invX, invY, invZ);
+
       backStaff.position.set(-0.06, 0.15, -0.15);
       backStaff.rotation.set(0.35, 0.12, 0.72);
       (spineBone as THREE.Object3D).add(backStaff);
@@ -114,6 +122,14 @@ export class PlayerController {
     this.staffHandMesh = handStaff;
 
     if (rightHandBone) {
+      this.mesh.updateMatrixWorld(true);
+      const handWorldScale = new THREE.Vector3();
+      (rightHandBone as THREE.Object3D).getWorldScale(handWorldScale);
+      const invX = handWorldScale.x > 0.00001 ? 1.0 / handWorldScale.x : 1.0;
+      const invY = handWorldScale.y > 0.00001 ? 1.0 / handWorldScale.y : 1.0;
+      const invZ = handWorldScale.z > 0.00001 ? 1.0 / handWorldScale.z : 1.0;
+      handStaff.scale.set(invX, invY, invZ);
+
       handStaff.position.set(0, 0.05, 0);
       handStaff.rotation.set(Math.PI * 0.5, 0, 0);
       (rightHandBone as THREE.Object3D).add(handStaff);

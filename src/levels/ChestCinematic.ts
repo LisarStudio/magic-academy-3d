@@ -97,9 +97,17 @@ export class ChestCinematic {
     const handNode = ItemPickupVFX.findHandNode(player);
     if (this.staffInChest && handNode) {
       scene.remove(this.staffInChest);
+      player.mesh.updateMatrixWorld(true);
+      const handWorldScale = new THREE.Vector3();
+      handNode.getWorldScale(handWorldScale);
+      const invX = handWorldScale.x > 0.00001 ? 1.0 / handWorldScale.x : 1.0;
+      const invY = handWorldScale.y > 0.00001 ? 1.0 / handWorldScale.y : 1.0;
+      const invZ = handWorldScale.z > 0.00001 ? 1.0 / handWorldScale.z : 1.0;
+      this.staffInChest.scale.set(invX, invY, invZ);
+
       handNode.add(this.staffInChest);
-      this.staffInChest.position.set(0, 0.2, 0.1);
-      this.staffInChest.rotation.set(0, 0, Math.PI / 2);
+      this.staffInChest.position.set(0, 0.08, 0);
+      this.staffInChest.rotation.set(Math.PI * 0.5, 0, 0);
       this.staffInChest.visible = true;
     }
 

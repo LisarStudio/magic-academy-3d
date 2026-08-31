@@ -1384,45 +1384,56 @@ export class LevelToyStory {
       scene.add(pag);
     };
 
-    // TEMPLO 03: TEMPLO DEL BÁCULO / CÁMARA DEL SECRETO (East Peak at 55, 0, -75)
+    // TEMPLO 03: SANTUARIO DEL BÁCULO SAGRADO (East Peak at 55, 0, -75)
     const buildDragonCitadel = (cx: number, cz: number) => {
       const cy = this.getTerrainHeight(cx, cz);
       const cit = new THREE.Group();
       cit.position.set(cx, cy, cz);
 
-      // Circular Temple Base Rampart (grounded on terrain)
-      const rampart = new THREE.Mesh(new THREE.CylinderGeometry(16, 17, 1.6, 16), stoneMat);
-      rampart.position.y = 0.8;
+      // ── 1. BASE RAMPARTS & GRAND ENTRANCE STAIRCASE (Gran Basamento y Gradería Frontal) ──
+      const rampart = new THREE.Mesh(new THREE.CylinderGeometry(16.5, 17.5, 1.8, 24), stoneMat);
+      rampart.position.y = 0.9;
       cit.add(rampart);
       this.levelColliders.push(rampart);
 
-      // Grand Entrance Portal Steps on Front (z = +15)
-      for (let s = 0; s < 4; s++) {
-        const stepWidth = 5.0 - s * 0.3;
-        const step = new THREE.Mesh(new THREE.BoxGeometry(stepWidth, 0.4, 1.2), stoneMat);
-        step.position.set(0, s * 0.35 + 0.2, 15 + (3 - s) * 1.0);
+      // Grand Entrance Steps on Front (z = +15)
+      for (let s = 0; s < 5; s++) {
+        const stepWidth = 6.2 - s * 0.35;
+        const step = new THREE.Mesh(new THREE.BoxGeometry(stepWidth, 0.35, 1.2), stoneMat);
+        step.position.set(0, s * 0.32 + 0.18, 15.5 + (4 - s) * 0.95);
         cit.add(step);
         this.levelColliders.push(step);
       }
 
-      // Entrance Dragon Pillars
-      const eColL = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 5.0, 10), redWoodMat);
-      eColL.position.set(-2.8, 2.5, 14.8);
-      const eColR = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 5.0, 10), redWoodMat);
-      eColR.position.set(2.8, 2.5, 14.8);
-      const eBeam = new THREE.Mesh(new THREE.BoxGeometry(6.5, 0.4, 0.6), redWoodMat);
-      eBeam.position.set(0, 4.8, 14.8);
-      cit.add(eColL, eColR, eBeam);
+      // Base Entrance Torii Gate (Lower Portal)
+      const eColL = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.55, 5.5, 12), redWoodMat);
+      eColL.position.set(-3.2, 2.75, 15.0);
+      const eColR = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.55, 5.5, 12), redWoodMat);
+      eColR.position.set(3.2, 2.75, 15.0);
+      const eBeam = new THREE.Mesh(new THREE.BoxGeometry(7.6, 0.5, 0.7), redWoodMat);
+      eBeam.position.set(0, 5.2, 15.0);
+      const eRoof = new THREE.Mesh(new THREE.BoxGeometry(8.2, 0.3, 1.2), goldMat);
+      eRoof.position.set(0, 5.6, 15.0);
+      cit.add(eColL, eColR, eBeam, eRoof);
       this.levelColliders.push(eColL, eColR);
 
-      // Central Pillar for Spiral Staircase
-      const centralPillar = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.8, 16.0, 16), redWoodMat);
-      centralPillar.position.y = 7.8;
+      // ── 2. CENTRAL IMPERIAL PILLAR WITH DRAGON RELIEF ──
+      const centralPillar = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.0, 16.5, 20), redWoodMat);
+      centralPillar.position.y = 8.25;
       cit.add(centralPillar);
       this.levelColliders.push(centralPillar);
 
-      // ── WALKABLE IMPERIAL SPIRAL HELICAL RAMP (Ultra ancha, suave y 100% segura con barreras altas continuas) ──
-      const numSteps = 96; // Dense overlapping steps create butter-smooth continuous ramp surface
+      // Spiral Gold Dragon Ribbons ascending the central column
+      for (let r = 0; r < 8; r++) {
+        const ribbonRing = new THREE.Mesh(new THREE.TorusGeometry(2.1, 0.1, 8, 20), goldMat);
+        ribbonRing.position.y = 1.5 + r * 1.8;
+        ribbonRing.rotation.x = Math.PI / 2 + 0.15;
+        ribbonRing.rotation.z = (r / 8) * Math.PI * 2;
+        cit.add(ribbonRing);
+      }
+
+      // ── 3. HARMONIOUS HELICAL IMPERIAL STAIRWAY WITH INTEGRATED RESTING LANDINGS ──
+      const numSteps = 96;
       const startH = 0.6;
       const totalH = 14.2;
       const stepRadius = 4.6;
@@ -1432,8 +1443,8 @@ export class LevelToyStory {
         const angle = progress * Math.PI * 2.8;
         const h = startH + progress * totalH;
 
-        // Wide overlapping ramp steps (5.4m wide × 2.8m deep) forming a continuous solid spiral highway
-        const stepGeo = new THREE.BoxGeometry(5.4, 0.45, 2.8);
+        // Broad curved marble steps forming a continuous, perfectly joined stair highway
+        const stepGeo = new THREE.BoxGeometry(5.6, 0.42, 2.8);
         const step = new THREE.Mesh(stepGeo, stoneMat);
         const sx = Math.cos(angle) * stepRadius;
         const sz = Math.sin(angle) * stepRadius;
@@ -1444,81 +1455,151 @@ export class LevelToyStory {
         cit.add(step);
         this.levelColliders.push(step);
 
-        // ── CONTINUOUS TALL SAFETY BARRIERS (Cero caídas — barreras altas de 2.2m) ──
-        // Inner curved barrier wall (height 2.2m above ramp)
-        const innerWall = new THREE.Mesh(new THREE.BoxGeometry(0.9, 2.2, 3.4), redWoodMat);
+        // Continuous Elegant Safety Balustrades (Inner r=1.9m, Outer r=7.2m, Height 2.2m)
+        const innerWall = new THREE.Mesh(new THREE.BoxGeometry(0.85, 2.2, 3.4), redWoodMat);
         innerWall.position.set(Math.cos(angle) * 1.9, h + 1.1, Math.sin(angle) * 1.9);
         innerWall.rotation.y = -angle + Math.PI / 2;
         cit.add(innerWall);
         this.levelColliders.push(innerWall);
 
-        // Outer curved barrier wall (height 2.2m above ramp)
-        const outerWall = new THREE.Mesh(new THREE.BoxGeometry(0.9, 2.2, 3.4), redWoodMat);
+        const outerWall = new THREE.Mesh(new THREE.BoxGeometry(0.85, 2.2, 3.4), redWoodMat);
         outerWall.position.set(Math.cos(angle) * 7.2, h + 1.1, Math.sin(angle) * 7.2);
         outerWall.rotation.y = -angle + Math.PI / 2;
         cit.add(outerWall);
         this.levelColliders.push(outerWall);
 
+        // Polished Gold Handrails along the outer wall
+        const handrail = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.15, 3.4), goldMat);
+        handrail.position.set(Math.cos(angle) * 7.2, h + 2.2, Math.sin(angle) * 7.2);
+        handrail.rotation.y = -angle + Math.PI / 2;
+        cit.add(handrail);
+
+        // Hanging Crimson Temple Lanterns every 8 steps
         if (i % 8 === 0) {
-          const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, emissive: 0xff4400, emissiveIntensity: 1.5 });
+          const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, emissive: 0xff3300, emissiveIntensity: 1.6 });
           const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), lanternMat);
-          lantern.position.set(Math.cos(angle) * 7.4, h + 2.4, Math.sin(angle) * 7.4);
+          lantern.position.set(Math.cos(angle) * 7.4, h + 2.6, Math.sin(angle) * 7.4);
           cit.add(lantern);
         }
       }
 
-      // ── PISO SUPERIOR / CÁMARA DEL SECRETO (Y = 14.8) — 100% SÓLIDO SIN HUECOS ──
-      const upperFloorSlab = new THREE.Mesh(new THREE.CylinderGeometry(12.5, 12.5, 0.6, 24), stoneMat);
+      // ── 4. RELLANO INTERMEDIO (Midway Panoramic Balcony at y = 7.7m) ──
+      const midAngle = 1.4 * Math.PI;
+      const midX = Math.cos(midAngle) * 7.8;
+      const midZ = Math.sin(midAngle) * 7.8;
+      const midLanding = new THREE.Mesh(new THREE.CylinderGeometry(3.5, 3.5, 0.6, 16), stoneMat);
+      midLanding.position.set(midX, 7.7, midZ);
+      cit.add(midLanding);
+      this.levelColliders.push(midLanding);
+
+      // ── 5. RELLANO SUPERIOR Y PORTAL MONUMENTAL DE ENTRADA AL SANTUARIO (Y = 14.8) ──
+      // Exit coordinates of the spiral staircase at angle 2.8 * PI (0.8 * PI)
+      const exitAngle = 2.8 * Math.PI;
+      const exitX = Math.cos(exitAngle) * stepRadius; // ~ -3.72
+      const exitZ = Math.sin(exitAngle) * stepRadius; // ~ +2.70
+
+      // Solid architectural bridge connecting the top of the stairs directly to the sanctuary floor
+      const landingBridge = new THREE.Mesh(new THREE.BoxGeometry(6.5, 0.6, 6.0), stoneMat);
+      landingBridge.position.set(exitX, 14.8, exitZ);
+      cit.add(landingBridge);
+      this.levelColliders.push(landingBridge);
+
+      // Monumental Torii Entrance Pavilion at the top of the stairs (Portal del Santuario)
+      const portalColL = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.55, 5.8, 12), redWoodMat);
+      portalColL.position.set(exitX - 2.5, 17.7, exitZ);
+      const portalColR = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.55, 5.8, 12), redWoodMat);
+      portalColR.position.set(exitX + 2.5, 17.7, exitZ);
+      const portalBeam = new THREE.Mesh(new THREE.BoxGeometry(6.8, 0.6, 0.8), redWoodMat);
+      portalBeam.position.set(exitX, 20.3, exitZ);
+      const portalRoof = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.35, 1.6), goldMat);
+      portalRoof.position.set(exitX, 20.7, exitZ);
+      cit.add(portalColL, portalColR, portalBeam, portalRoof);
+      this.levelColliders.push(portalColL, portalColR);
+
+      // ── 6. PISO SUPERIOR DEL SANTUARIO (Y = 14.8) — 100% SÓLIDO Y CONTINUO ──
+      const upperFloorSlab = new THREE.Mesh(new THREE.CylinderGeometry(13.5, 13.5, 0.6, 32), stoneMat);
       upperFloorSlab.position.set(0, 14.8, 0);
       upperFloorSlab.receiveShadow = true;
       cit.add(upperFloorSlab);
       this.levelColliders.push(upperFloorSlab);
 
-      // Solid outer perimeter safety balustrade around the secret chamber edge (radius 12.5m)
+      // Outer Perimeter Balustrade with Carved Gold Trim
       for (let i = 0; i < 8; i++) {
         const angle = (i / 8) * Math.PI * 2;
-        const bx = Math.cos(angle) * 12.2;
-        const bz = Math.sin(angle) * 12.2;
-        const perimeterRailing = new THREE.Mesh(new THREE.BoxGeometry(9.5, 1.4, 0.6), redWoodMat);
-        perimeterRailing.position.set(bx, 15.5, bz);
+        // Skip railing at stair entry sector
+        const diff = Math.abs(angle - (exitAngle % (Math.PI * 2)));
+        if (diff < 0.4 || Math.abs(diff - Math.PI * 2) < 0.4) continue;
+
+        const bx = Math.cos(angle) * 13.0;
+        const bz = Math.sin(angle) * 13.0;
+        const perimeterRailing = new THREE.Mesh(new THREE.BoxGeometry(10.5, 1.6, 0.6), redWoodMat);
+        perimeterRailing.position.set(bx, 15.6, bz);
         perimeterRailing.rotation.y = -angle + Math.PI / 2;
         cit.add(perimeterRailing);
         this.levelColliders.push(perimeterRailing);
       }
 
-      // 8 Perimeter Dragon Pillars with Gold Rings in Secret Chamber
+      // 8 Outer Sanctuary Columns with Gold Lotus Collars
       for (let i = 0; i < 8; i++) {
         const angle = (i / 8) * Math.PI * 2;
-        const px = Math.cos(angle) * 11.5;
-        const pz = Math.sin(angle) * 11.5;
-        const pCol = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 7, 10), redWoodMat);
-        pCol.position.set(px, 18.3, pz);
-        const pRing = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.12, 8, 16), goldMat);
-        pRing.position.set(px, 21.2, pz);
+        const px = Math.cos(angle) * 12.0;
+        const pz = Math.sin(angle) * 12.0;
+        const pCol = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 7.5, 12), redWoodMat);
+        pCol.position.set(px, 18.55, pz);
+        const pRing = new THREE.Mesh(new THREE.TorusGeometry(0.75, 0.12, 8, 16), goldMat);
+        pRing.position.set(px, 21.8, pz);
         pRing.rotation.x = Math.PI / 2;
         cit.add(pCol, pRing);
         this.levelColliders.push(pCol);
       }
 
-      // Chamber Pagoda Roof Cover
-      const chamberRoof = new THREE.Mesh(new THREE.ConeGeometry(15, 4.0, 8), roofMat);
-      chamberRoof.position.y = 23.5;
+      // Grand Sanctuary Pagoda Pavilion Roof
+      const chamberRoof = new THREE.Mesh(new THREE.ConeGeometry(16.5, 4.5, 8), roofMat);
+      chamberRoof.position.y = 24.2;
       cit.add(chamberRoof);
 
-      // Raised Stone Altar for the Special Staff Chest inside Secret Chamber
-      const altarGeo = new THREE.CylinderGeometry(2.2, 2.8, 0.8, 8);
-      const altar = new THREE.Mesh(altarGeo, stoneMat);
-      altar.position.set(0, 15.4, 0);
-      cit.add(altar);
-      this.levelColliders.push(altar);
+      // ── 7. ALTAR SAGRADO DE 3 NIVELES (The Sacred 3-Tier Altar for the Staff Chest) ──
+      // Tier 1: Base Granite Plinth (y = 15.0)
+      const altarTier1 = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.8, 0.4, 6), stoneMat);
+      altarTier1.position.set(0, 15.0, 0);
+      cit.add(altarTier1);
+      this.levelColliders.push(altarTier1);
 
-      // Floating Glowing Cyan Staff Emblem above Dome
-      const staffEmblem = new THREE.Mesh(new THREE.OctahedronGeometry(2.0, 0), new THREE.MeshStandardMaterial({
-        color: 0x00e5ff, emissive: 0x00bfff, emissiveIntensity: 2.5, metalness: 0.9
+      // Tier 2: Vermilion Lotus Dais (y = 15.4)
+      const altarTier2 = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.5, 0.4, 6), redWoodMat);
+      altarTier2.position.set(0, 15.4, 0);
+      cit.add(altarTier2);
+      this.levelColliders.push(altarTier2);
+
+      // Tier 3: Polished Gold-Rimmed Altar Top (y = 15.8)
+      const altarTier3 = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.2, 0.4, 6), goldMat);
+      altarTier3.position.set(0, 15.8, 0);
+      cit.add(altarTier3);
+      this.levelColliders.push(altarTier3);
+
+      // 4 Sacred Braziers with Golden Fire around the Altar
+      for (let b = 0; b < 4; b++) {
+        const bAngle = (b / 4) * Math.PI * 2 + Math.PI / 4;
+        const bx = Math.cos(bAngle) * 3.8;
+        const bz = Math.sin(bAngle) * 3.8;
+        const brazier = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.25, 1.2, 8), stoneMat);
+        brazier.position.set(bx, 15.6, bz);
+        const flameMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
+        const flame = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 8), flameMat);
+        flame.position.set(bx, 16.3, bz);
+        const bLight = new THREE.PointLight(0xffaa00, 2.5, 6.0);
+        bLight.position.set(bx, 16.5, bz);
+        cit.add(brazier, flame, bLight);
+        this.levelColliders.push(brazier);
+      }
+
+      // Floating Glowing Cyan Staff Emblem above Pagoda Roof
+      const staffEmblem = new THREE.Mesh(new THREE.OctahedronGeometry(2.2, 0), new THREE.MeshStandardMaterial({
+        color: 0x00e5ff, emissive: 0x00bfff, emissiveIntensity: 2.8, metalness: 0.9
       }));
-      staffEmblem.position.y = 26;
-      const emblemLight = new THREE.PointLight(0x00e5ff, 6.0, 20.0);
-      emblemLight.position.y = 26;
+      staffEmblem.position.y = 27.0;
+      const emblemLight = new THREE.PointLight(0x00e5ff, 6.0, 25.0);
+      emblemLight.position.y = 27.0;
       cit.add(staffEmblem, emblemLight);
 
       scene.add(cit);
