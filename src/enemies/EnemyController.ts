@@ -93,8 +93,6 @@ export class EnemyController {
         }
       });
 
-      while (this.mesh.children.length > 0) this.mesh.remove(this.mesh.children[0]);
-
       this.crabModel = model;
       this.mesh.add(model);
 
@@ -106,10 +104,52 @@ export class EnemyController {
         }
       });
 
+      this.initCombatSwordIcon();
+
       console.log(`[EnemyController] Loaded crab.glb for '${this.id}' (${this.legs.length} leg nodes, ground-aligned y: ${model.position.y.toFixed(2)})`);
     } catch (err) {
       console.warn(`[EnemyController] Could not load crab.glb for '${this.id}', using procedural`, err);
     }
+  }
+
+  private combatSprite: THREE.Sprite | null = null;
+
+  private initCombatSwordIcon(): void {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Draw glowing red circular badge with gold border
+    ctx.beginPath();
+    ctx.arc(64, 64, 52, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(220, 20, 20, 0.88)';
+    ctx.fill();
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#ffd700';
+    ctx.stroke();
+
+    // Draw crossed swords ⚔️ emoji icon
+    ctx.font = 'bold 60px "Segoe UI Emoji", "Apple Color Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('⚔️', 64, 66);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMat = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: true,
+      depthWrite: false,
+    });
+    this.combatSprite = new THREE.Sprite(spriteMat);
+    const iconHeight = this.id === 'crab_boss' ? 2.5 : 0.85;
+    const iconScale = this.id === 'crab_boss' ? 1.4 : 0.65;
+    this.combatSprite.position.set(0, iconHeight, 0);
+    this.combatSprite.scale.set(iconScale, iconScale, 1);
+    this.combatSprite.visible = false;
+    this.mesh.add(this.combatSprite);
   }
 
   private createProceduralCrab(): void {
@@ -469,16 +509,18 @@ export class EnemyController {
     let targetGroundY = levelInst ? levelInst.getTerrainHeight(this.mesh.position.x, this.mesh.position.z) : 0.0;
 
     if (colliders && colliders.length > 0) {
-      const origin = new THREE.Vector3(this.mesh.position.x, this.mesh.position.y + 0.25, this.mesh.position.z);
+      // Shoot ray from 1.2m above enemy position downward
+      const origin = new THREE.Vector3(this.mesh.position.x, this.mesh.position.y + 1.2, this.mesh.position.z);
       this.groundRaycaster.set(origin, new THREE.Vector3(0, -1, 0));
-      this.groundRaycaster.far = 0.8;
+      this.groundRaycaster.far = 4.0;
       const rawHits = this.groundRaycaster.intersectObjects(colliders, true);
       for (const hit of rawHits) {
         if (isSelfChild(hit.object)) continue;
         if (!hit.face) continue;
         const norm = hit.face.normal.clone();
         norm.transformDirection(hit.object.matrixWorld);
-        if (norm.y >= 0.45 && hit.point.y <= this.mesh.position.y + 0.2) { // Walkable floor slab below or at feet
+        // Valid floor slab or terrain must be walkable and vertically accessible
+        if (norm.y >= 0.45 && hit.point.y <= this.mesh.position.y + 0.8 && hit.point.y >= this.mesh.position.y - 2.5) {
           targetGroundY = hit.point.y;
           break;
         }
@@ -492,6 +534,20 @@ export class EnemyController {
       this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, 0, delta * 8);
     }
 
+    const distToPlayer = this.mesh.position.distanceTo(playerPos);
+
+    // ── Update 3D Crossed-Swords Combat Icon (⚔️) ──
+    if (this.combatSprite) {
+      if (this.isAlive() && distToPlayer < 8.0) {
+        this.combatSprite.visible = true;
+        const pulse = 1.0 + Math.sin(this.proceduralTime * 3.5) * 0.12;
+        const baseScale = this.id === 'crab_boss' ? 1.4 : 0.65;
+        this.combatSprite.scale.set(baseScale * pulse, baseScale * pulse, 1);
+      } else {
+        this.combatSprite.visible = false;
+      }
+    }
+
     // ── Boss arena constraint ──
     if (this.arenaCenter) {
       const playerDistToArena = playerPos.distanceTo(this.arenaCenter);
@@ -503,8 +559,6 @@ export class EnemyController {
         return;
       }
     }
-
-    const distToPlayer = this.mesh.position.distanceTo(playerPos);
 
     switch (this.state) {
       case 'FLIPPED':

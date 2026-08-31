@@ -88,6 +88,7 @@ export class LevelToyStory {
   private litGargoylesCount = 0;
   private specialPotsSmashed = 0;
   private totalSpecialPots = 5;
+  private combatTutorialShown = false;
 
   // Generic Key Registry with Color Data
   public keyDefinitions: Record<string, KeyData> = {
@@ -2001,6 +2002,10 @@ export class LevelToyStory {
       }
 
       e.onAttackPlayer = (dmg) => {
+        if (!this.combatTutorialShown) {
+          this.combatTutorialShown = true;
+          this.subtitleSystem.show('¡ALERTA DE COMBATE!', '⚔️ ¡Enemigo atacando! Presiona [Click Izquierdo] para atacar con tu Báculo o [Ctrl] para Patear.', 5000);
+        }
         const cp = this.checkpointManager.getActiveCheckpointPosition();
         this.player.takeDamage(dmg, cp);
         this.audioManager.playPlayerHurt();
@@ -2570,7 +2575,13 @@ export class LevelToyStory {
 
     // Update enemies (including DYING state for death VFX execution and memory cleanup)
     this.enemies.forEach(e => {
-      if (e.state !== 'DEAD') e.update(delta, playerPos, this.levelColliders);
+      if (e.state !== 'DEAD') {
+        e.update(delta, playerPos, this.levelColliders);
+        if (!this.combatTutorialShown && e.isAlive() && e.mesh.position.distanceTo(playerPos) < 5.5) {
+          this.combatTutorialShown = true;
+          this.subtitleSystem.show('¡ENEMIGO CANGREJO DETECTADO!', '⚔️ Presiona [Click Izquierdo] para atacar con tu Báculo o [Ctrl] para Patear.', 5000);
+        }
+      }
     });
 
     // Update collectibles (with strict manual E key press support)
@@ -2806,6 +2817,5 @@ export class LevelToyStory {
       hud.hideDialogue();
     }
   }
-
 
 }
