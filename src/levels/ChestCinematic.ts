@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { PlayerController } from '../player/PlayerController';
 import { ItemPickupVFX } from '../player/ItemPickupVFX';
+import { StaffFactory } from '../player/StaffFactory';
 
 /**
  * ChestCinematic — Zelda-style staff pickup cinematic.
@@ -50,62 +50,21 @@ export class ChestCinematic {
       this.staffInChest.visible = true;
       console.log('[ChestCinematic] STAFF_VISIBLE — showing existing chest prop');
     } else {
-      console.log('[ChestCinematic] STAFF_VISIBLE — loading 3D staff model (baculo.glb / wood.glb)');
-      try {
-        const loader = new GLTFLoader();
-        let gltf: any = null;
-        try {
-          gltf = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/baculo.glb?v=8');
-        } catch {
-          gltf = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/wood.glb?v=8');
-        }
+      console.log('[ChestCinematic] STAFF_VISIBLE — creating proportional unified 3D staff');
+      const staffGroup = StaffFactory.createStaff('chest_staff_prop');
+      const staffY = chestPosition.y + 0.38;
+      staffGroup.position.set(chestPosition.x, staffY, chestPosition.z);
+      staffGroup.rotation.set(0, Math.PI * 0.25, Math.PI * 0.35);
+      scene.add(staffGroup);
+      this.staffInChest = staffGroup;
 
-        if (gltf && gltf.scene) {
-          const staffGroup = gltf.scene as THREE.Group;
-          staffGroup.name = 'chest_staff_prop';
+      // Add a brilliant golden aura point light inside the chest
+      const chestLight = new THREE.PointLight(0xffd700, 3.5, 5.0);
+      chestLight.position.set(chestPosition.x, staffY + 0.2, chestPosition.z);
+      chestLight.name = 'chest_staff_glow';
+      scene.add(chestLight);
 
-          // Apply golden glow material to staff meshes if needed
-          staffGroup.traverse((child) => {
-            if ((child as THREE.Mesh).isMesh) {
-              child.castShadow = true;
-              child.receiveShadow = true;
-            }
-          });
-
-          // Add to scene FIRST — Box3.setFromObject needs world matrix updated
-          staffGroup.position.set(chestPosition.x, chestPosition.y + 0.35, chestPosition.z);
-          scene.add(staffGroup);
-
-          // Compute real bounding box AFTER it's in the scene graph
-          const bbox = new THREE.Box3().setFromObject(staffGroup);
-          const size = new THREE.Vector3();
-          bbox.getSize(size);
-          const largest = Math.max(size.x, size.y, size.z);
-          console.log('[ChestCinematic] 3D staff native size: ' + size.x.toFixed(3) + 'w x ' + size.y.toFixed(3) + 'h x ' + size.z.toFixed(3) + 'd');
-
-          // Scale: largest dim → 0.45m (clearly visible inside chest)
-          const TARGET = 0.45;
-          const sf = largest > 0.001 ? TARGET / largest : 0.15;
-          staffGroup.scale.setScalar(sf);
-
-          // Final position: center of chest interior elevated slightly so it floats majestically
-          const staffY = chestPosition.y + 0.38;
-          staffGroup.position.set(chestPosition.x, staffY, chestPosition.z);
-          staffGroup.rotation.set(0, Math.PI * 0.25, Math.PI * 0.4);
-
-          this.staffInChest = staffGroup;
-
-          // Add a brilliant golden aura point light inside the chest
-          const chestLight = new THREE.PointLight(0xffd700, 3.5, 5.0);
-          chestLight.position.set(chestPosition.x, staffY + 0.2, chestPosition.z);
-          chestLight.name = 'chest_staff_glow';
-          scene.add(chestLight);
-
-          console.log('[ChestCinematic] Staff 3D model successfully positioned in chest at:', chestPosition);
-        }
-      } catch (e) {
-        console.warn('[ChestCinematic] Staff model load failed:', e);
-      }
+      console.log('[ChestCinematic] Staff 3D model positioned in chest at:', chestPosition);
     }
 
     // Floating bob + slow spin

@@ -206,7 +206,6 @@ export class AssetManager {
       // ── 1. Load base character mesh (unarmed pose) ──
       console.log('[AssetManager] Loading base character model...');
       let playerModel: THREE.Group | null = null;
-      let hasEmbeddedStaff = false;
       let translationScaleFactor = 1.0; // Default factor (no scaling for fallback FBX)
 
       // Try loading player.glb first (custom character Lisar)
@@ -216,11 +215,10 @@ export class AssetManager {
         playerModel = gltf.scene;
         console.log('[AssetManager] ✅ Loaded player.glb successfully');
 
-        // Look for embedded staff mesh "Vaculo" and hide it initially
+        // Look for embedded staff mesh "Vaculo" and hide it permanently
         playerModel.traverse((child) => {
           if (child.name.toLowerCase().includes('vaculo')) {
             child.visible = false;
-            hasEmbeddedStaff = true;
             console.log('[AssetManager] Found and hidden embedded staff (Vaculo) in player.glb');
           }
         });
@@ -350,42 +348,7 @@ export class AssetManager {
         }
       });
 
-      // ── 3. Attach baculo.glb staff to Right Hand bone ONLY if we don't have an embedded staff ──
-      if (!hasEmbeddedStaff) {
-        try {
-          const staffGltf = await this.gltfLoader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/baculo.glb?v=7');
-          const staffScene = staffGltf.scene;
-          staffScene.name = 'magic_wand';
-          staffScene.visible = false; // Hidden until picked up
-
-          // Find right hand bone (Mixamo naming)
-          let rightHand: THREE.Object3D | null = null;
-          playerModel.traverse((child) => {
-            const n = child.name.toLowerCase();
-            if (n.includes('righthand') && !n.includes('thumb') && !n.includes('index') && !n.includes('middle') && !n.includes('ring') && !n.includes('pinky')) {
-              rightHand = child;
-            }
-          });
-
-          if (rightHand) {
-            // Scale & position relative to hand bone
-            // Assuming baculo.glb is correctly scaled or we apply a mild scale
-            staffScene.scale.setScalar(1.0);
-            staffScene.position.set(0, 0.05, 0); // Directly in hand
-            staffScene.rotation.set(Math.PI * 0.5, 0, 0);
-            (rightHand as THREE.Object3D).add(staffScene);
-            console.log('[AssetManager] ✅ Attached baculo.glb to bone:', (rightHand as THREE.Object3D).name);
-          } else {
-            // Fallback
-            staffScene.scale.setScalar(0.01);
-            staffScene.position.set(0, 0, 0);
-            playerModel.add(staffScene);
-            console.warn('[AssetManager] ⚠️ No RightHand bone found, attached staff to root');
-          }
-        } catch (e) {
-          console.warn('[AssetManager] Could not load baculo.glb staff', e);
-        }
-      }
+      // ── 3. Player staff prop is managed authoritatively by PlayerController via StaffFactory ──
 
       // ── 4. Load and retarget ALL animation clips in parallel (Instant Fast Startup) ──
       const [

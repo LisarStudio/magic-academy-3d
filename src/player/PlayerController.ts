@@ -4,6 +4,7 @@ import { CameraController } from '../camera/CameraController';
 import { AnimationController } from './AnimationController';
 import { WandEffect } from '../spells/WandEffect';
 import { ItemPickupVFX } from './ItemPickupVFX';
+import { StaffFactory } from './StaffFactory';
 
 export const PLAYER_NAME = 'LISAR';
 
@@ -61,51 +62,18 @@ export class PlayerController {
   public staffBackMesh: THREE.Group | null = null;
   public staffHandMesh: THREE.Group | null = null;
 
-  private createProportionalStaffMesh(): THREE.Group {
-    const group = new THREE.Group();
-    // Slender golden bo staff with coherent proportions (length = 1.15m, radius = 0.016m)
-    const shaftGeo = new THREE.CylinderGeometry(0.016, 0.016, 1.15, 12);
-    const shaftMat = new THREE.MeshStandardMaterial({
-      color: 0xd49510,
-      metalness: 0.88,
-      roughness: 0.22,
-      emissive: 0x4a3200,
-      emissiveIntensity: 0.35
-    });
-    const shaft = new THREE.Mesh(shaftGeo, shaftMat);
-    shaft.castShadow = true;
-    group.add(shaft);
-
-    // Golden Dragon Ornaments at top & bottom
-    const ringMat = new THREE.MeshStandardMaterial({ color: 0xffe066, metalness: 0.95, roughness: 0.15 });
-    const topRing = new THREE.Mesh(new THREE.TorusGeometry(0.024, 0.007, 8, 16), ringMat);
-    topRing.position.y = 0.48;
-    topRing.rotation.x = Math.PI / 2;
-    const botRing = new THREE.Mesh(new THREE.TorusGeometry(0.024, 0.007, 8, 16), ringMat);
-    botRing.position.y = -0.48;
-    botRing.rotation.x = Math.PI / 2;
-    group.add(topRing, botRing);
-
-    // Glowing Azure Crystal Tips
-    const crystalMat = new THREE.MeshStandardMaterial({
-      color: 0x3dfff5,
-      emissive: 0x3dfff5,
-      emissiveIntensity: 1.6,
-      roughness: 0.1
-    });
-    const topCrystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.032), crystalMat);
-    topCrystal.position.y = 0.56;
-    const botCrystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.032), crystalMat);
-    botCrystal.position.y = -0.56;
-    group.add(topCrystal, botCrystal);
-
-    return group;
-  }
-
-  private initStaffMeshes(): void {
+  public initStaffMeshes(): void {
     // 1. Permanently hide any embedded Vaculo from player.glb
     const embeddedStaff = this.mesh.getObjectByName('Vaculo');
     if (embeddedStaff) embeddedStaff.visible = false;
+
+    // Remove any existing back/hand staff meshes if re-binding
+    if (this.staffBackMesh && this.staffBackMesh.parent) {
+      this.staffBackMesh.parent.remove(this.staffBackMesh);
+    }
+    if (this.staffHandMesh && this.staffHandMesh.parent) {
+      this.staffHandMesh.parent.remove(this.staffHandMesh);
+    }
 
     // 2. Find Spine bone for back mounting and RightHand for attack hand holding
     let spineBone: THREE.Object3D | null = null;
@@ -121,33 +89,37 @@ export class PlayerController {
       }
     });
 
-    // 3. Create Staff Back Mesh (slanted across Wukong's back)
-    this.staffBackMesh = this.createProportionalStaffMesh();
-    this.staffBackMesh.name = 'staff_on_back';
-    this.staffBackMesh.visible = false;
+    const spineName = spineBone ? (spineBone as THREE.Object3D).name : 'root';
+    const handName = rightHandBone ? (rightHandBone as THREE.Object3D).name : 'root';
+    console.log(`[PlayerController] Binding staff sockets — Spine: ${spineName}, RightHand: ${handName}`);
+
+    // 3. Create Staff Back Mesh (slanted diagonally across Wukong's back)
+    const backStaff = StaffFactory.createStaff('staff_on_back');
+    backStaff.visible = false;
+    this.staffBackMesh = backStaff;
 
     if (spineBone) {
-      this.staffBackMesh.position.set(-0.06, 0.15, -0.15);
-      this.staffBackMesh.rotation.set(0.35, 0.12, 0.72);
-      (spineBone as THREE.Object3D).add(this.staffBackMesh);
+      backStaff.position.set(-0.06, 0.15, -0.15);
+      backStaff.rotation.set(0.35, 0.12, 0.72);
+      (spineBone as THREE.Object3D).add(backStaff);
     } else {
-      this.staffBackMesh.position.set(0, 1.1, -0.22);
-      this.staffBackMesh.rotation.set(0.35, 0.12, 0.72);
-      this.mesh.add(this.staffBackMesh);
+      backStaff.position.set(0, 1.1, -0.22);
+      backStaff.rotation.set(0.35, 0.12, 0.72);
+      this.mesh.add(backStaff);
     }
 
-    // 4. Create Staff Hand Mesh (firmly held in right palm for attacking)
-    this.staffHandMesh = this.createProportionalStaffMesh();
-    this.staffHandMesh.name = 'staff_in_hand';
-    this.staffHandMesh.visible = false;
+    // 4. Create Staff Hand Mesh (firmly gripped in right hand for attacking)
+    const handStaff = StaffFactory.createStaff('staff_in_hand');
+    handStaff.visible = false;
+    this.staffHandMesh = handStaff;
 
     if (rightHandBone) {
-      this.staffHandMesh.position.set(0, 0.05, 0);
-      this.staffHandMesh.rotation.set(Math.PI * 0.5, 0, 0);
-      (rightHandBone as THREE.Object3D).add(this.staffHandMesh);
+      handStaff.position.set(0, 0.05, 0);
+      handStaff.rotation.set(Math.PI * 0.5, 0, 0);
+      (rightHandBone as THREE.Object3D).add(handStaff);
     } else {
-      this.staffHandMesh.position.set(0.4, 1.0, 0.3);
-      this.mesh.add(this.staffHandMesh);
+      handStaff.position.set(0.4, 1.0, 0.3);
+      this.mesh.add(handStaff);
     }
   }
 
