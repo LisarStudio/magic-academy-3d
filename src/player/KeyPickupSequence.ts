@@ -203,7 +203,7 @@ export class KeyPickupSequence {
 
     // ── FASE 5: Store gesture -> register in inventory -> cleanup ──
     let holdElapsed = 0;
-    const holdDuration = 1.7; // seconds matching TakeItem pose
+    const holdDuration = 0.55; // Fast, snappy, AAA responsive pickup pose
 
     await new Promise<void>((resolve) => {
       let lastTime = performance.now();

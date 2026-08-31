@@ -51,43 +51,122 @@ export class PlayerController {
     this.mesh.position.set(0, 0, 0);
 
     // Create the WandEffect glow (light + particles).
-    // It starts hidden and detached. It attaches to the real báculo when the staff is equipped.
     this.wandEffect = new WandEffect();
 
-    // Initially staff is hidden until collected from chest
+    // Initialize proportional dual-mount staff system (back mount & hand mount)
+    this.initStaffMeshes();
     this.setStaffVisibility(false);
   }
 
-  public setStaffVisibility(visible: boolean): void {
-    // Show/hide the real báculo embedded in the character model
+  public staffBackMesh: THREE.Group | null = null;
+  public staffHandMesh: THREE.Group | null = null;
+
+  private createProportionalStaffMesh(): THREE.Group {
+    const group = new THREE.Group();
+    // Slender golden bo staff with coherent proportions (length = 1.15m, radius = 0.016m)
+    const shaftGeo = new THREE.CylinderGeometry(0.016, 0.016, 1.15, 12);
+    const shaftMat = new THREE.MeshStandardMaterial({
+      color: 0xd49510,
+      metalness: 0.88,
+      roughness: 0.22,
+      emissive: 0x4a3200,
+      emissiveIntensity: 0.35
+    });
+    const shaft = new THREE.Mesh(shaftGeo, shaftMat);
+    shaft.castShadow = true;
+    group.add(shaft);
+
+    // Golden Dragon Ornaments at top & bottom
+    const ringMat = new THREE.MeshStandardMaterial({ color: 0xffe066, metalness: 0.95, roughness: 0.15 });
+    const topRing = new THREE.Mesh(new THREE.TorusGeometry(0.024, 0.007, 8, 16), ringMat);
+    topRing.position.y = 0.48;
+    topRing.rotation.x = Math.PI / 2;
+    const botRing = new THREE.Mesh(new THREE.TorusGeometry(0.024, 0.007, 8, 16), ringMat);
+    botRing.position.y = -0.48;
+    botRing.rotation.x = Math.PI / 2;
+    group.add(topRing, botRing);
+
+    // Glowing Azure Crystal Tips
+    const crystalMat = new THREE.MeshStandardMaterial({
+      color: 0x3dfff5,
+      emissive: 0x3dfff5,
+      emissiveIntensity: 1.6,
+      roughness: 0.1
+    });
+    const topCrystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.032), crystalMat);
+    topCrystal.position.y = 0.56;
+    const botCrystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.032), crystalMat);
+    botCrystal.position.y = -0.56;
+    group.add(topCrystal, botCrystal);
+
+    return group;
+  }
+
+  private initStaffMeshes(): void {
+    // 1. Permanently hide any embedded Vaculo from player.glb
     const embeddedStaff = this.mesh.getObjectByName('Vaculo');
-    if (embeddedStaff) embeddedStaff.visible = visible;
+    if (embeddedStaff) embeddedStaff.visible = false;
+
+    // 2. Find Spine bone for back mounting and RightHand for attack hand holding
+    let spineBone: THREE.Object3D | null = null;
+    let rightHandBone: THREE.Object3D | null = null;
+
+    this.mesh.traverse((child) => {
+      const n = child.name.toLowerCase();
+      if ((n.includes('spine2') || n.includes('spine1') || n.includes('spine')) && !spineBone) {
+        spineBone = child;
+      }
+      if (n.includes('righthand') && !n.includes('thumb') && !n.includes('index') && !n.includes('middle') && !n.includes('ring') && !n.includes('pinky')) {
+        rightHandBone = child;
+      }
+    });
+
+    // 3. Create Staff Back Mesh (slanted across Wukong's back)
+    this.staffBackMesh = this.createProportionalStaffMesh();
+    this.staffBackMesh.name = 'staff_on_back';
+    this.staffBackMesh.visible = false;
+
+    if (spineBone) {
+      this.staffBackMesh.position.set(-0.06, 0.15, -0.15);
+      this.staffBackMesh.rotation.set(0.35, 0.12, 0.72);
+      (spineBone as THREE.Object3D).add(this.staffBackMesh);
+    } else {
+      this.staffBackMesh.position.set(0, 1.1, -0.22);
+      this.staffBackMesh.rotation.set(0.35, 0.12, 0.72);
+      this.mesh.add(this.staffBackMesh);
+    }
+
+    // 4. Create Staff Hand Mesh (firmly held in right palm for attacking)
+    this.staffHandMesh = this.createProportionalStaffMesh();
+    this.staffHandMesh.name = 'staff_in_hand';
+    this.staffHandMesh.visible = false;
+
+    if (rightHandBone) {
+      this.staffHandMesh.position.set(0, 0.05, 0);
+      this.staffHandMesh.rotation.set(Math.PI * 0.5, 0, 0);
+      (rightHandBone as THREE.Object3D).add(this.staffHandMesh);
+    } else {
+      this.staffHandMesh.position.set(0.4, 1.0, 0.3);
+      this.mesh.add(this.staffHandMesh);
+    }
+  }
+
+  public setStaffVisibility(visible: boolean): void {
+    if (this.staffBackMesh) this.staffBackMesh.visible = visible;
+    if (this.staffHandMesh) this.staffHandMesh.visible = false;
+
+    const embeddedStaff = this.mesh.getObjectByName('Vaculo');
+    if (embeddedStaff) embeddedStaff.visible = false;
 
     const attachedStaff = this.mesh.getObjectByName('magic_wand');
-    if (attachedStaff) attachedStaff.visible = visible;
+    if (attachedStaff) attachedStaff.visible = false;
 
-    if (visible) {
-      // Attach the glow effect to the báculo's tip.
-      // Prefer the Vaculo (embedded in player.glb); fallback to baculo.glb attached to RightHand.
-      const staffRoot = embeddedStaff || attachedStaff;
-      if (staffRoot) {
-        // Place the glow group at the top of the staff.
-        // The báculo mesh has its tip roughly at local Y=+0.8 (will be fine-tuned visually).
-        this.wandEffect.wandMesh.position.set(0, 0.8, 0);
-        this.wandEffect.wandMesh.rotation.set(0, 0, 0);
-        staffRoot.add(this.wandEffect.wandMesh);
-      } else {
-        // No báculo found in model — attach to player root as fallback
-        this.wandEffect.wandMesh.position.set(0.35, 1.6, 0.2);
-        this.mesh.add(this.wandEffect.wandMesh);
-      }
+    if (visible && this.staffBackMesh) {
+      this.wandEffect.wandMesh.position.set(0, 0.56, 0);
+      this.staffBackMesh.add(this.wandEffect.wandMesh);
       this.wandEffect.wandMesh.visible = true;
     } else {
-      // Detach glow from wherever it is and hide it
       this.wandEffect.wandMesh.visible = false;
-      if (this.wandEffect.wandMesh.parent) {
-        this.wandEffect.wandMesh.parent.remove(this.wandEffect.wandMesh);
-      }
     }
   }
 
@@ -402,16 +481,16 @@ export class PlayerController {
 
     // Post-movement ground re-snap for smooth slope and ramp traversal
     if (this.isGrounded && this.velocity.y === 0 && this.colliders.length > 0) {
-      const snapOrigin = this.mesh.position.clone().add(new THREE.Vector3(0, 0.8, 0));
+      const snapOrigin = this.mesh.position.clone().add(new THREE.Vector3(0, 0.25, 0));
       this.groundRaycaster.set(snapOrigin, PlayerController.DOWN_DIR);
-      this.groundRaycaster.far = 1.6;
+      this.groundRaycaster.far = 0.6;
       const rawSnapHits = this.groundRaycaster.intersectObjects(this.colliders, true);
       for (const hit of rawSnapHits) {
         if (isPlayerChild(hit.object)) continue;
         if (!hit.face) continue;
         const norm = hit.face.normal.clone();
         norm.transformDirection(hit.object.matrixWorld);
-        if (norm.y >= 0.4 && hit.distance <= 1.4) {
+        if (norm.y >= 0.4 && hit.point.y <= this.mesh.position.y + 0.15 && hit.point.y >= this.mesh.position.y - 0.45) {
           this.mesh.position.y = hit.point.y;
           break;
         }
@@ -520,23 +599,27 @@ export class PlayerController {
   }
 
   public attachStaffToHand(): void {
-    const staff = this.mesh.getObjectByName('Vaculo') || this.mesh.getObjectByName('magic_wand');
-    if (staff) {
-      staff.visible = true;
+    if (!this.hasStaff) return;
+    if (this.staffBackMesh) this.staffBackMesh.visible = false;
+    if (this.staffHandMesh) {
+      this.staffHandMesh.visible = true;
       if (this.wandEffect && this.wandEffect.wandMesh) {
-        this.wandEffect.wandMesh.position.set(0, 0.8, 0);
-        staff.add(this.wandEffect.wandMesh);
+        this.wandEffect.wandMesh.position.set(0, 0.56, 0);
+        this.staffHandMesh.add(this.wandEffect.wandMesh);
+        this.wandEffect.wandMesh.visible = true;
       }
     }
   }
 
   public attachStaffToBack(): void {
-    const staff = this.mesh.getObjectByName('Vaculo') || this.mesh.getObjectByName('magic_wand');
-    if (staff && this.hasStaff) {
-      staff.visible = true;
+    if (!this.hasStaff) return;
+    if (this.staffHandMesh) this.staffHandMesh.visible = false;
+    if (this.staffBackMesh) {
+      this.staffBackMesh.visible = true;
       if (this.wandEffect && this.wandEffect.wandMesh) {
-        this.wandEffect.wandMesh.position.set(0, 0.8, 0);
-        staff.add(this.wandEffect.wandMesh);
+        this.wandEffect.wandMesh.position.set(0, 0.56, 0);
+        this.staffBackMesh.add(this.wandEffect.wandMesh);
+        this.wandEffect.wandMesh.visible = true;
       }
     }
   }

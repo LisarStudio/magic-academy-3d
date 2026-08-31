@@ -20,7 +20,6 @@ import { EnemyController } from '../enemies/EnemyController';
 import { GekkoNPC } from '../npc/GekkoNPC';
 import { MovingPlatform } from '../world/MovingPlatform';
 import { KeyPickupSequence, type KeyData } from '../player/KeyPickupSequence';
-import { ItemPickupVFX } from '../player/ItemPickupVFX';
 
 export class LevelToyStory {
   private sceneManager: SceneManager;
@@ -2657,42 +2656,24 @@ export class LevelToyStory {
       const distToEnergy = item.position.distanceTo(playerPos);
       if (distToEnergy < 2.2 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
         const hud = (window as any).gameInstance?.hud;
-        hud?.showInteractionPrompt('Presiona [E] para tomar Durazno Celestial');
+        hud?.showInteractionPrompt('Tomar Durazno Celestial [E]');
 
-        if (this.inputManager.keys['KeyE'] || (hud?.isTouchDevice?.() && distToEnergy < 1.3)) {
+        if (this.inputManager.keys['KeyE'] || distToEnergy < 1.4) {
           hud?.hideInteractionPrompt();
           const peachPos = item.position.clone();
-
-          // Lock player movement and lock controls during TakeItem animation
-          this.player.isControlsLocked = true;
-          this.player.isMovementLocked = true;
-          this.player.velocity.set(0, 0, 0);
-
-          // Attach peach to Wukong's hand so it doesn't disappear prematurely
           this.sceneManager.scene.remove(item);
-          const handNode = ItemPickupVFX.findHandNode(this.player);
-          handNode.add(item);
-          item.position.set(0, 0.15, 0.05);
-          item.scale.setScalar(0.8);
-
           this.energyItems.splice(i, 1);
 
-          this.player.animationController.playTakeItemAnimation(() => {
-            // ONLY WHEN TakeItem animation finishes:
-            handNode.remove(item);
-            this.collectibleSystem.spawnSparks(peachPos);
-            this.audioManager.playCardPickup();
-            this.player.heal(35);
-            this.player.isControlsLocked = false;
-            this.player.isMovementLocked = false;
-            this.subtitleSystem.show('Durazno Celestial', '¡Has recogido un Durazno Celestial! (+35 ENERGÍA RESTAURADA)');
-          });
+          this.collectibleSystem.spawnSparks(peachPos);
+          this.audioManager.playCardPickup();
+          this.player.heal(35);
+          this.subtitleSystem.show('Durazno Celestial', '¡Has recogido un Durazno Celestial! (+35 ENERGÍA)', 2200);
         }
       }
     }
 
     // ── Chest Interaction — Staff Pickup ──────────────────────────────────────
-    if (!this.stateFlags.staffFound && this.staffChest.mesh.position.distanceTo(playerPos) < 2.0) {
+    if (!this.stateFlags.staffFound && this.staffChest.mesh.position.distanceTo(playerPos) < 2.2) {
       const hud = (window as any).gameInstance?.hud;
       hud?.showInteractionPrompt('Presiona [E] para abrir cofre');
 
@@ -2704,10 +2685,7 @@ export class LevelToyStory {
         // Pause enemy AI!
         this.enemies.forEach(e => e.isPaused = true);
 
-        this.staffChest.unlock(this.audioManager, this.collectibleSystem, () => {
-          this.player.equipStaff(this.sceneManager.scene);
-          this.subtitleSystem.show('Báculo Mágico', '¡Has encontrado el Báculo Mágico en el cofre! Hechizos desbloqueados.');
-        });
+        this.staffChest.unlock(this.audioManager, this.collectibleSystem);
 
         const cinematic = new ChestCinematic({
           scene: this.sceneManager.scene,
@@ -2720,6 +2698,7 @@ export class LevelToyStory {
           },
           onComplete: () => {
             console.log('[LevelToyStory] Staff cinematic complete — gameplay resumes.');
+            this.subtitleSystem.show('Báculo Mágico', '¡Has obtenido el Báculo Sagrado! Báculo guardado a la espalda. Ataca con Click Izquierdo.');
             // Resume enemy AI!
             this.enemies.forEach(e => e.isPaused = false);
           },
@@ -2728,7 +2707,9 @@ export class LevelToyStory {
         cinematic.run().catch(err => {
           console.error('[LevelToyStory] ChestCinematic error:', err);
           this.player.isMovementLocked = false;
-          // Resume enemy AI!
+          this.player.hasStaff = true;
+          this.player.setStaffVisibility(true);
+          this.player.attachStaffToBack();
           this.enemies.forEach(e => e.isPaused = false);
         });
       }

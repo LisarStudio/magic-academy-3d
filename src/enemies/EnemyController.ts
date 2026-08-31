@@ -469,16 +469,16 @@ export class EnemyController {
     let targetGroundY = levelInst ? levelInst.getTerrainHeight(this.mesh.position.x, this.mesh.position.z) : 0.0;
 
     if (colliders && colliders.length > 0) {
-      const origin = new THREE.Vector3(this.mesh.position.x, this.mesh.position.y + 0.8, this.mesh.position.z);
+      const origin = new THREE.Vector3(this.mesh.position.x, this.mesh.position.y + 0.25, this.mesh.position.z);
       this.groundRaycaster.set(origin, new THREE.Vector3(0, -1, 0));
-      this.groundRaycaster.far = 4.0;
+      this.groundRaycaster.far = 0.8;
       const rawHits = this.groundRaycaster.intersectObjects(colliders, true);
       for (const hit of rawHits) {
         if (isSelfChild(hit.object)) continue;
         if (!hit.face) continue;
         const norm = hit.face.normal.clone();
         norm.transformDirection(hit.object.matrixWorld);
-        if (norm.y >= 0.45) { // Walkable floor slab
+        if (norm.y >= 0.45 && hit.point.y <= this.mesh.position.y + 0.2) { // Walkable floor slab below or at feet
           targetGroundY = hit.point.y;
           break;
         }
