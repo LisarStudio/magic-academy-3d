@@ -129,7 +129,7 @@ export class KeyPickupSequence {
 
     // ── FASE 3: Interpolated flight curve towards Wukong ──
     console.log(`[KEY] Flying to player...`);
-    const flightDuration = 1.3; // seconds
+    const flightDuration = 0.35; // Snappy, instant flight
     let flightElapsed = 0;
 
     this.TEMP_START.copy(startPos);
@@ -145,14 +145,14 @@ export class KeyPickupSequence {
         const easeT = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
         this.TEMP_TARGET.copy(player.mesh.position).add(new THREE.Vector3(0, 1.2, 0));
-        const midY = Math.max(this.TEMP_START.y, this.TEMP_TARGET.y) + 1.2;
+        const midY = Math.max(this.TEMP_START.y, this.TEMP_TARGET.y) + 0.6;
 
         this.TEMP_CURR.x = THREE.MathUtils.lerp(this.TEMP_START.x, this.TEMP_TARGET.x, easeT);
         this.TEMP_CURR.z = THREE.MathUtils.lerp(this.TEMP_START.z, this.TEMP_TARGET.z, easeT);
         this.TEMP_CURR.y = (1 - easeT) * (1 - easeT) * this.TEMP_START.y + 2 * (1 - easeT) * easeT * midY + easeT * easeT * this.TEMP_TARGET.y;
 
         keyGroup.position.copy(this.TEMP_CURR);
-        keyGroup.rotation.y += 0.08;
+        keyGroup.rotation.y += 0.15;
 
         particles.forEach((p, idx) => {
           p.rotation.x += 0.1;
@@ -198,12 +198,9 @@ export class KeyPickupSequence {
     heroLight.position.set(0, 0.3, 0.3);
     keyGroup.add(heroLight);
 
-    // Play Wukong TakeItem animation
-    player.animationController.playTakeItemAnimation(() => {});
-
-    // ── FASE 5: Store gesture -> register in inventory -> cleanup ──
+    // ── FASE 5: Quick store gesture -> register in inventory -> cleanup ──
     let holdElapsed = 0;
-    const holdDuration = 0.55; // Fast, snappy, AAA responsive pickup pose
+    const holdDuration = 0.25; // Ultra snappy responsive pickup pose
 
     await new Promise<void>((resolve) => {
       let lastTime = performance.now();
