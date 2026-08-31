@@ -39,9 +39,10 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDefinition> = {
     backAttachment: {
       boneNameSubstrings: ['spine2', 'chest', 'upperchest'],
       fallbackBoneNames: ['spine1', 'spine'],
-      // Position snug against thoracic upper back, lower-left to upper-right diagonal [/]
-      position: new THREE.Vector3(0.02, 0.06, -0.11),
-      rotation: new THREE.Euler(0.08, 0.0, -0.65, 'XYZ')
+      // Harmonious heroic diagonal: Top-Right (over right shoulder) to Bottom-Left (waist)
+      // Clears head, clears monkey tail on left, flush against back fabric
+      position: new THREE.Vector3(0.00, 0.12, -0.115),
+      rotation: new THREE.Euler(0.06, -0.08, 0.68, 'XYZ')
     },
     handAttachment: {
       boneNameSubstrings: ['righthand'],
