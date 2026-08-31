@@ -297,8 +297,8 @@ export class PlayerController {
       if (!hit.face) continue;
       const norm = hit.face.normal.clone();
       norm.transformDirection(hit.object.matrixWorld);
-      // Only accept walkable floor surfaces that are at or below Wukong's feet (never overhead objects)
-      if (norm.y >= 0.45 && hit.point.y <= this.mesh.position.y + 0.15) {
+      // Accept walkable floor surfaces and steps/ramps ahead up to +0.45m
+      if (norm.y >= 0.40 && hit.point.y <= this.mesh.position.y + 0.45 && hit.point.y >= this.mesh.position.y - 1.2) {
         validGroundHit = hit;
         break;
       }
@@ -310,7 +310,7 @@ export class PlayerController {
     // Exact floor level: static collider if walked on, otherwise natural terrain
     const floorY = validGroundHit ? validGroundHit.point.y : terrainY;
 
-    if (this.mesh.position.y <= floorY + 0.10 && this.velocity.y <= 0) {
+    if (this.mesh.position.y <= floorY + 0.45 && this.velocity.y <= 0) {
       this.isGrounded = true;
       this.velocity.y = 0;
       this.mesh.position.y = floorY; // feet snap cleanly to floor
@@ -481,16 +481,16 @@ export class PlayerController {
 
     // Post-movement ground re-snap for smooth slope and ramp traversal
     if (this.isGrounded && this.velocity.y === 0 && this.colliders.length > 0) {
-      const snapOrigin = this.mesh.position.clone().add(new THREE.Vector3(0, 0.25, 0));
+      const snapOrigin = this.mesh.position.clone().add(new THREE.Vector3(0, 0.4, 0));
       this.groundRaycaster.set(snapOrigin, PlayerController.DOWN_DIR);
-      this.groundRaycaster.far = 0.6;
+      this.groundRaycaster.far = 1.0;
       const rawSnapHits = this.groundRaycaster.intersectObjects(this.colliders, true);
       for (const hit of rawSnapHits) {
         if (isPlayerChild(hit.object)) continue;
         if (!hit.face) continue;
         const norm = hit.face.normal.clone();
         norm.transformDirection(hit.object.matrixWorld);
-        if (norm.y >= 0.4 && hit.point.y <= this.mesh.position.y + 0.15 && hit.point.y >= this.mesh.position.y - 0.45) {
+        if (norm.y >= 0.4 && hit.point.y <= this.mesh.position.y + 0.45 && hit.point.y >= this.mesh.position.y - 0.6) {
           this.mesh.position.y = hit.point.y;
           break;
         }

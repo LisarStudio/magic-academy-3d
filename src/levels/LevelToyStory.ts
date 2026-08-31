@@ -1416,24 +1416,24 @@ export class LevelToyStory {
       this.levelColliders.push(eColL, eColR);
 
       // Central Pillar for Spiral Staircase
-      const centralPillar = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 14.0, 12), redWoodMat);
+      const centralPillar = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.8, 16.0, 16), redWoodMat);
       centralPillar.position.y = 7.8;
       cit.add(centralPillar);
       this.levelColliders.push(centralPillar);
 
-      // ── WALKABLE SPIRAL RAMP (RAMPA EN ESPIRAL — ancha, suave y 100% segura con barreras físicas continuas) ──
-      const numSteps = 64; // Dense overlapping segments create smooth seamless ramp surface
-      const startH = 0.8;
-      const totalH = 14.0;
-      const stepRadius = 4.5;
+      // ── WALKABLE IMPERIAL SPIRAL HELICAL RAMP (Ultra ancha, suave y 100% segura con barreras altas continuas) ──
+      const numSteps = 96; // Dense overlapping steps create butter-smooth continuous ramp surface
+      const startH = 0.6;
+      const totalH = 14.2;
+      const stepRadius = 4.6;
 
       for (let i = 0; i < numSteps; i++) {
         const progress = i / (numSteps - 1);
         const angle = progress * Math.PI * 2.8;
         const h = startH + progress * totalH;
 
-        // Wide overlapping ramp segments (4.6m wide × 2.6m deep) that overlap to form continuous surface
-        const stepGeo = new THREE.BoxGeometry(4.6, 0.45, 2.6);
+        // Wide overlapping ramp steps (5.4m wide × 2.8m deep) forming a continuous solid spiral highway
+        const stepGeo = new THREE.BoxGeometry(5.4, 0.45, 2.8);
         const step = new THREE.Mesh(stepGeo, stoneMat);
         const sx = Math.cos(angle) * stepRadius;
         const sz = Math.sin(angle) * stepRadius;
@@ -1444,17 +1444,17 @@ export class LevelToyStory {
         cit.add(step);
         this.levelColliders.push(step);
 
-        // ── THICK CONTINUOUS SAFETY BARRIERS (Barreras laterales curvas sin fisuras para evitar caídas) ──
-        // Inner curved barrier wall (height 1.8m above ramp)
-        const innerWall = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.8, 3.2), redWoodMat);
-        innerWall.position.set(Math.cos(angle) * 1.9, h + 0.9, Math.sin(angle) * 1.9);
+        // ── CONTINUOUS TALL SAFETY BARRIERS (Cero caídas — barreras altas de 2.2m) ──
+        // Inner curved barrier wall (height 2.2m above ramp)
+        const innerWall = new THREE.Mesh(new THREE.BoxGeometry(0.9, 2.2, 3.4), redWoodMat);
+        innerWall.position.set(Math.cos(angle) * 1.9, h + 1.1, Math.sin(angle) * 1.9);
         innerWall.rotation.y = -angle + Math.PI / 2;
         cit.add(innerWall);
         this.levelColliders.push(innerWall);
 
-        // Outer curved barrier wall (height 1.8m above ramp)
-        const outerWall = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.8, 3.2), redWoodMat);
-        outerWall.position.set(Math.cos(angle) * 6.8, h + 0.9, Math.sin(angle) * 6.8);
+        // Outer curved barrier wall (height 2.2m above ramp)
+        const outerWall = new THREE.Mesh(new THREE.BoxGeometry(0.9, 2.2, 3.4), redWoodMat);
+        outerWall.position.set(Math.cos(angle) * 7.2, h + 1.1, Math.sin(angle) * 7.2);
         outerWall.rotation.y = -angle + Math.PI / 2;
         cit.add(outerWall);
         this.levelColliders.push(outerWall);
@@ -1462,23 +1462,17 @@ export class LevelToyStory {
         if (i % 8 === 0) {
           const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, emissive: 0xff4400, emissiveIntensity: 1.5 });
           const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), lanternMat);
-          lantern.position.set(Math.cos(angle) * 7.1, h + 2.2, Math.sin(angle) * 7.1);
+          lantern.position.set(Math.cos(angle) * 7.4, h + 2.4, Math.sin(angle) * 7.4);
           cit.add(lantern);
         }
       }
 
       // ── PISO SUPERIOR / CÁMARA DEL SECRETO (Y = 14.8) — 100% SÓLIDO SIN HUECOS ──
-      // 8 dense overlapping solid floor slabs covering the entire upper floor around the 4.5m stair exit
-      for (let i = 0; i < 8; i++) {
-        const angle = (i / 8) * Math.PI * 2;
-        const cx = Math.cos(angle) * 8.5;
-        const cz = Math.sin(angle) * 8.5;
-        const upperFloorSlab = new THREE.Mesh(new THREE.BoxGeometry(7.5, 0.6, 7.5), stoneMat);
-        upperFloorSlab.position.set(cx, 14.8, cz);
-        upperFloorSlab.receiveShadow = true;
-        cit.add(upperFloorSlab);
-        this.levelColliders.push(upperFloorSlab);
-      }
+      const upperFloorSlab = new THREE.Mesh(new THREE.CylinderGeometry(12.5, 12.5, 0.6, 24), stoneMat);
+      upperFloorSlab.position.set(0, 14.8, 0);
+      upperFloorSlab.receiveShadow = true;
+      cit.add(upperFloorSlab);
+      this.levelColliders.push(upperFloorSlab);
 
       // Solid outer perimeter safety balustrade around the secret chamber edge (radius 12.5m)
       for (let i = 0; i < 8; i++) {
