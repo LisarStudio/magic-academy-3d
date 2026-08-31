@@ -159,17 +159,27 @@ export class Game {
           const playerPos = this.player.mesh.position;
           const forwardDir = new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.mesh.quaternion);
 
-          // 1. Physical Melee Hit Test against Enemies (within 2.8m in front cone)
+          // 1. Physical Melee Hit Test against Enemies (within 3.0m in front cone)
           this.level01.enemies.forEach(enemy => {
             if (enemy.isAlive()) {
               const enemyPos = enemy.getPosition();
               const dist = playerPos.distanceTo(enemyPos);
-              if (dist < 2.8) {
-                const toEnemy = enemyPos.clone().sub(playerPos).normalize();
+              const maxHitDist = enemy.id === 'crab_boss' ? 5.2 : 3.0;
+              if (dist < maxHitDist) {
+                const toEnemy = enemyPos.clone().sub(playerPos);
+                toEnemy.y = 0;
+                if (toEnemy.lengthSq() > 0.0001) toEnemy.normalize();
+                else toEnemy.copy(forwardDir);
                 const dot = forwardDir.dot(toEnemy);
-                if (dot > 0.3) {
+                if (dot > 0.15 || dist < 1.8 || enemy.id === 'crab_boss') {
                   console.log(`[Game] Physical Staff Hit on '${enemy.id}'!`);
-                  enemy.takeHit(playerPos, 1);
+                  try {
+                    enemy.takeHit(playerPos, 1);
+                    this.audioManager.playHitImpact();
+                    this.spellSystem.createImpactParticles(enemyPos.clone().add(new THREE.Vector3(0, 0.5, 0)), 0xffd700);
+                  } catch (err) {
+                    console.warn('[Game] Error taking hit on enemy:', err);
+                  }
                 }
               }
             }
@@ -267,20 +277,24 @@ export class Game {
               if (enemy.isAlive()) {
                 const enemyPos = enemy.getPosition();
                 const dist = playerPos.distanceTo(enemyPos);
-                const maxHitDist = enemy.id === 'crab_boss' ? 4.5 : 2.2;
+                const maxHitDist = enemy.id === 'crab_boss' ? 5.2 : 2.6;
                 if (dist < maxHitDist) {
                   const dirToEnemy = enemyPos.clone().sub(playerPos);
+                  dirToEnemy.y = 0;
                   if (dirToEnemy.lengthSq() > 0.0001) {
                     dirToEnemy.normalize();
                   } else {
                     dirToEnemy.copy(forwardDir);
                   }
                   const dot = forwardDir.dot(dirToEnemy);
-                  if (dot > 0.35 || enemy.id === 'crab_boss') { // Always allow hitting boss if in range
-                    enemy.takeHit(playerPos);
-                    this.audioManager.playHitImpact();
-                    // @ts-ignore
-                    this.spellSystem.createImpactParticles(enemyPos.clone().add(new THREE.Vector3(0, 0.5, 0)), 0xffa500);
+                  if (dot > 0.20 || dist < 1.8 || enemy.id === 'crab_boss') {
+                    try {
+                      enemy.takeHit(playerPos, 1);
+                      this.audioManager.playHitImpact();
+                      this.spellSystem.createImpactParticles(enemyPos.clone().add(new THREE.Vector3(0, 0.5, 0)), 0xffa500);
+                    } catch (err) {
+                      console.warn('[Game] Error taking hit on enemy:', err);
+                    }
                   }
                 }
               }

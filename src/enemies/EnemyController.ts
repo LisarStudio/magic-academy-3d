@@ -695,7 +695,7 @@ export class EnemyController {
         break;
 
       case 'CHASE':
-        if (distToPlayer <= (this.id === 'crab_boss' ? 5.0 : this.attackRadius)) {
+        if (distToPlayer <= (this.id === 'crab_boss' ? 4.8 : this.attackRadius)) {
           this.state = 'ATTACK';
         } else if (distToPlayer > this.detectionRadius * 2) {
           this.state = 'PATROL';
@@ -732,21 +732,31 @@ export class EnemyController {
             this.bossChargeTimer = 0.8;
           }
         } else {
-          // Normal crabs: Keep tracking player, lunge forward and pinch
+          // Normal crabs: Keep tracking player, maintain clean combat margin (1.35m - 1.85m)
           const dir = new THREE.Vector3().subVectors(playerPos, this.mesh.position);
           dir.y = 0;
           this.safeNormalize(dir);
           this.mesh.rotation.y = Math.atan2(dir.x, dir.z);
 
-          if (distToPlayer > 3.0) {
-            // Player ran away -> switch back to CHASE
+          const minCombatMargin = 1.35;
+          const maxAttackRange = 2.4;
+
+          if (distToPlayer > maxAttackRange) {
+            // Player retreated -> switch back to CHASE
             this.state = 'CHASE';
-          } else {
-            // Active pinch attack
-            this.mesh.position.addScaledVector(dir, this.chaseSpeed * 0.6 * delta);
+          } else if (distToPlayer < minCombatMargin) {
+            // Player or crab got too close -> step back to maintain striking distance
+            this.mesh.position.addScaledVector(dir, -this.moveSpeed * 1.2 * delta);
+          } else if (distToPlayer > minCombatMargin + 0.35) {
+            // Approach slowly to reach ideal strike zone
+            this.mesh.position.addScaledVector(dir, this.chaseSpeed * 0.4 * delta);
+          }
+
+          // Active pinch attack while in range
+          if (distToPlayer <= maxAttackRange) {
             this.attackCooldown -= delta;
             if (this.attackCooldown <= 0) {
-              this.attackCooldown = 1.0;
+              this.attackCooldown = 1.1;
               console.log(`[Enemy ${this.id}] 💥 Crab Pinched Player! (dist: ${distToPlayer.toFixed(2)}m)`);
               this.onAttackPlayer?.(12);
             }
@@ -794,9 +804,17 @@ export class EnemyController {
   private chaseBehavior(delta: number, playerPos: THREE.Vector3): void {
     const dir = new THREE.Vector3().subVectors(playerPos, this.mesh.position);
     dir.y = 0;
+    const dist = dir.length();
     this.safeNormalize(dir);
-    this.mesh.position.addScaledVector(dir, this.chaseSpeed * delta);
     this.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+
+    const minMargin = this.id === 'crab_boss' ? 3.6 : 1.40;
+    if (dist > minMargin) {
+      this.mesh.position.addScaledVector(dir, this.chaseSpeed * delta);
+    } else if (dist < minMargin - 0.15) {
+      // Step back to keep respectful combat spacing
+      this.mesh.position.addScaledVector(dir, -this.moveSpeed * delta);
+    }
 
     // Enforce terrain grounding height per-frame for enemy feet
     const level = (window as any).gameInstance?.level01;

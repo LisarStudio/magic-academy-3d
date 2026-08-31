@@ -174,10 +174,16 @@ export class AnimationController {
       this.currentAction.fadeOut(0.1);
     }
 
-    action.reset().setEffectiveWeight(1).setEffectiveTimeScale(1.4).fadeIn(0.08).play();
+    action.reset();
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = true;
+    action.setEffectiveWeight(1.0);
+    action.setEffectiveTimeScale(1.4);
+    action.fadeIn(0.08).play();
     this.currentAction = action;
 
     let hasImpacted = false;
+    let isFinished = false;
     const clipDuration = action.getClip().duration;
     const impactTimeThreshold = clipDuration * 0.50; // Visual impact at ~50% of kick animation
 
@@ -188,22 +194,36 @@ export class AnimationController {
       }
     };
 
+    const finishSequence = () => {
+      if (isFinished) return;
+      isFinished = true;
+      this.mixer?.removeEventListener('finished', onFinished as any);
+      if (!hasImpacted) {
+        hasImpacted = true;
+        onImpact();
+      }
+      this.isPlayingOneShot = false;
+      onComplete();
+    };
+
     const onFinished = (e: { action: THREE.AnimationAction }) => {
       if (e.action === action) {
-        this.mixer?.removeEventListener('finished', onFinished as any);
-        if (!hasImpacted) {
-          hasImpacted = true;
-          onImpact();
-        }
-        this.isPlayingOneShot = false;
-        onComplete();
+        finishSequence();
       }
     };
 
     this.mixer.addEventListener('finished', onFinished as any);
 
+    // Fail-safe timeout: ensure player controls always unlock even if animation finishes off-screen
+    const expectedDurationMs = ((clipDuration / 1.4) + 0.15) * 1000;
+    setTimeout(() => {
+      if (!isFinished) {
+        finishSequence();
+      }
+    }, Math.max(300, expectedDurationMs));
+
     const updateCheck = () => {
-      if (this.isPlayingOneShot && this.currentAction === action) {
+      if (this.isPlayingOneShot && this.currentAction === action && !isFinished) {
         checkMarker();
         if (!hasImpacted) requestAnimationFrame(updateCheck);
       }
