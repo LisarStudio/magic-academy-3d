@@ -251,28 +251,44 @@ export class HUD {
     this.spellHotbarEl.classList.remove('hidden');
   }
 
+  // Cached values to avoid redundant DOM operations
+  private lastHp = -1;
+  private lastMaxHp = -1;
+  private lastMp = -1;
+  private lastMaxMp = -1;
+  private lastCoins = -1;
+  private lastKeys = -1;
+  private lastHpColor = '';
+
   /**
    * HP bar with dynamic color: green (high) → orange (medium) → red (low)
    * Transitions are smooth via CSS transition on background and box-shadow.
    */
   public setHealth(hp: number, maxHp = 100): void {
     const safeHp = Math.max(0, Math.ceil(hp));
+    if (safeHp === this.lastHp && maxHp === this.lastMaxHp) return;
+    this.lastHp = safeHp;
+    this.lastMaxHp = maxHp;
+
     const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
     this.hpBarFillEl.style.width = `${pct}%`;
 
-    // Dynamic color based on HP percentage
-    if (pct > 55) {
-      // HIGH — Green
-      this.hpBarFillEl.style.background = 'linear-gradient(90deg, #15803d, #22c55e, #86efac)';
-      this.hpBarFillEl.style.boxShadow = '0 0 8px rgba(34, 197, 94, 0.5), inset 0 1px 0 rgba(255,255,255,0.2)';
-    } else if (pct > 25) {
-      // MEDIUM — Orange / Amber
-      this.hpBarFillEl.style.background = 'linear-gradient(90deg, #b45309, #f59e0b, #fcd34d)';
-      this.hpBarFillEl.style.boxShadow = '0 0 8px rgba(245, 158, 11, 0.5), inset 0 1px 0 rgba(255,255,255,0.2)';
-    } else {
-      // LOW — Red / Critical
-      this.hpBarFillEl.style.background = 'linear-gradient(90deg, #991b1b, #ef4444, #fca5a5)';
-      this.hpBarFillEl.style.boxShadow = '0 0 10px rgba(239, 68, 68, 0.6), inset 0 1px 0 rgba(255,255,255,0.2)';
+    let colorState = 'green';
+    if (pct <= 25) colorState = 'red';
+    else if (pct <= 55) colorState = 'orange';
+
+    if (colorState !== this.lastHpColor) {
+      this.lastHpColor = colorState;
+      if (colorState === 'green') {
+        this.hpBarFillEl.style.background = 'linear-gradient(90deg, #15803d, #22c55e, #86efac)';
+        this.hpBarFillEl.style.boxShadow = '0 0 8px rgba(34, 197, 94, 0.5), inset 0 1px 0 rgba(255,255,255,0.2)';
+      } else if (colorState === 'orange') {
+        this.hpBarFillEl.style.background = 'linear-gradient(90deg, #b45309, #f59e0b, #fcd34d)';
+        this.hpBarFillEl.style.boxShadow = '0 0 8px rgba(245, 158, 11, 0.5), inset 0 1px 0 rgba(255,255,255,0.2)';
+      } else {
+        this.hpBarFillEl.style.background = 'linear-gradient(90deg, #991b1b, #ef4444, #fca5a5)';
+        this.hpBarFillEl.style.boxShadow = '0 0 10px rgba(239, 68, 68, 0.6), inset 0 1px 0 rgba(255,255,255,0.2)';
+      }
     }
 
     const hpTextEl = document.getElementById('hp-text');
@@ -281,6 +297,10 @@ export class HUD {
 
   public setMana(mp: number, maxMp = 100): void {
     const safeMp = Math.max(0, Math.ceil(mp));
+    if (safeMp === this.lastMp && maxMp === this.lastMaxMp) return;
+    this.lastMp = safeMp;
+    this.lastMaxMp = maxMp;
+
     const pct = Math.max(0, Math.min(100, (mp / maxMp) * 100));
     this.mpBarFillEl.style.width = `${pct}%`;
     const mpTextEl = document.getElementById('mp-text');
@@ -288,6 +308,9 @@ export class HUD {
   }
 
   public setCoinCount(count: number): void {
+    if (count === this.lastCoins) return;
+    this.lastCoins = count;
+
     if (this.coinCounterEl) {
       this.coinCounterEl.textContent = count.toString() + ' / 50';
       const container = document.getElementById('coin-counter-container');
@@ -307,6 +330,9 @@ export class HUD {
   }
 
   public setKeyCount(count: number): void {
+    if (count === this.lastKeys) return;
+    this.lastKeys = count;
+
     if (this.keyCounterEl) {
       this.keyCounterEl.textContent = `Llaves: ${count} / 5`;
     }

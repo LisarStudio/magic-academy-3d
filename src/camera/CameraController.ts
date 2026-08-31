@@ -98,19 +98,25 @@ export class CameraController {
     this.updatePosition(delta, input);
   }
 
+  // Static preallocated vectors for zero-allocation performance
+  private static readonly TEMP_FOCUS = new THREE.Vector3();
+  private static readonly TEMP_DIR = new THREE.Vector3();
+  private static readonly TEMP_IDEAL = new THREE.Vector3();
+  private static readonly TEMP_FORWARD = new THREE.Vector3();
+  private static readonly TEMP_RIGHT = new THREE.Vector3();
+
   private updatePosition(delta: number, input: InputManager | null): void {
     if (!this.target) return;
 
-    const targetFocus = new THREE.Vector3()
-      .copy(this.target.position)
-      .add(new THREE.Vector3(0, this.heightOffset, 0));
+    CameraController.TEMP_FOCUS.copy(this.target.position);
+    CameraController.TEMP_FOCUS.y += this.heightOffset;
 
     // Smooth position tracking
     const lerpSpeed = Math.min(1.0, delta * 18.0);
-    this.currentLookAt.lerp(targetFocus, lerpSpeed);
+    this.currentLookAt.lerp(CameraController.TEMP_FOCUS, lerpSpeed);
 
     // Camera direction from yaw/pitch
-    const dir = new THREE.Vector3(
+    CameraController.TEMP_DIR.set(
       Math.sin(this.yaw) * Math.cos(this.pitch),
       Math.sin(this.pitch),
       Math.cos(this.yaw) * Math.cos(this.pitch),
@@ -119,7 +125,7 @@ export class CameraController {
     // ── Fast Collision avoidance ────────────────────────────────────────────────
     let targetDist = this.distance;
     if (this.collisionObjects.length > 0) {
-      this.collisionRaycaster.set(this.currentLookAt, dir);
+      this.collisionRaycaster.set(this.currentLookAt, CameraController.TEMP_DIR);
       // Non-recursive raycast against top-level meshes for maximum performance!
       const hits = this.collisionRaycaster.intersectObjects(this.collisionObjects, false);
       if (hits.length > 0 && hits[0].distance < this.distance) {
@@ -131,11 +137,8 @@ export class CameraController {
     const dLerp   = Math.min(1.0, delta * (pushIn ? 28.0 : 8.0));
     this.currentDistance = THREE.MathUtils.lerp(this.currentDistance, targetDist, dLerp);
 
-    const idealPos = new THREE.Vector3()
-      .copy(this.currentLookAt)
-      .addScaledVector(dir, this.currentDistance);
-
-    this.currentPosition.lerp(idealPos, lerpSpeed);
+    CameraController.TEMP_IDEAL.copy(this.currentLookAt).addScaledVector(CameraController.TEMP_DIR, this.currentDistance);
+    this.currentPosition.lerp(CameraController.TEMP_IDEAL, lerpSpeed);
 
     // ── Dynamic FOV (Only update matrix when FOV changes) ────────────────────
     const isRunning = input
@@ -152,11 +155,11 @@ export class CameraController {
   }
 
   public getForwardVector(): THREE.Vector3 {
-    return new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).normalize();
+    return CameraController.TEMP_FORWARD.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).normalize();
   }
 
   public getRightVector(): THREE.Vector3 {
-    return new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw)).normalize();
+    return CameraController.TEMP_RIGHT.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)).normalize();
   }
 }
 

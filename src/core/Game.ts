@@ -100,6 +100,14 @@ export class Game {
     // Focus camera on target AFTER the level is initialized and player is spawned at Checkpoint 0!
     this.cameraController.setTarget(this.player.mesh);
 
+    // Pre-compile WebGL shaders & pipeline into GPU memory to eliminate runtime shader compilation stutter
+    try {
+      this.sceneManager.renderer.compile(this.sceneManager.scene, this.sceneManager.camera);
+      console.log('[Game] ✅ Pre-compiled all WebGL shaders and materials into GPU memory.');
+    } catch (e) {
+      console.warn('[Game] Shader precompilation warning:', e);
+    }
+
     // 6. Bind Player & HUD Status Callbacks
     this.player.onHealthChange = (hp, maxHp) => this.hud.setHealth(hp, maxHp);
     this.hud.setupMobileControls(this.inputManager);

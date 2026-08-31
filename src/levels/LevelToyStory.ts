@@ -670,9 +670,8 @@ export class LevelToyStory {
     })();
 
     // ═══════════════════════════════════════════════════════════════════════════════
-    // ▓▓▓  REAL 3D GLTF FOLIAGE & NATURE ENVIRONMENT MANAGER  ▓▓▓
-    // Loads & instantiates real 3D GLTF trees, shrubs, and 3D wildflowers.
-    // ZERO primitive spheres, ZERO blocky proxies.
+    // ▓▓▓  HIGH-PERFORMANCE INSTANCED 3D GLTF FOLIAGE & NATURE MANAGER  ▓▓▓
+    // Combines 350+ individual meshes into 3 single InstancedMesh draw calls!
     // ═══════════════════════════════════════════════════════════════════════════════
     (() => {
       const gltfLoader = new GLTFLoader();
@@ -711,72 +710,112 @@ export class LevelToyStory {
         });
       });
 
-      // 2. Real 3D Meadow Shrubs & Bushes
+      // 2. Real 3D Meadow Shrubs & Bushes (InstancedMesh: 1 single draw call)
       gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/bush_meadow.gltf', (gltf) => {
-        const bushTemplate = gltf.scene;
-        const bushPositions = [
-          [-28, 0, 8], [-32, 0, 12], [-42, 0, -38], [-48, 0, -42],
-          [28, 0, -12], [32, 0, -18], [-15, 0, -85], [15, 0, -85],
-          [-8, 0, -22], [8, 0, -22], [-14, 0, -12], [14, 0, -12]
-        ];
-        bushPositions.forEach(([x, y, z]) => {
-          const b = bushTemplate.clone();
-          b.position.set(x, y, z);
-          b.rotation.y = Math.random() * Math.PI * 2;
-          const s = 1.0 + Math.random() * 0.6;
-          b.scale.set(s, s * (0.8 + Math.random() * 0.4), s);
-          scene.add(b);
+        let bushMesh: THREE.Mesh | null = null;
+        gltf.scene.traverse((c) => {
+          if (!bushMesh && (c as THREE.Mesh).isMesh) bushMesh = c as THREE.Mesh;
         });
+
+        if (bushMesh) {
+          const bushPositions = [
+            [-28, 0, 8], [-32, 0, 12], [-42, 0, -38], [-48, 0, -42],
+            [28, 0, -12], [32, 0, -18], [-15, 0, -85], [15, 0, -85],
+            [-8, 0, -22], [8, 0, -22], [-14, 0, -12], [14, 0, -12]
+          ];
+          const instancedBushes = new THREE.InstancedMesh((bushMesh as THREE.Mesh).geometry, (bushMesh as THREE.Mesh).material, bushPositions.length);
+          const dummy = new THREE.Object3D();
+
+          bushPositions.forEach(([x, y, z], idx) => {
+            dummy.position.set(x, y, z);
+            dummy.rotation.y = Math.random() * Math.PI * 2;
+            const s = 1.0 + Math.random() * 0.6;
+            dummy.scale.set(s, s * (0.8 + Math.random() * 0.4), s);
+            dummy.updateMatrix();
+            instancedBushes.setMatrixAt(idx, dummy.matrix);
+          });
+          instancedBushes.instanceMatrix.needsUpdate = true;
+          instancedBushes.castShadow = true;
+          instancedBushes.receiveShadow = true;
+          scene.add(instancedBushes);
+        }
       });
 
-      // 3. Real 3D Wildflowers (Daisies & Buttercups in natural patches)
+      // 3. Real 3D Wildflowers — Daisies (InstancedMesh: 1 single draw call for 190 flowers)
       gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/flower_daisy.gltf', (gltf) => {
-        const daisyTemplate = gltf.scene;
-        const daisyPatches = [
-          { center: [-15, -15], count: 35 },
-          { center: [15, -15], count: 35 },
-          { center: [-25, 5], count: 40 },
-          { center: [20, -65], count: 40 },
-          { center: [-20, -65], count: 40 },
-        ];
-        daisyPatches.forEach((patch) => {
-          for (let i = 0; i < patch.count; i++) {
-            const f = daisyTemplate.clone();
-            const angle = Math.random() * Math.PI * 2;
-            const dist = Math.random() * 6.0;
-            const x = patch.center[0] + Math.cos(angle) * dist;
-            const z = patch.center[1] + Math.sin(angle) * dist;
-            f.position.set(x, 0.05, z);
-            f.rotation.y = Math.random() * Math.PI * 2;
-            const s = 0.8 + Math.random() * 0.5;
-            f.scale.set(s, s, s);
-            scene.add(f);
-          }
+        let daisyMesh: THREE.Mesh | null = null;
+        gltf.scene.traverse((c) => {
+          if (!daisyMesh && (c as THREE.Mesh).isMesh) daisyMesh = c as THREE.Mesh;
         });
+
+        if (daisyMesh) {
+          const daisyPatches = [
+            { center: [-15, -15], count: 35 },
+            { center: [15, -15], count: 35 },
+            { center: [-25, 5], count: 40 },
+            { center: [20, -65], count: 40 },
+            { center: [-20, -65], count: 40 },
+          ];
+          const totalDaisies = daisyPatches.reduce((acc, p) => acc + p.count, 0);
+          const instancedDaisies = new THREE.InstancedMesh((daisyMesh as THREE.Mesh).geometry, (daisyMesh as THREE.Mesh).material, totalDaisies);
+          const dummy = new THREE.Object3D();
+
+          let idx = 0;
+          daisyPatches.forEach((patch) => {
+            for (let i = 0; i < patch.count; i++) {
+              const angle = Math.random() * Math.PI * 2;
+              const dist = Math.random() * 6.0;
+              const x = patch.center[0] + Math.cos(angle) * dist;
+              const z = patch.center[1] + Math.sin(angle) * dist;
+              dummy.position.set(x, 0.05, z);
+              dummy.rotation.y = Math.random() * Math.PI * 2;
+              const s = 0.8 + Math.random() * 0.5;
+              dummy.scale.set(s, s, s);
+              dummy.updateMatrix();
+              instancedDaisies.setMatrixAt(idx++, dummy.matrix);
+            }
+          });
+          instancedDaisies.instanceMatrix.needsUpdate = true;
+          scene.add(instancedDaisies);
+        }
       });
 
+      // 4. Real 3D Wildflowers — Buttercups (InstancedMesh: 1 single draw call for 130 flowers)
       gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/flower_buttercup.gltf', (gltf) => {
-        const buttercupTemplate = gltf.scene;
-        const buttercupPatches = [
-          { center: [-10, 5], count: 30 },
-          { center: [10, 5], count: 30 },
-          { center: [-35, -30], count: 35 },
-          { center: [35, -30], count: 35 },
-        ];
-        buttercupPatches.forEach((patch) => {
-          for (let i = 0; i < patch.count; i++) {
-            const f = buttercupTemplate.clone();
-            const angle = Math.random() * Math.PI * 2;
-            const dist = Math.random() * 5.0;
-            const x = patch.center[0] + Math.cos(angle) * dist;
-            const z = patch.center[1] + Math.sin(angle) * dist;
-            f.position.set(x, 0.05, z);
-            f.rotation.y = Math.random() * Math.PI * 2;
-            const s = 0.8 + Math.random() * 0.5;
-            f.scale.set(s, s, s);
-            scene.add(f);
-          }
+        let buttercupMesh: THREE.Mesh | null = null;
+        gltf.scene.traverse((c) => {
+          if (!buttercupMesh && (c as THREE.Mesh).isMesh) buttercupMesh = c as THREE.Mesh;
         });
+
+        if (buttercupMesh) {
+          const buttercupPatches = [
+            { center: [-10, 5], count: 30 },
+            { center: [10, 5], count: 30 },
+            { center: [-35, -30], count: 35 },
+            { center: [35, -30], count: 35 },
+          ];
+          const totalButtercups = buttercupPatches.reduce((acc, p) => acc + p.count, 0);
+          const instancedButtercups = new THREE.InstancedMesh((buttercupMesh as THREE.Mesh).geometry, (buttercupMesh as THREE.Mesh).material, totalButtercups);
+          const dummy = new THREE.Object3D();
+
+          let idx = 0;
+          buttercupPatches.forEach((patch) => {
+            for (let i = 0; i < patch.count; i++) {
+              const angle = Math.random() * Math.PI * 2;
+              const dist = Math.random() * 5.0;
+              const x = patch.center[0] + Math.cos(angle) * dist;
+              const z = patch.center[1] + Math.sin(angle) * dist;
+              dummy.position.set(x, 0.05, z);
+              dummy.rotation.y = Math.random() * Math.PI * 2;
+              const s = 0.8 + Math.random() * 0.5;
+              dummy.scale.set(s, s, s);
+              dummy.updateMatrix();
+              instancedButtercups.setMatrixAt(idx++, dummy.matrix);
+            }
+          });
+          instancedButtercups.instanceMatrix.needsUpdate = true;
+          scene.add(instancedButtercups);
+        }
       });
 
       // 4. Drastically Reduced Realistic Mossy Boulders (9 hand-placed cluster rocks)
@@ -2401,18 +2440,8 @@ export class LevelToyStory {
       this.player.mesh.rotation.set(0, Math.PI, 0);
       this.player.forceIdle();
 
-      // High scenic camera sweep over the meadow and mountain pagodas down to behind Wukong
-      const startCamPos = new THREE.Vector3(22.0, 16.0, 32.0);
-      const startLookAt = new THREE.Vector3(0, 3.5, -35.0);
-
-      // End camera position: Placed smoothly BEHIND Wukong, looking forward into the kingdom
-      const endCamPos = new THREE.Vector3(0, 2.8, 15.5);
-      const endLookAt = new THREE.Vector3(0, 1.8, -25.0);
-
-      this.subtitleSystem.show('LISAR', '¡Bienvenido al Reino Místico del Rey Mono!', 4000);
-
       let introFinished = false;
-      const finishIntro = async () => {
+      const finishIntro = () => {
         if (introFinished) return;
         introFinished = true;
         window.removeEventListener('keydown', keySkip);
@@ -2431,6 +2460,7 @@ export class LevelToyStory {
         this.player.mesh.position.set(0, 0.2, 10);
         this.player.mesh.rotation.set(0, Math.PI, 0);
 
+        // ── ZERO-LAG HANDOVER: Unlock all movement, inputs, touch and camera controls ──
         this.isCinematicPlaying = false;
         this.player.isControlsLocked = false;
         this.player.isMovementLocked = false;
@@ -2454,9 +2484,56 @@ export class LevelToyStory {
       window.addEventListener('keydown', keySkip);
       window.addEventListener('touchstart', touchSkip, { passive: false });
 
-      cinematicCamera.moveCamera(startCamPos, endCamPos, startLookAt, endLookAt, 3.5).then(() => {
-        finishIntro();
-      });
+      (async () => {
+        try {
+          // ── TOMA 1: Vista Panorámica del Reino y Montañas Celestiales ──
+          this.subtitleSystem.show('LISAR', 'Reino Místico del Rey Mono', 2200);
+          await cinematicCamera.moveCamera(
+            new THREE.Vector3(38.0, 24.0, 35.0),
+            new THREE.Vector3(18.0, 18.0, 20.0),
+            new THREE.Vector3(0, 6.0, -45.0),
+            new THREE.Vector3(0, 5.0, -40.0),
+            2.2
+          );
+          if (introFinished) return;
+
+          // ── TOMA 2: Pradera Viva y Ruta de Gekko ──
+          this.subtitleSystem.show('LISAR', 'Explora el reino, reúne las monedas y encuentra las 5 llaves sagradas.', 2200);
+          await cinematicCamera.moveCamera(
+            new THREE.Vector3(-22.0, 8.0, 5.0),
+            new THREE.Vector3(-10.0, 4.5, -8.0),
+            new THREE.Vector3(-2.8, 1.2, -10.0),
+            new THREE.Vector3(0, 1.5, -25.0),
+            2.2
+          );
+          if (introFinished) return;
+
+          // ── TOMA 3: Templos del Norte y Santuario Heloidal ──
+          this.subtitleSystem.show('LISAR', 'En la cima del santuario sagrado te aguarda el legendario Báculo.', 2200);
+          await cinematicCamera.moveCamera(
+            new THREE.Vector3(26.0, 14.0, -35.0),
+            new THREE.Vector3(12.0, 9.0, -52.0),
+            new THREE.Vector3(0, 10.0, -75.0),
+            new THREE.Vector3(0, 8.0, -75.0),
+            2.2
+          );
+          if (introFinished) return;
+
+          // ── TOMA 4: Aproximación Dinámica hacia Wukong ──
+          await cinematicCamera.moveCamera(
+            new THREE.Vector3(0, 5.5, 24.0),
+            new THREE.Vector3(0, 2.8, 15.5),
+            new THREE.Vector3(0, 1.0, 10.0),
+            new THREE.Vector3(0, 1.8, -25.0),
+            2.0
+          );
+
+          finishIntro();
+        } catch (err) {
+          console.warn('[Intro] Sequence interrupted or finished:', err);
+          finishIntro();
+        }
+      })();
     }
   }
 

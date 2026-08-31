@@ -245,6 +245,7 @@ export class PlayerController {
   private static readonly TEMP_GROUND_ORIGIN = new THREE.Vector3();
   private static readonly RAY_OFFSET = new THREE.Vector3(0, 0.4, 0);
   private static readonly DOWN_DIR = new THREE.Vector3(0, -1, 0);
+  private static readonly TEMP_NORM = new THREE.Vector3();
 
   public update(delta: number, input: InputManager, cameraController: CameraController): void {
     // ── Fail-Safe Control Recovery ──────────────────────────────────────────
@@ -304,10 +305,9 @@ export class PlayerController {
     for (const hit of rawGroundHits) {
       if (isPlayerChild(hit.object)) continue;
       if (!hit.face) continue;
-      const norm = hit.face.normal.clone();
-      norm.transformDirection(hit.object.matrixWorld);
+      PlayerController.TEMP_NORM.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
       // Accept walkable floor surfaces and steps/ramps ahead up to +0.45m
-      if (norm.y >= 0.40 && hit.point.y <= this.mesh.position.y + 0.45 && hit.point.y >= this.mesh.position.y - 1.2) {
+      if (PlayerController.TEMP_NORM.y >= 0.40 && hit.point.y <= this.mesh.position.y + 0.45 && hit.point.y >= this.mesh.position.y - 1.2) {
         validGroundHit = hit;
         break;
       }

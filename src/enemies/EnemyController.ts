@@ -47,6 +47,21 @@ export class EnemyController {
   public onAttackPlayer?: (damage: number) => void;
   public onDeath?: (enemy: EnemyController) => void;
 
+  // Shared Master GLTF Template & Texture Pool
+  private static masterTemplate: THREE.Object3D | null = null;
+  private static masterPromise: Promise<THREE.Object3D | null> | null = null;
+  private static sharedSwordTexture: THREE.CanvasTexture | null = null;
+
+  // Reusable static vectors to eliminate per-frame allocations
+  private static readonly TEMP_ORIGIN = new THREE.Vector3();
+  private static readonly TEMP_DOWN = new THREE.Vector3(0, -1, 0);
+  private static readonly TEMP_DIR = new THREE.Vector3();
+  private static readonly TEMP_NORM = new THREE.Vector3();
+
+  // Cached materials for zero-traverse hit flash
+  private meshMaterials: THREE.MeshStandardMaterial[] = [];
+  private proceduralMeshes: THREE.Object3D[] = [];
+
   // Procedural legs for spider-crab animation
   private legs: THREE.Object3D[] = [];
 
@@ -70,86 +85,134 @@ export class EnemyController {
     this.scene = scene;
   }
 
+  public static async preloadMasterTemplate(): Promise<void> {
+    if (this.masterTemplate || this.masterPromise) return;
+    this.masterPromise = (async () => {
+      try {
+        const loader = new GLTFLoader();
+        const gltf = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/enemies/crab.glb');
+        const model = gltf.scene;
+
+        const bbox = new THREE.Box3().setFromObject(model);
+        const size = new THREE.Vector3();
+        bbox.getSize(size);
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const scale = maxDim > 0.001 ? (0.8 / maxDim) : 1.0;
+        model.scale.setScalar(scale);
+        model.updateMatrixWorld(true);
+
+        const scaledBBox = new THREE.Box3().setFromObject(model);
+        model.position.set(0, -scaledBBox.min.y, 0);
+
+        model.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+
+        this.masterTemplate = model;
+        console.log('[EnemyController] ✅ Master crab.glb template cached successfully');
+        return model;
+      } catch (err) {
+        console.warn('[EnemyController] Could not preload master crab.glb template', err);
+        return null;
+      }
+    })();
+    await this.masterPromise;
+  }
+
   public async loadModel(scaleMultiplier = 1.0): Promise<void> {
     try {
-      const loader = new GLTFLoader();
-      const gltf = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/enemies/crab.glb');
-      const model = gltf.scene;
+      if (!EnemyController.masterTemplate) {
+        await EnemyController.preloadMasterTemplate();
+      }
 
-      const bbox = new THREE.Box3().setFromObject(model);
-      const size = new THREE.Vector3();
-      bbox.getSize(size);
-      const scale = (0.8 / Math.max(size.x, size.y, size.z)) * scaleMultiplier;
-      model.scale.setScalar(scale);
-      model.updateMatrixWorld(true);
+      if (!EnemyController.masterTemplate) return;
 
-      const scaledBBox = new THREE.Box3().setFromObject(model);
-      model.position.set(0, -scaledBBox.min.y, 0);
+      const model = EnemyController.masterTemplate.clone(true);
+      if (scaleMultiplier !== 1.0) {
+        model.scale.multiplyScalar(scaleMultiplier);
+        const scaledBBox = new THREE.Box3().setFromObject(model);
+        model.position.set(0, -scaledBBox.min.y, 0);
+      }
 
-      model.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
-        }
-      });
+      // Remove redundant procedural placeholder meshes to save memory and draw calls
+      for (const pMesh of this.proceduralMeshes) {
+        this.mesh.remove(pMesh);
+      }
+      this.proceduralMeshes = [];
 
       this.crabModel = model;
       this.mesh.add(model);
 
       this.legs = [];
+      this.meshMaterials = [];
       model.traverse((child) => {
         const n = child.name.toLowerCase();
         if (n.includes('leg') || n.includes('arm') || n.includes('claw') || n.includes('limb')) {
           this.legs.push(child);
         }
+        if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).material) {
+          const mat = (child as THREE.Mesh).material;
+          if (Array.isArray(mat)) {
+            this.meshMaterials.push(...(mat as THREE.MeshStandardMaterial[]));
+          } else {
+            this.meshMaterials.push(mat as THREE.MeshStandardMaterial);
+          }
+        }
       });
 
       this.initCombatSwordIcon();
-
-      console.log(`[EnemyController] Loaded crab.glb for '${this.id}' (${this.legs.length} leg nodes, ground-aligned y: ${model.position.y.toFixed(2)})`);
+      console.log(`[EnemyController] Cloned master crab template for '${this.id}' (${this.legs.length} leg nodes, scale: ${scaleMultiplier})`);
     } catch (err) {
-      console.warn(`[EnemyController] Could not load crab.glb for '${this.id}', using procedural`, err);
+      console.warn(`[EnemyController] Could not instantiate crab model for '${this.id}'`, err);
     }
   }
 
   private combatSprite: THREE.Sprite | null = null;
 
   private initCombatSwordIcon(): void {
-    const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 128;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!EnemyController.sharedSwordTexture) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        // Draw glowing red circular badge with gold border
+        ctx.beginPath();
+        ctx.arc(64, 64, 52, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(220, 20, 20, 0.88)';
+        ctx.fill();
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = '#ffd700';
+        ctx.stroke();
 
-    // Draw glowing red circular badge with gold border
-    ctx.beginPath();
-    ctx.arc(64, 64, 52, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(220, 20, 20, 0.88)';
-    ctx.fill();
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = '#ffd700';
-    ctx.stroke();
+        // Draw crossed swords ⚔️ emoji icon
+        ctx.font = 'bold 60px "Segoe UI Emoji", "Apple Color Emoji", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('⚔️', 64, 66);
 
-    // Draw crossed swords ⚔️ emoji icon
-    ctx.font = 'bold 60px "Segoe UI Emoji", "Apple Color Emoji", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('⚔️', 64, 66);
+        EnemyController.sharedSwordTexture = new THREE.CanvasTexture(canvas);
+      }
+    }
 
-    const texture = new THREE.CanvasTexture(canvas);
-    const spriteMat = new THREE.SpriteMaterial({
-      map: texture,
-      transparent: true,
-      depthTest: true,
-      depthWrite: false,
-    });
-    this.combatSprite = new THREE.Sprite(spriteMat);
-    const iconHeight = this.id === 'crab_boss' ? 2.5 : 0.85;
-    const iconScale = this.id === 'crab_boss' ? 1.4 : 0.65;
-    this.combatSprite.position.set(0, iconHeight, 0);
-    this.combatSprite.scale.set(iconScale, iconScale, 1);
-    this.combatSprite.visible = false;
-    this.mesh.add(this.combatSprite);
+    if (EnemyController.sharedSwordTexture) {
+      const spriteMat = new THREE.SpriteMaterial({
+        map: EnemyController.sharedSwordTexture,
+        transparent: true,
+        depthTest: true,
+        depthWrite: false,
+      });
+      this.combatSprite = new THREE.Sprite(spriteMat);
+      const iconHeight = this.id === 'crab_boss' ? 2.5 : 0.85;
+      const iconScale = this.id === 'crab_boss' ? 1.4 : 0.65;
+      this.combatSprite.position.set(0, iconHeight, 0);
+      this.combatSprite.scale.set(iconScale, iconScale, 1);
+      this.combatSprite.visible = false;
+      this.mesh.add(this.combatSprite);
+    }
   }
 
   private createProceduralCrab(): void {
@@ -163,12 +226,15 @@ export class EnemyController {
     body.castShadow = true;
     body.name = 'crab_body';
     this.mesh.add(body);
+    this.proceduralMeshes.push(body);
+    this.meshMaterials.push(bodyMat);
 
     const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), eyeMat);
     eyeL.position.set(-0.15, 0.5, 0.3);
     const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), eyeMat);
     eyeR.position.set(0.15, 0.5, 0.3);
     this.mesh.add(eyeL, eyeR);
+    this.proceduralMeshes.push(eyeL, eyeR);
 
     this.legs = [];
     for (let i = 0; i < 6; i++) {
@@ -180,7 +246,9 @@ export class EnemyController {
       leg.name = `leg_${i}`;
       this.mesh.add(leg);
       this.legs.push(leg);
+      this.proceduralMeshes.push(leg);
     }
+    this.meshMaterials.push(legMat);
 
     const clawGeo = new THREE.BoxGeometry(0.15, 0.06, 0.2);
     const clawL = new THREE.Mesh(clawGeo, bodyMat);
@@ -191,6 +259,7 @@ export class EnemyController {
     clawR.name = 'claw_R';
     this.mesh.add(clawL, clawR);
     this.legs.push(clawL, clawR);
+    this.proceduralMeshes.push(clawL, clawR);
   }
 
   private safeNormalize(vec: THREE.Vector3, fallback = new THREE.Vector3(0, 0, 1)): THREE.Vector3 {
@@ -213,10 +282,10 @@ export class EnemyController {
       console.log(`[Boss] Hit with damage ${damageAmount}! HP: ${this.health}/${this.maxHealth}`);
 
       if (fromPos) {
-        const knockDir = new THREE.Vector3().subVectors(this.mesh.position, fromPos);
-        knockDir.y = 0;
-        this.safeNormalize(knockDir);
-        this.mesh.position.addScaledVector(knockDir, 0.6);
+        EnemyController.TEMP_DIR.subVectors(this.mesh.position, fromPos);
+        EnemyController.TEMP_DIR.y = 0;
+        this.safeNormalize(EnemyController.TEMP_DIR);
+        this.mesh.position.addScaledVector(EnemyController.TEMP_DIR, 0.6);
       }
 
       if (this.health <= 0) {
@@ -241,13 +310,13 @@ export class EnemyController {
 
     // Knockback + FLIPPED
     if (fromPos) {
-      const dir = new THREE.Vector3().subVectors(this.mesh.position, fromPos);
-      dir.y = 0;
-      this.safeNormalize(dir);
-      this.knockbackVelocity.copy(dir).multiplyScalar(6.5);
+      EnemyController.TEMP_DIR.subVectors(this.mesh.position, fromPos);
+      EnemyController.TEMP_DIR.y = 0;
+      this.safeNormalize(EnemyController.TEMP_DIR);
+      this.knockbackVelocity.copy(EnemyController.TEMP_DIR).multiplyScalar(6.5);
     } else {
-      const dir = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.mesh.rotation.y);
-      this.knockbackVelocity.copy(dir).multiplyScalar(-3.0);
+      EnemyController.TEMP_DIR.set(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.mesh.rotation.y);
+      this.knockbackVelocity.copy(EnemyController.TEMP_DIR).multiplyScalar(-3.0);
     }
 
     this.state = 'FLIPPED';
@@ -302,10 +371,10 @@ export class EnemyController {
     flash.position.copy(origin);
     this.scene.add(flash);
 
-    // ── 2. Ring Shockwave ──
-    const ringGeo = new THREE.RingGeometry(0.05, 0.18, 16);
+    // ── 2. Expanding shockwave ring ──
+    const ringGeo = new THREE.RingGeometry(0.1, 0.45, 16);
     const ringMat = new THREE.MeshBasicMaterial({
-      color: 0xff8800,
+      color: 0xffaa00,
       transparent: true,
       opacity: 0.9,
       side: THREE.DoubleSide,
@@ -316,27 +385,25 @@ export class EnemyController {
     ring.rotation.x = -Math.PI / 2;
     this.scene.add(ring);
 
-    // ── 3. Particles — 20 shards ──
-    const particleCount = 22;
+    // ── 3. Geometric fragment shards ──
+    const shardCount = 8;
+    const shardMeshes: THREE.Mesh[] = [];
     const shardPositions: THREE.Vector3[] = [];
     const shardVelocities: THREE.Vector3[] = [];
-    const shardMeshes: THREE.Mesh[] = [];
+    const colors = [0xff4400, 0xff8800, 0xffcc00, 0x882200];
 
-    const shardColors = [0xff6600, 0xffcc00, 0xff3300, 0xffaa00, 0xffffff];
-    for (let i = 0; i < particleCount; i++) {
-      const angle = (i / particleCount) * Math.PI * 2;
-      const elevation = (Math.random() - 0.3) * Math.PI;
-      const speed = 2.5 + Math.random() * 4.0;
+    for (let i = 0; i < shardCount; i++) {
+      const size = 0.06 + Math.random() * 0.07;
+      const geo = Math.random() > 0.5 ? new THREE.BoxGeometry(size, size, size) : new THREE.TetrahedronGeometry(size);
+      const angle = (i / shardCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+      const speed = 2.5 + Math.random() * 2.5;
       const vel = new THREE.Vector3(
-        Math.cos(angle) * Math.cos(elevation),
-        Math.abs(Math.sin(elevation)) + 0.4,
-        Math.sin(angle) * Math.cos(elevation),
-      ).multiplyScalar(speed);
-
-      const size = 0.04 + Math.random() * 0.09;
-      const geo = new THREE.OctahedronGeometry(size, 0);
+        Math.cos(angle) * speed,
+        2.5 + Math.random() * 3.5,
+        Math.sin(angle) * speed,
+      );
       const mat = new THREE.MeshBasicMaterial({
-        color: shardColors[Math.floor(Math.random() * shardColors.length)],
+        color: colors[i % colors.length],
         transparent: true,
         opacity: 1.0,
         depthWrite: false,
@@ -483,23 +550,21 @@ export class EnemyController {
       return;
     }
 
-    // ── Hit flash (only when alive) ──
+    // ── Fast O(1) Hit flash without expensive hierarchy traversal ──
     if (this.hitFlashTimer > 0) {
       this.hitFlashTimer -= delta;
-      this.mesh.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).material) {
-          const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
-          if (mat.emissive) mat.emissive.setHex(0xff2200);
+      for (let i = 0; i < this.meshMaterials.length; i++) {
+        if (this.meshMaterials[i].emissive) this.meshMaterials[i].emissive.setHex(0xff2200);
+      }
+    } else if (this.meshMaterials.length > 0) {
+      for (let i = 0; i < this.meshMaterials.length; i++) {
+        if (this.meshMaterials[i].emissive && this.meshMaterials[i].emissive.getHex() !== 0x000000) {
+          this.meshMaterials[i].emissive.setHex(0x000000);
         }
-      });
-    } else {
-      this.mesh.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).material) {
-          const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
-          if (mat.emissive) mat.emissive.setHex(0x000000);
-        }
-      });
+      }
     }
+
+    const distToPlayer = Math.hypot(this.mesh.position.x - playerPos.x, this.mesh.position.z - playerPos.z);
 
     // ── Ground Snapping (Slabs, Stairs, and Terrain with Normal Validation) ──
     const isSelfChild = (obj: THREE.Object3D): boolean => {
@@ -514,19 +579,18 @@ export class EnemyController {
     const levelInst = (window as any).gameInstance?.level01;
     let targetGroundY = levelInst ? levelInst.getTerrainHeight(this.mesh.position.x, this.mesh.position.z) : 0.0;
 
-    if (colliders && colliders.length > 0) {
-      // Shoot ray from 1.2m above enemy position downward
-      const origin = new THREE.Vector3(this.mesh.position.x, this.mesh.position.y + 1.2, this.mesh.position.z);
-      this.groundRaycaster.set(origin, new THREE.Vector3(0, -1, 0));
+    // Distance Culling Optimization: Only raycast colliders if enemy is within 35m of player
+    if (distToPlayer <= 35.0 && colliders && colliders.length > 0) {
+      EnemyController.TEMP_ORIGIN.set(this.mesh.position.x, this.mesh.position.y + 1.2, this.mesh.position.z);
+      this.groundRaycaster.set(EnemyController.TEMP_ORIGIN, EnemyController.TEMP_DOWN);
       this.groundRaycaster.far = 4.0;
       const rawHits = this.groundRaycaster.intersectObjects(colliders, true);
       for (const hit of rawHits) {
         if (isSelfChild(hit.object)) continue;
         if (!hit.face) continue;
-        const norm = hit.face.normal.clone();
-        norm.transformDirection(hit.object.matrixWorld);
+        EnemyController.TEMP_NORM.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
         // Valid floor slab or terrain must be walkable and vertically accessible
-        if (norm.y >= 0.45 && hit.point.y <= this.mesh.position.y + 0.8 && hit.point.y >= this.mesh.position.y - 2.5) {
+        if (EnemyController.TEMP_NORM.y >= 0.45 && hit.point.y <= this.mesh.position.y + 0.8 && hit.point.y >= this.mesh.position.y - 2.5) {
           targetGroundY = hit.point.y;
           break;
         }
@@ -552,8 +616,6 @@ export class EnemyController {
     if (this.state !== 'FLIPPED') {
       this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, 0, delta * 8);
     }
-
-    const distToPlayer = this.mesh.position.distanceTo(playerPos);
 
     // ── Update 3D Crossed-Swords Combat Icon (⚔️) ──
     if (this.combatSprite) {
