@@ -206,36 +206,66 @@
           </div>
         </div>
 
-        <!-- Pause Screen -->
+        <!-- Pause Screen with Equipment Tab -->
         <div id="pause-screen" class="modal-screen hidden">
           <div class="modal-card pause-card">
-            <h1 class="pause-title">PAUSA</h1>
-            <p class="pause-subtitle">Juego Pausado — Ajusta los volúmenes o presiona CONTINUAR / P / ENTER</p>
-            
-            <div class="volume-sliders-container">
-              <div class="slider-group">
-                <div class="slider-header">
-                  <span class="slider-label">🎵 VOLUMEN MÚSICA</span>
-                  <span id="music-vol-text" class="slider-value">50%</span>
+            <!-- Header Tabs -->
+            <div class="pause-tabs-header">
+              <button id="tab-btn-pause" class="pause-tab-btn active">⏸ PAUSA</button>
+              <button id="tab-btn-equipment" class="pause-tab-btn">⚔️ EQUIPAMIENTO</button>
+            </div>
+
+            <!-- Tab 1: Pause / Options -->
+            <div id="pause-tab-content-pause" class="pause-tab-content">
+              <h2 class="pause-title" style="margin-top: 10px;">OPCIONES DE JUEGO</h2>
+              <p class="pause-subtitle">Juego Pausado — Ajusta los volúmenes o presiona CONTINUAR / P / ENTER</p>
+              
+              <div class="volume-sliders-container">
+                <div class="slider-group">
+                  <div class="slider-header">
+                    <span class="slider-label">🎵 VOLUMEN MÚSICA</span>
+                    <span id="music-vol-text" class="slider-value">50%</span>
+                  </div>
+                  <input type="range" id="slider-music" class="volume-slider" min="0" max="100" value="50" />
                 </div>
-                <input type="range" id="slider-music" class="volume-slider" min="0" max="100" value="50" />
+                <div class="slider-group">
+                  <div class="slider-header">
+                    <span class="slider-label">🔊 VOLUMEN FX</span>
+                    <span id="fx-vol-text" class="slider-value">80%</span>
+                  </div>
+                  <input type="range" id="slider-fx" class="volume-slider" min="0" max="100" value="80" />
+                </div>
               </div>
-              <div class="slider-group">
-                <div class="slider-header">
-                  <span class="slider-label">🔊 VOLUMEN FX</span>
-                  <span id="fx-vol-text" class="slider-value">80%</span>
+
+              <div class="modal-actions" style="flex-direction: column; gap: 12px; margin-top: 24px;">
+                <button id="btn-resume" class="btn-magic primary large" style="width: 100%;">CONTINUAR</button>
+                <div style="display: flex; gap: 12px; width: 100%;">
+                  <button id="btn-save-game" class="btn-magic" style="flex: 1; background: rgba(0, 180, 216, 0.3); border-color: #00b4d8;">💾 GUARDAR PARTIDA</button>
+                  <button id="btn-load-game" class="btn-magic" style="flex: 1; background: rgba(72, 191, 132, 0.3); border-color: #48bf84;">📂 CARGAR PARTIDA</button>
                 </div>
-                <input type="range" id="slider-fx" class="volume-slider" min="0" max="100" value="80" />
               </div>
             </div>
 
-            <div class="modal-actions" style="flex-direction: column; gap: 12px; margin-top: 24px;">
-              <button id="btn-resume" class="btn-magic primary large" style="width: 100%;">CONTINUAR</button>
-              <div style="display: flex; gap: 12px; width: 100%;">
-                <button id="btn-save-game" class="btn-magic" style="flex: 1; background: rgba(0, 180, 216, 0.3); border-color: #00b4d8;">💾 GUARDAR PARTIDA</button>
-                <button id="btn-load-game" class="btn-magic" style="flex: 1; background: rgba(72, 191, 132, 0.3); border-color: #48bf84;">📂 CARGAR PARTIDA</button>
+            <!-- Tab 2: Equipment / Character 360 Viewer -->
+            <div id="pause-tab-content-equipment" class="pause-tab-content hidden">
+              <div class="equipment-layout">
+                <!-- 3D Character 360 Viewport -->
+                <div class="equipment-3d-viewport">
+                  <canvas id="equipment-canvas" width="280" height="320"></canvas>
+                  <div class="equipment-drag-hint">👆 Arrastra para rotar 360°</div>
+                </div>
+
+                <!-- Weapons & Equipment Inventory -->
+                <div class="equipment-details-panel">
+                  <div class="equipment-section-title">ARMAS DEL HÉROE</div>
+                  <div id="equipment-weapon-list" class="equipment-weapon-list">
+                    <!-- Populated dynamically by EquipmentViewer -->
+                  </div>
+                  <button id="btn-resume-equip" class="btn-magic primary" style="width: 100%; margin-top: 14px;">VOLVER AL JUEGO</button>
+                </div>
               </div>
             </div>
+
           </div>
         </div>
 

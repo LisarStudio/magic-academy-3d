@@ -8,6 +8,7 @@ export class MobileTouchControls {
 
   private btnJump: HTMLElement | null = null;
   private btnAttack: HTMLElement | null = null;
+  private btnAction: HTMLElement | null = null;
   private btnRun: HTMLElement | null = null;
 
   // Joystick touch tracking
@@ -67,21 +68,27 @@ export class MobileTouchControls {
         </div>
       </div>
 
-      <!-- RIGHT: Ergonomic Action Buttons Arc -->
+      <!-- RIGHT: Ergonomic Action Buttons Diamond/Arc -->
       <div id="touch-action-zone" class="touch-action-zone">
-        <!-- JUMP BUTTON (Top of arc) -->
+        <!-- JUMP BUTTON (Top) -->
         <button id="touch-btn-jump" class="touch-btn touch-btn-jump" aria-label="Saltar">
           <span class="btn-icon">▲</span>
           <span class="btn-subtext">SALTO</span>
         </button>
 
-        <!-- ATTACK BUTTON (Left/Center of arc) -->
+        <!-- ATTACK BUTTON (Left/Center) -->
         <button id="touch-btn-attack" class="touch-btn touch-btn-attack" aria-label="Atacar">
           <span class="btn-icon">⚡</span>
           <span class="btn-subtext">ATAQUE</span>
         </button>
 
-        <!-- RUN BUTTON (Right/Bottom of arc) -->
+        <!-- ACTION / INTERACT BUTTON (Right/Center) -->
+        <button id="touch-btn-action" class="touch-btn touch-btn-action" aria-label="Acción">
+          <span class="btn-icon">✋</span>
+          <span class="btn-subtext">ACCIÓN</span>
+        </button>
+
+        <!-- RUN BUTTON (Bottom) -->
         <button id="touch-btn-run" class="touch-btn touch-btn-run" aria-label="Correr">
           <span class="btn-icon">🏃</span>
           <span class="btn-subtext">CORRER</span>
@@ -95,7 +102,17 @@ export class MobileTouchControls {
     this.joystickStick = document.getElementById('touch-joystick-stick');
     this.btnJump = document.getElementById('touch-btn-jump');
     this.btnAttack = document.getElementById('touch-btn-attack');
+    this.btnAction = document.getElementById('touch-btn-action');
     this.btnRun = document.getElementById('touch-btn-run');
+  }
+
+  public setActionHighlight(active: boolean): void {
+    if (!this.btnAction) return;
+    if (active) {
+      this.btnAction.classList.add('context-active');
+    } else {
+      this.btnAction.classList.remove('context-active');
+    }
   }
 
   private bindJoystickEvents(): void {
@@ -221,6 +238,17 @@ export class MobileTouchControls {
         this.inputManager.triggerAttack();
       };
       this.btnAttack.addEventListener('touchstart', triggerAttack, { passive: false });
+    }
+
+    // ── ACTION / INTERACT BUTTON ─────────────────────────────────────────────
+    if (this.btnAction) {
+      const triggerAction = (e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.animateButtonPress(this.btnAction!);
+        this.inputManager.triggerInteract();
+      };
+      this.btnAction.addEventListener('touchstart', triggerAction, { passive: false });
     }
 
     // ── RUN BUTTON (HOLD SUPPORT) ────────────────────────────────────────────

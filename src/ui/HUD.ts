@@ -1,4 +1,6 @@
 import type { SpellType } from '../spells/SpellProjectile';
+import { EquipmentViewer } from './EquipmentViewer';
+import { MobileTouchControls } from './MobileTouchControls';
 
 export class HUD {
   private reticleEl: HTMLElement;
@@ -42,6 +44,9 @@ export class HUD {
   private sliderFxEl: HTMLInputElement | null = null;
   private musicVolTextEl: HTMLElement | null = null;
   private fxVolTextEl: HTMLElement | null = null;
+
+  public equipmentViewer: EquipmentViewer | null = null;
+  public mobileControls: MobileTouchControls | null = null;
 
   // Objective auto-fade
   private objectiveFadeTimer: any = null;
@@ -240,9 +245,15 @@ export class HUD {
   public showPauseMenu(visible: boolean): void {
     if (visible) {
       this.pauseScreenEl.classList.remove('hidden');
+      this.equipmentViewer?.onPauseOpened();
     } else {
       this.pauseScreenEl.classList.add('hidden');
+      this.equipmentViewer?.onPauseClosed();
     }
+  }
+
+  public setMobileActionHighlight(active: boolean): void {
+    this.mobileControls?.setActionHighlight(active);
   }
 
   public showGameplayHUD(): void {

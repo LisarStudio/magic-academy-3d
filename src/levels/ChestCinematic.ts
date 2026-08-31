@@ -133,6 +133,7 @@ export class ChestCinematic {
     console.log('[ChestCinematic] EQUIP_STAFF — screen black');
 
     player.hasStaff = true;
+    player.staffEquipped = true;
     player.setStaffVisibility(true);
     player.attachStaffToBack();
     player.animationController.setArmed(true);

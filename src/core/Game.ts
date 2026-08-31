@@ -15,6 +15,8 @@ import { CollectibleSystem } from '../collectibles/CollectibleSystem';
 import { HUD } from '../ui/HUD';
 import { SubtitleSystem } from '../ui/SubtitleSystem';
 import { LevelToyStory } from '../levels/LevelToyStory';
+import { EquipmentViewer } from '../ui/EquipmentViewer';
+import { MobileTouchControls } from '../ui/MobileTouchControls';
 
 export class Game {
   private sceneManager: SceneManager;
@@ -111,6 +113,9 @@ export class Game {
     // 6. Bind Player & HUD Status Callbacks
     this.player.onHealthChange = (hp, maxHp) => this.hud.setHealth(hp, maxHp);
     this.hud.setupMobileControls(this.inputManager);
+    this.hud.mobileControls = new MobileTouchControls(this.inputManager);
+    this.hud.equipmentViewer = new EquipmentViewer(this.player);
+
     this.spellSystem.onCollectStaffCallback = () => {
       this.player.equipStaff();
       this.subtitleSystem.show('Báculo Mágico', '¡Has encontrado el Báculo Mágico en el cofre! Hechizos desbloqueados.');
@@ -128,7 +133,7 @@ export class Game {
     this.inputManager.onLeftClick = () => {
       if (this.player.isControlsLocked || this.player.isAttacking) return;
 
-      if (!this.player.hasStaff) {
+      if (!this.player.isArmed()) {
         // Unarmed: Execute martial arts kick attack
         this.inputManager.onKick?.();
         return;
@@ -368,6 +373,17 @@ export class Game {
       this.audioManager.resume();
       this.togglePause(false);
     });
+
+    const btnResumeEquip = document.getElementById('btn-resume-equip');
+    btnResumeEquip?.addEventListener('click', () => {
+      this.audioManager.resume();
+      this.togglePause(false);
+    });
+    btnResumeEquip?.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      this.audioManager.resume();
+      this.togglePause(false);
+    }, { passive: false });
   }
 
   public togglePause(forceState?: boolean): void {

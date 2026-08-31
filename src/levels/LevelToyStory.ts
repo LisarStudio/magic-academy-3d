@@ -21,6 +21,7 @@ import { GekkoNPC } from '../npc/GekkoNPC';
 import { MovingPlatform } from '../world/MovingPlatform';
 import { KeyPickupSequence, type KeyData } from '../player/KeyPickupSequence';
 import { RunicPortal, PortalManager } from '../world/RunicPortal';
+import { DayNightCycle } from '../world/DayNightCycle';
 
 export class LevelToyStory {
   private sceneManager: SceneManager;
@@ -32,6 +33,7 @@ export class LevelToyStory {
   private collectibleSystem: CollectibleSystem;
   private subtitleSystem: SubtitleSystem;
   private audioManager: AudioManager;
+  public dayNightCycle!: DayNightCycle;
 
   public levelColliders: THREE.Object3D[] = [];
   public triggerZones: TriggerZone[] = [];
@@ -329,6 +331,15 @@ export class LevelToyStory {
 
     const starField = new THREE.Points(starGeo, starMat);
     scene.add(starField);
+
+    // Initialize Dynamic Celestial Day/Night Cycle (Night -> Pre-Dawn -> Dawn -> Sunrise -> Morning)
+    this.dayNightCycle = new DayNightCycle(
+      scene,
+      this.sceneManager.dirLight,
+      this.sceneManager.ambientLight,
+      this.cloudsUniforms,
+      { cycleDuration: 240.0, startPhase: 0.05 }
+    );
 
     // Add key visual hints
     this.spawnKeysInWorld();
@@ -1490,20 +1501,21 @@ export class LevelToyStory {
         const sx = Math.cos(angle) * stepRadius;
         const sz = Math.sin(angle) * stepRadius;
 
-        step.name = `spiral_step_${i}`;
+        step.name = `stair_step_${i}`;
         step.position.set(sx, h, sz);
         step.rotation.y = -angle + Math.PI / 2;
         cit.add(step);
-        this.levelColliders.push(step);
 
         // Continuous Elegant Safety Balustrades (Inner r=1.9m, Outer r=7.2m, Height 2.2m)
         const innerWall = new THREE.Mesh(new THREE.BoxGeometry(0.85, 2.2, 3.4), redWoodMat);
+        innerWall.name = `stair_inner_wall_${i}`;
         innerWall.position.set(Math.cos(angle) * 1.9, h + 1.1, Math.sin(angle) * 1.9);
         innerWall.rotation.y = -angle + Math.PI / 2;
         cit.add(innerWall);
         this.levelColliders.push(innerWall);
 
         const outerWall = new THREE.Mesh(new THREE.BoxGeometry(0.85, 2.2, 3.4), redWoodMat);
+        outerWall.name = `stair_outer_wall_${i}`;
         outerWall.position.set(Math.cos(angle) * 7.2, h + 1.1, Math.sin(angle) * 7.2);
         outerWall.rotation.y = -angle + Math.PI / 2;
         cit.add(outerWall);
@@ -1522,6 +1534,25 @@ export class LevelToyStory {
           lantern.position.set(Math.cos(angle) * 7.4, h + 2.6, Math.sin(angle) * 7.4);
           cit.add(lantern);
         }
+      }
+
+      // Continuous Smooth Helical Collision Ramp (32 continuous sloped segments for 100% butter-smooth running/walking)
+      const numRampSegments = 32;
+      const rampSlope = 0.35; // radians slope matching totalH / arcLength
+      const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
+      for (let r = 0; r < numRampSegments; r++) {
+        const progress = (r + 0.5) / numRampSegments;
+        const angle = progress * Math.PI * 2.8;
+        const h = startH + progress * totalH;
+
+        const rampGeo = new THREE.BoxGeometry(5.4, 0.3, 4.5);
+        const rampCollider = new THREE.Mesh(rampGeo, invisibleMat);
+        rampCollider.name = `stair_ramp_collider_${r}`;
+        rampCollider.position.set(Math.cos(angle) * stepRadius, h + 0.05, Math.sin(angle) * stepRadius);
+        rampCollider.rotation.y = -angle + Math.PI / 2;
+        rampCollider.rotation.x = -rampSlope;
+        cit.add(rampCollider);
+        this.levelColliders.push(rampCollider);
       }
 
       // ── 4. RELLANO INTERMEDIO (Midway Panoramic Balcony at y = 7.7m) ──
@@ -1883,29 +1914,28 @@ export class LevelToyStory {
       new THREE.Vector3(-30, 0, -35),
       new THREE.Vector3(30, 0, -35),
       new THREE.Vector3(0, 0, -45),
-      new THREE.Vector3(55, 14.8, -75),
+      new THREE.Vector3(12.0, 5.5, -45.0), // Reubicado al balcón/segundo piso del palacio central (lejos del cofre)
     ];
 
+    const orbMat = new THREE.MeshStandardMaterial({
+      color: 0xff66aa,
+      emissive: 0xff3388,
+      emissiveIntensity: 1.8,
+      roughness: 0.2,
+      metalness: 0.6,
+    });
+    const ringMat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.9, roughness: 0.1 });
+
     energySpots.forEach((spot, idx) => {
-      const y = spot.y > 5.0 ? spot.y + 0.4 : this.getTerrainHeight(spot.x, spot.z) + 0.45;
+      const y = spot.y > 2.0 ? spot.y : this.getTerrainHeight(spot.x, spot.z) + 0.45;
       const group = new THREE.Group();
       group.position.set(spot.x, y, spot.z);
 
-      const orbMat = new THREE.MeshStandardMaterial({
-        color: 0xff66aa,
-        emissive: 0xff3388,
-        emissiveIntensity: 1.8,
-        roughness: 0.2,
-        metalness: 0.6,
-      });
       const orb = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 12), orbMat);
-      
-      const ringMat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.9, roughness: 0.1 });
       const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.05, 8, 16), ringMat);
       ring.rotation.x = Math.PI / 3;
 
-      const light = new THREE.PointLight(0xff66aa, 3.0, 5.0);
-      group.add(orb, ring, light);
+      group.add(orb, ring);
       group.name = `energy_item_${idx}`;
 
       scene.add(group);
@@ -2648,6 +2678,11 @@ export class LevelToyStory {
   }
 
   public update(delta: number, playerPos: THREE.Vector3): void {
+    // Tick Dynamic Day/Night Cycle
+    if (this.dayNightCycle) {
+      this.dayNightCycle.update(delta, playerPos);
+    }
+
     if (this.grassUniforms) {
       this.grassUniforms.uTime.value = performance.now() / 1000.0;
       if (this.grassUniforms.uPlayerPos) {

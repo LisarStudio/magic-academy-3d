@@ -3,7 +3,6 @@ import { InputManager } from '../core/InputManager';
 import { CameraController } from '../camera/CameraController';
 import { AnimationController } from './AnimationController';
 import { WandEffect } from '../spells/WandEffect';
-import { ItemPickupVFX } from './ItemPickupVFX';
 import { StaffFactory } from './StaffFactory';
 import { AttackAuraEffect } from './AttackAuraEffect';
 
@@ -37,12 +36,31 @@ export class PlayerController {
   public onManaChange?: (mp: number, maxMp: number) => void;
 
   public hasStaff = false;
+  public staffEquipped = false;
   public jumpCount = 0;
   public doubleJumpSpinTimer = 0;
   public isAttacking = false;
   
   public visualModel: THREE.Object3D;
   private defaultVisualRotationX = 0;
+
+  public isArmed(): boolean {
+    return this.hasStaff && this.staffEquipped;
+  }
+
+  public equipStaff(): void {
+    if (!this.hasStaff) return;
+    this.staffEquipped = true;
+    this.animationController.setArmed(true);
+    this.attachStaffToBack();
+  }
+
+  public unequipStaff(): void {
+    this.staffEquipped = false;
+    this.animationController.setArmed(false);
+    if (this.staffBackMesh) this.staffBackMesh.visible = false;
+    if (this.staffHandMesh) this.staffHandMesh.visible = false;
+  }
 
   constructor(modelOrGroup: THREE.Group, animationController: AnimationController) {
     this.mesh = modelOrGroup;
@@ -171,30 +189,6 @@ export class PlayerController {
     }
   }
 
-  public equipStaff(scene?: THREE.Scene): void {
-    if (this.hasStaff) return;
-
-    console.log('[PlayerController] Playing epic staff pickup animation...');
-    if (scene) {
-      ItemPickupVFX.playEpicPickup(this, scene, 'staff', () => {
-        this.hasStaff = true;
-        this.setStaffVisibility(true);
-        this.attachStaffToBack();
-        console.log('[PlayerController] Staff equipped! Stored on back until attack.');
-      });
-    } else {
-      this.isControlsLocked = true;
-      this.velocity.set(0, 0, 0);
-      this.animationController.playTakeItemAnimation(() => {
-        this.hasStaff = true;
-        this.setStaffVisibility(true);
-        this.attachStaffToBack();
-        this.isControlsLocked = false;
-        console.log('[PlayerController] Staff equipped! Stored on back until attack.');
-      });
-    }
-  }
-
   public useMana(amount: number): boolean {
     if (this.mana >= amount) {
       this.mana = Math.max(0, this.mana - amount);
@@ -274,7 +268,7 @@ export class PlayerController {
     }
 
     // ── Enforce Strict Staff Weapon Visibility and WOOD/NOWOOD Animation Sync ──
-    if (this.hasStaff) {
+    if (this.isArmed()) {
       if (!this.animationController.isArmed) {
         this.animationController.setArmed(true);
       }

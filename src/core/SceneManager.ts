@@ -32,12 +32,12 @@ export class SceneManager {
       precision: isMobile ? 'mediump' : 'highp'
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    const maxDPR = isMobile ? 1.35 : 1.75;
+    const maxDPR = isMobile ? 1.05 : 1.75;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxDPR));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = isMobile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.3; // Bright, readable night scene
+    this.renderer.toneMappingExposure = 1.3; // Bright, readable scene
 
     // 4. Lighting
     this.setupLighting();
@@ -49,21 +49,21 @@ export class SceneManager {
   private setupLighting(): void {
     const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
 
-    // Ambient moon glow
-    this.ambientLight = new THREE.AmbientLight(0x404870, 1.0); // Stronger ambient for night scene readability
+    // Ambient moon / morning glow
+    this.ambientLight = new THREE.AmbientLight(0x404870, 1.0);
     this.scene.add(this.ambientLight);
 
-    // Main moonlight direction
-    this.dirLight = new THREE.DirectionalLight(0x7588c4, 1.8); // Stronger for dramatic shadows
+    // Main celestial light direction
+    this.dirLight = new THREE.DirectionalLight(0x7588c4, 1.8);
     this.dirLight.position.set(20, 40, -10);
     this.dirLight.castShadow = true;
     this.dirLight.shadow.mapSize.width = isMobile ? 1024 : 2048;
     this.dirLight.shadow.mapSize.height = isMobile ? 1024 : 2048;
     this.dirLight.shadow.camera.near = 0.5;
-    this.dirLight.shadow.camera.far = 150;
-    this.dirLight.shadow.radius = isMobile ? 1 : 2.5; // Optimized shadow radius
+    this.dirLight.shadow.camera.far = isMobile ? 90 : 150;
+    this.dirLight.shadow.radius = isMobile ? 1 : 2.5;
 
-    const shadowSize = 50; // Larger shadow frustum for better coverage
+    const shadowSize = isMobile ? 36 : 50; // Optimized shadow frustum for mobile 60 FPS
     this.dirLight.shadow.camera.left = -shadowSize;
     this.dirLight.shadow.camera.right = shadowSize;
     this.dirLight.shadow.camera.top = shadowSize;
