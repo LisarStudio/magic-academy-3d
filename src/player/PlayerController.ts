@@ -74,9 +74,8 @@ export class PlayerController {
     // Create the WandEffect glow (light + particles).
     this.wandEffect = new WandEffect();
 
-    // Create smooth attack energy aura (active ONLY during atack_wood)
+    // Create smooth attack energy aura (active ONLY during atack_wood, attached to hand staff)
     this.attackAura = new AttackAuraEffect();
-    this.mesh.add(this.attackAura.mesh);
 
     // Initialize proportional dual-mount staff system (back mount & hand mount)
     this.initStaffMeshes();
@@ -127,6 +126,7 @@ export class PlayerController {
     console.log(`[PlayerController] Binding staff sockets — Spine: ${spineName}, RightHand: ${handName}`);
 
     // 3. Create Staff Back Mesh (slanted diagonally across Wukong's back: lower-left to upper-right [/])
+    // 100% CLEAN PHYSICAL PBR — NO aura, NO particles, NO emissive glow
     const backStaff = StaffFactory.createStaff('staff_on_back');
     backStaff.visible = false;
     this.staffBackMesh = backStaff;
@@ -155,6 +155,9 @@ export class PlayerController {
     handStaff.visible = false;
     this.staffHandMesh = handStaff;
 
+    // Attach attack aura sheath strictly to hand staff (active ONLY during atack_wood swing)
+    handStaff.add(this.attackAura.mesh);
+
     if (rightHandBone) {
       this.mesh.updateMatrixWorld(true);
       const handWorldScale = new THREE.Vector3();
@@ -174,6 +177,7 @@ export class PlayerController {
   }
 
   public setStaffVisibility(visible: boolean): void {
+    this.attackAura.stop();
     if (this.staffBackMesh) this.staffBackMesh.visible = visible;
     if (this.staffHandMesh) this.staffHandMesh.visible = false;
 
@@ -627,11 +631,13 @@ export class PlayerController {
     if (this.staffBackMesh) this.staffBackMesh.visible = false;
     if (this.staffHandMesh) {
       this.staffHandMesh.visible = true;
+      this.attackAura.trigger();
     }
   }
 
   public attachStaffToBack(): void {
     if (!this.hasStaff) return;
+    this.attackAura.stop();
     if (this.staffHandMesh) this.staffHandMesh.visible = false;
     if (this.staffBackMesh) {
       this.staffBackMesh.visible = true;
@@ -639,7 +645,6 @@ export class PlayerController {
       if (this.wandEffect && this.wandEffect.wandMesh) {
         this.wandEffect.wandMesh.visible = false;
       }
-      this.attackAura.stop();
     }
   }
 

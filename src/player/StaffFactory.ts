@@ -13,10 +13,10 @@ export class StaffFactory {
     const shaftGeo = new THREE.CylinderGeometry(0.015, 0.015, 1.20, 16);
     const shaftMat = new THREE.MeshStandardMaterial({
       color: 0x8a1c14,       // Deep sacred crimson
-      roughness: 0.25,
-      metalness: 0.75,
-      emissive: 0x3d0804,
-      emissiveIntensity: 0.4,
+      roughness: 0.35,
+      metalness: 0.45,
+      emissive: 0x000000,
+      emissiveIntensity: 0.0,
     });
     const shaft = new THREE.Mesh(shaftGeo, shaftMat);
     shaft.castShadow = true;
@@ -26,10 +26,10 @@ export class StaffFactory {
     // 2. Imperial Gold Dragon Bands (Spiral and Collars)
     const goldMat = new THREE.MeshStandardMaterial({
       color: 0xffd700,
-      metalness: 0.95,
-      roughness: 0.15,
-      emissive: 0x4a3a00,
-      emissiveIntensity: 0.3,
+      metalness: 0.90,
+      roughness: 0.20,
+      emissive: 0x000000,
+      emissiveIntensity: 0.0,
     });
 
     // Top and bottom heavy dragon collars
