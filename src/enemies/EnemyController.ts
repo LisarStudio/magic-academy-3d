@@ -533,6 +533,19 @@ export class EnemyController {
       }
     }
 
+    if (this.id === 'crab_boss') {
+      targetGroundY = 0.2; // Perfectly flush on the Sand Arena floor
+    } else {
+      // Ensure regular crabs NEVER enter the Boss Arena
+      const distToArena = Math.hypot(this.mesh.position.x - 45, this.mesh.position.z - (-40));
+      if (distToArena < 16.5) {
+        const pushDir = new THREE.Vector3(this.mesh.position.x - 45, 0, this.mesh.position.z - (-40)).normalize();
+        this.mesh.position.x = 45 + pushDir.x * 17.2;
+        this.mesh.position.z = -40 + pushDir.z * 17.2;
+        this.state = 'PATROL';
+      }
+    }
+
     if (this.state === 'FLIPPED') targetGroundY += 0.15;
     this.mesh.position.y = THREE.MathUtils.lerp(this.mesh.position.y, targetGroundY, delta * 15);
 
@@ -560,9 +573,17 @@ export class EnemyController {
       if (playerDistToArena > this.arenaRadius) {
         // Player is outside arena -> Boss stays passively idle waiting at arena center!
         this.state = 'IDLE';
-        this.mesh.position.set(this.arenaCenter.x, 0.1, this.arenaCenter.z);
+        this.mesh.position.set(this.arenaCenter.x, 0.2, this.arenaCenter.z);
         this.mesh.rotation.set(0, 0, 0);
         return;
+      }
+
+      // Constrain Boss inside circular sand arena
+      const bossDistToCenter = Math.hypot(this.mesh.position.x - this.arenaCenter.x, this.mesh.position.z - this.arenaCenter.z);
+      if (bossDistToCenter > 13.0) {
+        const clampDir = new THREE.Vector3(this.mesh.position.x - this.arenaCenter.x, 0, this.mesh.position.z - this.arenaCenter.z).normalize();
+        this.mesh.position.x = this.arenaCenter.x + clampDir.x * 12.8;
+        this.mesh.position.z = this.arenaCenter.z + clampDir.z * 12.8;
       }
     }
 

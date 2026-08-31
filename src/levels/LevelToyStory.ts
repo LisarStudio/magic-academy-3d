@@ -1678,15 +1678,6 @@ export class LevelToyStory {
     this.levelColliders.push(arch);
   }
 
-  private setupCheckpoints(): void {
-    // Starting checkpoint in front of the castle
-    this.checkpointManager.addCheckpoint(0, new THREE.Vector3(0, 0.2, 10), 0);
-    // Near boss arena
-    this.checkpointManager.addCheckpoint(1, new THREE.Vector3(25, 0.2, -40), -Math.PI / 2);
-    // Castle 2nd Floor
-    this.checkpointManager.addCheckpoint(2, new THREE.Vector3(0, 5.2, -40), 0);
-  }
-
   private setupInteractiveProps(): void {
     const scene = this.sceneManager.scene;
 
@@ -1761,6 +1752,14 @@ export class LevelToyStory {
         }
       };
     });
+  }
+
+  private setupCheckpoints(): void {
+    this.checkpointManager.addCheckpoint(0, new THREE.Vector3(0, 0.2, 10), Math.PI); // Spawn
+    this.checkpointManager.addCheckpoint(1, new THREE.Vector3(0, 0.2, -22), Math.PI); // Castle Entrance
+    this.checkpointManager.addCheckpoint(2, new THREE.Vector3(0, 5.2, -40), Math.PI); // Mezzanine
+    this.checkpointManager.addCheckpoint(3, new THREE.Vector3(0, 10.0, -44), Math.PI); // Roof
+    this.checkpointManager.addCheckpoint(4, new THREE.Vector3(30, 0.2, -40), Math.PI * 0.5); // Boss Arena Entrance
   }
 
   private energyItems: THREE.Group[] = [];
@@ -1974,8 +1973,8 @@ export class LevelToyStory {
     const patrol4 = new EnemyController('crab_second_floor_1', new THREE.Vector3(-6, 5.0, -40));
     const patrol5 = new EnemyController('crab_second_floor_2', new THREE.Vector3(6, 5.0, -40));
 
-    // Boss Giant Crab in the Sand Arena
-    const bossY = this.getTerrainHeight(45, -40);
+    // Boss Giant Crab in the Sand Arena (firmly grounded at y = 0.2)
+    const bossY = 0.2;
     this.bossEnemy = new EnemyController('crab_boss', new THREE.Vector3(45, bossY, -40));
     this.enemies.push(patrol1, patrol2, patrol3, patrol4, patrol5, this.bossEnemy);
 
@@ -1991,7 +1990,7 @@ export class LevelToyStory {
         (e as any).health = 5;
         (e as any).maxHealth = 5;
         (e as any).attackDmg = 25;
-        e.arenaCenter = new THREE.Vector3(45, 0.1, -40);
+        e.arenaCenter = new THREE.Vector3(45, 0.2, -40);
         e.arenaRadius = 15.0;
       }
 
