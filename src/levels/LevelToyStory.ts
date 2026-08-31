@@ -1959,16 +1959,16 @@ export class LevelToyStory {
   private setupEnemies(): void {
     const scene = this.sceneManager.scene;
 
-    // Normal patrols around the castle base (3 crabs) - placed safely away from spawn and Gekko
+    // Normal patrols around the castle perimeter (safely away from spawn, Gekko, and Boss Arena)
     const p1Y = this.getTerrainHeight(-30, -25);
     const patrol1 = new EnemyController('crab_1', new THREE.Vector3(-30, p1Y, -25), [
       new THREE.Vector3(-40, this.getTerrainHeight(-40, -25), -25),
       new THREE.Vector3(-20, this.getTerrainHeight(-20, -25), -25)
     ]);
-    const p2Y = this.getTerrainHeight(25, -25);
-    const patrol2 = new EnemyController('crab_2', new THREE.Vector3(25, p2Y, -25), [
-      new THREE.Vector3(15, this.getTerrainHeight(15, -25), -25),
-      new THREE.Vector3(35, this.getTerrainHeight(35, -25), -25)
+    const p2Y = this.getTerrainHeight(-15, -15);
+    const patrol2 = new EnemyController('crab_2', new THREE.Vector3(-15, p2Y, -15), [
+      new THREE.Vector3(-25, this.getTerrainHeight(-25, -15), -15),
+      new THREE.Vector3(-5, this.getTerrainHeight(-5, -15), -15)
     ]);
     const p3Y = this.getTerrainHeight(0, -65);
     const patrol3 = new EnemyController('crab_3', new THREE.Vector3(0, p3Y, -65), [

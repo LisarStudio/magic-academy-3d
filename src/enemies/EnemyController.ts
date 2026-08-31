@@ -208,17 +208,23 @@ export class EnemyController {
     if (this.state === 'DYING' || this.state === 'DEAD') return;
 
     if (this.id === 'crab_boss') {
-      if (this.state !== 'STUNNED') {
-        console.log('[Boss] Immune while active!');
-        return;
-      }
       this.health = Math.max(0, this.health - damageAmount);
-      this.hitFlashTimer = 0.25;
-      console.log(`[Boss] Hit with damage ${damageAmount}! HP: ${this.health}`);
+      this.hitFlashTimer = 0.35;
+      console.log(`[Boss] Hit with damage ${damageAmount}! HP: ${this.health}/${this.maxHealth}`);
+
+      if (fromPos) {
+        const knockDir = new THREE.Vector3().subVectors(this.mesh.position, fromPos);
+        knockDir.y = 0;
+        this.safeNormalize(knockDir);
+        this.mesh.position.addScaledVector(knockDir, 0.6);
+      }
+
       if (this.health <= 0) {
         this.triggerDeath();
       } else {
-        this.stunTimer = 0.1; // Wake boss up quickly
+        // Enrage and prepare counter attack!
+        this.state = 'ATTACK';
+        this.bossChargeTimer = 0.4;
       }
       return;
     }
