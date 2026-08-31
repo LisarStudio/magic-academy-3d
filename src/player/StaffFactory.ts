@@ -48,19 +48,12 @@ export class StaffFactory {
       group.add(ring);
     }
 
-    // 3. Glowing Radiant Azure Crystal Tips
-    const crystalMat = new THREE.MeshStandardMaterial({
-      color: 0x00f0ff,
-      emissive: 0x00d4ff,
-      emissiveIntensity: 2.2,
-      roughness: 0.05,
-      metalness: 0.1,
-    });
-    const tipGeo = new THREE.OctahedronGeometry(0.030, 0);
-    const topTip = new THREE.Mesh(tipGeo, crystalMat);
-    topTip.position.y = 0.60;
-    const botTip = new THREE.Mesh(tipGeo, crystalMat);
-    botTip.position.y = -0.60;
+    // 3. Polished Imperial Gold Dragon Caps / Tips (Physical, clean, elegant)
+    const tipGeo = new THREE.OctahedronGeometry(0.024, 0);
+    const topTip = new THREE.Mesh(tipGeo, goldMat);
+    topTip.position.y = 0.58;
+    const botTip = new THREE.Mesh(tipGeo, goldMat);
+    botTip.position.y = -0.58;
     group.add(topTip, botTip);
 
     return group;

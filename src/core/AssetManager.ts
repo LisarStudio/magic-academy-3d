@@ -215,11 +215,17 @@ export class AssetManager {
         playerModel = gltf.scene;
         console.log('[AssetManager] ✅ Loaded player.glb successfully');
 
-        // Look for embedded staff mesh "Vaculo" and hide it permanently
+        // Look for embedded staff mesh "Vaculo" and remove it permanently
         playerModel.traverse((child) => {
-          if (child.name.toLowerCase().includes('vaculo')) {
+          if (child.name.toLowerCase().includes('vaculo') || child.name.toLowerCase().includes('baculo')) {
             child.visible = false;
-            console.log('[AssetManager] Found and hidden embedded staff (Vaculo) in player.glb');
+            if ((child as THREE.Mesh).isMesh) {
+              (child as THREE.Mesh).geometry = new THREE.BufferGeometry();
+            }
+            if (child.parent) {
+              child.parent.remove(child);
+            }
+            console.log('[AssetManager] Permanently stripped embedded staff (Vaculo) from player.glb');
           }
         });
 

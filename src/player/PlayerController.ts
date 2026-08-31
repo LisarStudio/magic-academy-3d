@@ -5,6 +5,7 @@ import { AnimationController } from './AnimationController';
 import { WandEffect } from '../spells/WandEffect';
 import { ItemPickupVFX } from './ItemPickupVFX';
 import { StaffFactory } from './StaffFactory';
+import { AttackAuraEffect } from './AttackAuraEffect';
 
 export const PLAYER_NAME = 'LISAR';
 
@@ -12,6 +13,7 @@ export class PlayerController {
   public mesh: THREE.Group;
   public animationController: AnimationController;
   public wandEffect: WandEffect;
+  public attackAura: AttackAuraEffect;
 
   public velocity = new THREE.Vector3();
   public isGrounded = true;
@@ -54,6 +56,10 @@ export class PlayerController {
     // Create the WandEffect glow (light + particles).
     this.wandEffect = new WandEffect();
 
+    // Create smooth attack energy aura (active ONLY during atack_wood)
+    this.attackAura = new AttackAuraEffect();
+    this.mesh.add(this.attackAura.mesh);
+
     // Initialize proportional dual-mount staff system (back mount & hand mount)
     this.initStaffMeshes();
     this.setStaffVisibility(false);
@@ -75,13 +81,13 @@ export class PlayerController {
       this.staffHandMesh.parent.remove(this.staffHandMesh);
     }
 
-    // 2. Find Spine bone for back mounting and RightHand for attack hand holding
+    // 2. Find Spine bone for back mounting (targeting Spine2 / Chest upper torso)
     let spineBone: THREE.Object3D | null = null;
     let rightHandBone: THREE.Object3D | null = null;
 
     this.mesh.traverse((child) => {
       const n = child.name.toLowerCase();
-      if ((n.includes('spine2') || n.includes('spine1') || n.includes('spine')) && !spineBone) {
+      if ((n.includes('spine2') || n.includes('chest') || n.includes('upperchest')) && !spineBone) {
         spineBone = child;
       }
       if (n.includes('righthand') && !n.includes('thumb') && !n.includes('index') && !n.includes('middle') && !n.includes('ring') && !n.includes('pinky')) {
@@ -89,11 +95,20 @@ export class PlayerController {
       }
     });
 
+    if (!spineBone) {
+      this.mesh.traverse((child) => {
+        const n = child.name.toLowerCase();
+        if ((n.includes('spine1') || n.includes('spine')) && !spineBone) {
+          spineBone = child;
+        }
+      });
+    }
+
     const spineName = spineBone ? (spineBone as THREE.Object3D).name : 'root';
     const handName = rightHandBone ? (rightHandBone as THREE.Object3D).name : 'root';
     console.log(`[PlayerController] Binding staff sockets — Spine: ${spineName}, RightHand: ${handName}`);
 
-    // 3. Create Staff Back Mesh (slanted diagonally across Wukong's back)
+    // 3. Create Staff Back Mesh (slanted diagonally across Wukong's back: lower-left to upper-right [/])
     const backStaff = StaffFactory.createStaff('staff_on_back');
     backStaff.visible = false;
     this.staffBackMesh = backStaff;
@@ -107,13 +122,13 @@ export class PlayerController {
       const invZ = spineWorldScale.z > 0.00001 ? 1.0 / spineWorldScale.z : 1.0;
       backStaff.scale.set(invX, invY, invZ);
 
-      // Centered on upper back, diagonal across spine
-      backStaff.position.set(0.0, 0.05, -0.22);
-      backStaff.rotation.set(0.2, 0.0, 0.785);
+      // Snug against the upper thoracic back, diagonal orientation (/): lower-left waist to upper-right shoulder
+      backStaff.position.set(0.02, 0.06, -0.11);
+      backStaff.rotation.set(0.08, 0.0, -0.65);
       (spineBone as THREE.Object3D).add(backStaff);
     } else {
-      backStaff.position.set(0, 1.1, -0.22);
-      backStaff.rotation.set(0.2, 0.0, 0.785);
+      backStaff.position.set(0.02, 1.05, -0.11);
+      backStaff.rotation.set(0.08, 0.0, -0.65);
       this.mesh.add(backStaff);
     }
 
@@ -150,10 +165,8 @@ export class PlayerController {
     const attachedStaff = this.mesh.getObjectByName('magic_wand');
     if (attachedStaff) attachedStaff.visible = false;
 
-    if (visible && this.staffBackMesh) {
-      // Clean staff on back: NO permanent aura, NO particles, NO constant light
-      this.wandEffect.wandMesh.visible = false;
-    } else {
+    // Clean staff on back: NO permanent aura, NO particles, NO constant light
+    if (this.wandEffect && this.wandEffect.wandMesh) {
       this.wandEffect.wandMesh.visible = false;
     }
   }
@@ -573,12 +586,21 @@ export class PlayerController {
     }
 
     this.wandEffect.update(delta);
+    this.attackAura.update(delta);
     this.animationController.update(delta);
 
     // 7. Abyss Death (Fall off map)
     if (this.mesh.position.y < -10 && !this.isMovementLocked) {
       this.respawnFromAbyss();
     }
+  }
+
+  public triggerAttackAura(): void {
+    this.attackAura.trigger();
+  }
+
+  public stopAttackAura(): void {
+    this.attackAura.stop();
   }
 
   private isRespawning = false;
@@ -611,11 +633,6 @@ export class PlayerController {
     if (this.staffBackMesh) this.staffBackMesh.visible = false;
     if (this.staffHandMesh) {
       this.staffHandMesh.visible = true;
-      if (this.wandEffect && this.wandEffect.wandMesh) {
-        this.wandEffect.wandMesh.position.set(0, 0.56, 0);
-        this.staffHandMesh.add(this.wandEffect.wandMesh);
-        this.wandEffect.wandMesh.visible = true;
-      }
     }
   }
 
@@ -628,6 +645,7 @@ export class PlayerController {
       if (this.wandEffect && this.wandEffect.wandMesh) {
         this.wandEffect.wandMesh.visible = false;
       }
+      this.attackAura.stop();
     }
   }
 

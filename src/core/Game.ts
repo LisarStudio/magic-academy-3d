@@ -144,6 +144,7 @@ export class Game {
 
       // Switch weapon socket: Back -> Hand
       this.player.attachStaffToHand();
+      this.player.triggerAttackAura();
       
       // Play atack_wood (atack_wood.glb) animation.
       this.animationController.playAtackWood(
@@ -182,9 +183,10 @@ export class Game {
             }
           });
         },
-        // OnComplete callback — animation finished, return staff to back cleanly
+        // OnComplete callback — animation finished, return staff to back cleanly and fade aura off
         () => {
           this.player.attachStaffToBack();
+          this.player.stopAttackAura();
           this.player.isAttacking = false;
         }
       );
