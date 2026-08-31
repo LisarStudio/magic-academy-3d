@@ -137,8 +137,8 @@ export class Game {
       // Switch weapon socket: Back -> Hand
       this.player.attachStaffToHand();
       
-      // Play atack_wood.glb animation. Physical melee hit test executes at swing impact point (~35% of gesture)
-      this.animationController.playCastSpellAnimation(
+      // Play atack_wood (atack_wood.glb) animation.
+      this.animationController.playAtackWood(
         // OnCastAtMarker callback — exact moment of physical staff swing impact
         () => {
           this.audioManager.playAttackGrunt(); // Energetic hero strike shout & impact

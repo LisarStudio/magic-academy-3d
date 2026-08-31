@@ -374,7 +374,7 @@ export class AssetManager {
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle.fbx?v=7', 'Idle_Armed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Run.fbx?v=7', 'Run_Armed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Jump.fbx?v=7', 'Jump_Armed', playerModel, translationScaleFactor),
-        this.loadAndRetargetGltfClip(import.meta.env.BASE_URL + 'assets/characters/atack_wood.glb', 'CastSpell', playerModel)
+        this.loadAndRetargetGltfClip(import.meta.env.BASE_URL + 'assets/characters/atack_wood.glb', 'atack_wood', playerModel)
       ]);
 
       const clips: THREE.AnimationClip[] = [];
@@ -391,6 +391,10 @@ export class AssetManager {
 
       if (castSpellData) {
         clips.push(castSpellData.clip);
+        // Also register alias 'CastSpell' for backward compatibility
+        const aliasClip = castSpellData.clip.clone();
+        aliasClip.name = 'CastSpell';
+        clips.push(aliasClip);
       }
 
       console.log(`[AssetManager] 🎬 Total clips loaded: ${clips.length} → [${clips.map((c) => c.name).join(', ')}]`);

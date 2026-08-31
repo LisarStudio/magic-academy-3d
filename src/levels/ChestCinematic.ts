@@ -50,24 +50,24 @@ export class ChestCinematic {
       this.staffInChest.visible = true;
       console.log('[ChestCinematic] STAFF_VISIBLE — showing existing chest prop');
     } else {
-      console.log('[ChestCinematic] STAFF_VISIBLE — creating proportional unified 3D staff');
+      console.log('[ChestCinematic] STAFF_VISIBLE — creating proportional unified 3D staff levitating above chest');
       const staffGroup = StaffFactory.createStaff('chest_staff_prop');
-      const staffY = chestPosition.y + 0.38;
+      const staffY = chestPosition.y + 0.82; // Levitating gracefully above chest
       staffGroup.position.set(chestPosition.x, staffY, chestPosition.z);
       staffGroup.rotation.set(0, Math.PI * 0.25, Math.PI * 0.35);
       scene.add(staffGroup);
       this.staffInChest = staffGroup;
 
-      // Add a brilliant golden aura point light inside the chest
-      const chestLight = new THREE.PointLight(0xffd700, 3.5, 5.0);
-      chestLight.position.set(chestPosition.x, staffY + 0.2, chestPosition.z);
+      // Add a brilliant golden aura point light floating with the staff
+      const chestLight = new THREE.PointLight(0xffd700, 4.0, 6.0);
+      chestLight.position.set(chestPosition.x, staffY + 0.1, chestPosition.z);
       chestLight.name = 'chest_staff_glow';
       scene.add(chestLight);
 
-      console.log('[ChestCinematic] Staff 3D model positioned in chest at:', chestPosition);
+      console.log('[ChestCinematic] Staff 3D model levitating above chest at:', chestPosition);
     }
 
-    // Floating bob + slow spin
+    // Floating bob + smooth majestic spin above chest
     if (this.staffInChest) {
       const staff = this.staffInChest;
       const baseY = staff.position.y;
@@ -75,8 +75,8 @@ export class ChestCinematic {
       const bob = () => {
         if (!staff.parent) return; // stop if removed from scene
         const t = (Date.now() - t0) / 1000;
-        staff.position.y = baseY + Math.sin(t * 2.5) * 0.035;
-        staff.rotation.y = t * 1.0;
+        staff.position.y = baseY + Math.sin(t * 2.5) * 0.055;
+        staff.rotation.y = t * 1.2;
         this.bobAnimId = requestAnimationFrame(bob);
       };
       this.bobAnimId = requestAnimationFrame(bob);

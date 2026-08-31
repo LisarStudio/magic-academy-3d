@@ -93,11 +93,11 @@ export class AnimationController {
   }
 
   /**
-   * Play CastSpell (atack_wood.glb). Triggers onCastAtMarker at completion point (~90%),
-   * and onComplete when animation finishes to restore state.
+   * Play atack_wood (atack_wood.glb). Triggers onCastAtMarker at impact point (~30% of swing),
+   * and onComplete when animation finishes to restore state and return staff to back.
    */
-  public playCastSpellAnimation(onCastAtMarker: () => void, onComplete: () => void): void {
-    const action = this.allActions.get('CastSpell');
+  public playAtackWood(onCastAtMarker: () => void, onComplete: () => void): void {
+    const action = this.allActions.get('atack_wood') || this.allActions.get('CastSpell');
     if (!action || !this.mixer) {
       onCastAtMarker();
       onComplete();
@@ -154,6 +154,10 @@ export class AnimationController {
       }
     };
     requestAnimationFrame(updateCheck);
+  }
+
+  public playCastSpellAnimation(onCastAtMarker: () => void, onComplete: () => void): void {
+    this.playAtackWood(onCastAtMarker, onComplete);
   }
 
   public playWukongKick(onImpact: () => void, onComplete: () => void): void {

@@ -107,12 +107,13 @@ export class PlayerController {
       const invZ = spineWorldScale.z > 0.00001 ? 1.0 / spineWorldScale.z : 1.0;
       backStaff.scale.set(invX, invY, invZ);
 
-      backStaff.position.set(-0.06, 0.15, -0.15);
-      backStaff.rotation.set(0.35, 0.12, 0.72);
+      // Centered on upper back, diagonal across spine
+      backStaff.position.set(0.0, 0.05, -0.22);
+      backStaff.rotation.set(0.2, 0.0, 0.785);
       (spineBone as THREE.Object3D).add(backStaff);
     } else {
       backStaff.position.set(0, 1.1, -0.22);
-      backStaff.rotation.set(0.35, 0.12, 0.72);
+      backStaff.rotation.set(0.2, 0.0, 0.785);
       this.mesh.add(backStaff);
     }
 
@@ -130,7 +131,7 @@ export class PlayerController {
       const invZ = handWorldScale.z > 0.00001 ? 1.0 / handWorldScale.z : 1.0;
       handStaff.scale.set(invX, invY, invZ);
 
-      handStaff.position.set(0, 0.05, 0);
+      handStaff.position.set(0, 0.06, 0);
       handStaff.rotation.set(Math.PI * 0.5, 0, 0);
       (rightHandBone as THREE.Object3D).add(handStaff);
     } else {
@@ -257,6 +258,26 @@ export class PlayerController {
       this.isControlsLocked = false;
       this.isMovementLocked = false;
       this.isAttacking = false;
+    }
+
+    // ── Enforce Strict Staff Weapon Visibility and WOOD/NOWOOD Animation Sync ──
+    if (this.hasStaff) {
+      if (!this.animationController.isArmed) {
+        this.animationController.setArmed(true);
+      }
+      if (this.isAttacking) {
+        if (this.staffBackMesh && this.staffBackMesh.visible) this.staffBackMesh.visible = false;
+        if (this.staffHandMesh && !this.staffHandMesh.visible) this.staffHandMesh.visible = true;
+      } else {
+        if (this.staffHandMesh && this.staffHandMesh.visible) this.staffHandMesh.visible = false;
+        if (this.staffBackMesh && !this.staffBackMesh.visible) this.staffBackMesh.visible = true;
+      }
+    } else {
+      if (this.animationController.isArmed) {
+        this.animationController.setArmed(false);
+      }
+      if (this.staffBackMesh && this.staffBackMesh.visible) this.staffBackMesh.visible = false;
+      if (this.staffHandMesh && this.staffHandMesh.visible) this.staffHandMesh.visible = false;
     }
 
     if (this.isControlsLocked) {
