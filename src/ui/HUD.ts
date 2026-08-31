@@ -43,6 +43,11 @@ export class HUD {
   private musicVolTextEl: HTMLElement | null = null;
   private fxVolTextEl: HTMLElement | null = null;
 
+  // Objective auto-fade
+  private objectiveFadeTimer: any = null;
+  private objectiveMiniIconEl: HTMLElement | null = null;
+  private lastObjectiveText: string = '';
+
   public isDebugMode = false;
 
   constructor() {
@@ -90,6 +95,77 @@ export class HUD {
 
     this.initAudioSliders();
     this.initPauseButton();
+    this.createObjectiveMiniIcon();
+  }
+
+  /** Create the minimized mission icon that appears after objective fades */
+  private createObjectiveMiniIcon(): void {
+    // Only create if it doesn't exist yet
+    if (document.getElementById('objective-mini-icon')) {
+      this.objectiveMiniIconEl = document.getElementById('objective-mini-icon');
+      return;
+    }
+    const icon = document.createElement('div');
+    icon.id = 'objective-mini-icon';
+    icon.textContent = '⭐';
+    icon.title = 'Ver objetivo';
+    
+    // Touch/click to re-show objective
+    const showObjective = (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.showObjectiveTemporarily();
+    };
+    icon.addEventListener('click', showObjective);
+    icon.addEventListener('touchstart', showObjective, { passive: false });
+
+    const uiOverlay = document.getElementById('ui-overlay');
+    if (uiOverlay) {
+      uiOverlay.appendChild(icon);
+    }
+    this.objectiveMiniIconEl = icon;
+  }
+
+  /** Show the full objective text temporarily, then fade again */
+  private showObjectiveTemporarily(): void {
+    if (!this.lastObjectiveText) return;
+    
+    // Hide mini icon
+    if (this.objectiveMiniIconEl) {
+      this.objectiveMiniIconEl.classList.remove('visible');
+    }
+
+    // Show objective container with fade in
+    this.objectiveContainerEl.classList.remove('hidden');
+    this.objectiveContainerEl.classList.remove('objective-fading');
+    this.objectiveTextEl.textContent = this.lastObjectiveText;
+
+    // Schedule fade out again
+    this.scheduleObjectiveFade();
+  }
+
+  /** Schedule the objective to fade out after a delay */
+  private scheduleObjectiveFade(): void {
+    if (this.objectiveFadeTimer) {
+      clearTimeout(this.objectiveFadeTimer);
+    }
+
+    // Show for 5 seconds, then fade out over 1.2 seconds
+    this.objectiveFadeTimer = setTimeout(() => {
+      // Add fading class (CSS handles 1.2s opacity + transform transition)
+      this.objectiveContainerEl.classList.add('objective-fading');
+
+      // After transition completes, hide and show mini icon
+      setTimeout(() => {
+        this.objectiveContainerEl.classList.add('hidden');
+        this.objectiveContainerEl.classList.remove('objective-fading');
+
+        // Show minimized mission icon
+        if (this.objectiveMiniIconEl) {
+          this.objectiveMiniIconEl.classList.add('visible');
+        }
+      }, 1300); // slightly longer than CSS transition (1.2s)
+    }, 5000);
   }
 
   private initAudioSliders(): void {
@@ -175,12 +251,30 @@ export class HUD {
     this.spellHotbarEl.classList.remove('hidden');
   }
 
-
-
+  /**
+   * HP bar with dynamic color: green (high) → orange (medium) → red (low)
+   * Transitions are smooth via CSS transition on background and box-shadow.
+   */
   public setHealth(hp: number, maxHp = 100): void {
     const safeHp = Math.max(0, Math.ceil(hp));
     const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
     this.hpBarFillEl.style.width = `${pct}%`;
+
+    // Dynamic color based on HP percentage
+    if (pct > 55) {
+      // HIGH — Green
+      this.hpBarFillEl.style.background = 'linear-gradient(90deg, #15803d, #22c55e, #86efac)';
+      this.hpBarFillEl.style.boxShadow = '0 0 8px rgba(34, 197, 94, 0.5), inset 0 1px 0 rgba(255,255,255,0.2)';
+    } else if (pct > 25) {
+      // MEDIUM — Orange / Amber
+      this.hpBarFillEl.style.background = 'linear-gradient(90deg, #b45309, #f59e0b, #fcd34d)';
+      this.hpBarFillEl.style.boxShadow = '0 0 8px rgba(245, 158, 11, 0.5), inset 0 1px 0 rgba(255,255,255,0.2)';
+    } else {
+      // LOW — Red / Critical
+      this.hpBarFillEl.style.background = 'linear-gradient(90deg, #991b1b, #ef4444, #fca5a5)';
+      this.hpBarFillEl.style.boxShadow = '0 0 10px rgba(239, 68, 68, 0.6), inset 0 1px 0 rgba(255,255,255,0.2)';
+    }
+
     const hpTextEl = document.getElementById('hp-text');
     if (hpTextEl) hpTextEl.textContent = `${safeHp} / ${maxHp}`;
   }
@@ -251,12 +345,37 @@ export class HUD {
     }
   }
 
+  /**
+   * Set objective text. Shows for 5 seconds then smoothly fades out,
+   * leaving a small minimized icon that can be tapped to re-show it.
+   */
   public setObjective(text: string): void {
     if (text) {
+      this.lastObjectiveText = text;
+      
+      // Hide mini icon
+      if (this.objectiveMiniIconEl) {
+        this.objectiveMiniIconEl.classList.remove('visible');
+      }
+
+      // Show with reset — remove fading class to ensure fresh display
       this.objectiveContainerEl.classList.remove('hidden');
+      this.objectiveContainerEl.classList.remove('objective-fading');
       this.objectiveTextEl.textContent = text;
+
+      // Schedule automatic fade out
+      this.scheduleObjectiveFade();
     } else {
+      this.lastObjectiveText = '';
       this.objectiveContainerEl.classList.add('hidden');
+      this.objectiveContainerEl.classList.remove('objective-fading');
+      if (this.objectiveMiniIconEl) {
+        this.objectiveMiniIconEl.classList.remove('visible');
+      }
+      if (this.objectiveFadeTimer) {
+        clearTimeout(this.objectiveFadeTimer);
+        this.objectiveFadeTimer = null;
+      }
     }
   }
 
