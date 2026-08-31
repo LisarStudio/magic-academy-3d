@@ -20,6 +20,7 @@ import { EnemyController } from '../enemies/EnemyController';
 import { GekkoNPC } from '../npc/GekkoNPC';
 import { MovingPlatform } from '../world/MovingPlatform';
 import { KeyPickupSequence, type KeyData } from '../player/KeyPickupSequence';
+import { RunicPortal, PortalManager } from '../world/RunicPortal';
 
 export class LevelToyStory {
   private sceneManager: SceneManager;
@@ -40,6 +41,7 @@ export class LevelToyStory {
   public enemies: EnemyController[] = [];
   public gargoyles: LumosGargoyle[] = [];
   public movingPlatforms: MovingPlatform[] = [];
+  public portalManager = new PortalManager();
 
   // Key tracking
   public collectedKeys = {
@@ -1752,50 +1754,6 @@ export class LevelToyStory {
       ridgeSlab.receiveShadow = true;
       scene.add(ridgeSlab);
     }
-
-    // ── South Ruins ──
-    const ruins1 = new THREE.Group();
-    ruins1.position.set(-30, 0, 10);
-    scene.add(ruins1);
-
-    const wall1 = new THREE.Mesh(new THREE.BoxGeometry(8, 3, 0.8), stoneMat);
-    wall1.position.set(0, 1.5, 0);
-    ruins1.add(wall1);
-    this.levelColliders.push(wall1);
-
-    const pillar1 = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 4, 8), stoneMat);
-    pillar1.position.set(-3, 2, 3);
-    ruins1.add(pillar1);
-    this.levelColliders.push(pillar1);
-
-    const fallenPillar = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 3.5, 8), stoneMat);
-    fallenPillar.position.set(1, 0.5, 2);
-    fallenPillar.rotation.set(0, Math.PI / 4, Math.PI / 2 - 0.1);
-    ruins1.add(fallenPillar);
-    this.levelColliders.push(fallenPillar);
-
-    // ── West Library Ruins ──
-    const ruins2 = new THREE.Group();
-    ruins2.position.set(-45, 0, -40);
-    scene.add(ruins2);
-
-    for (let i = 0; i < 6; i++) {
-      const angle = (i / 6) * Math.PI * 2;
-      const rx = Math.cos(angle) * 5;
-      const rz = Math.sin(angle) * 5;
-      
-      const height = i % 2 === 0 ? 5 : 3.5;
-      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, height, 8), stoneMat);
-      col.position.set(rx, height / 2, rz);
-      ruins2.add(col);
-      this.levelColliders.push(col);
-    }
-
-    const arch = new THREE.Mesh(new THREE.BoxGeometry(6, 0.6, 1.2), stoneMat);
-    arch.position.set(Math.cos(0.5/6 * Math.PI*2)*5, 4.8, Math.sin(0.5/6*Math.PI*2)*5);
-    arch.rotation.y = -0.5/6 * Math.PI*2;
-    ruins2.add(arch);
-    this.levelColliders.push(arch);
   }
 
   private setupInteractiveProps(): void {
@@ -1807,6 +1765,36 @@ export class LevelToyStory {
     this.chests.push(this.staffChest);
     this.spellSystem.registerChest(this.staffChest);
     this.levelColliders.push(this.staffChest.mesh);
+
+    // ── Runic Fast-Travel Portal Network (PortalPair_01) ───────────────────────
+    // Portal A: Placed at the Temple 03 Staff Sanctuary Terrace Balcony (World: 62.5, 14.8, -75.0)
+    const portalA = new RunicPortal({
+      id: 'Portal_A_StaffTemple',
+      pairId: 'PortalPair_01',
+      displayName: 'Santuario del Báculo',
+      position: new THREE.Vector3(62.5, 14.8, -75.0),
+      rotationY: -Math.PI / 2,
+      exitPoint: new THREE.Vector3(59.8, 14.8, -75.0),
+      exitYaw: -Math.PI / 2,
+      unlockedByDefault: false,
+    }, scene, this.levelColliders);
+
+    // Portal B: Placed at the Palace Entrance Courtyard near starting route (World: 8.0, 0.0, -12.0)
+    const portalB = new RunicPortal({
+      id: 'Portal_B_MapShortcut',
+      pairId: 'PortalPair_01',
+      displayName: 'Atrio del Palacio',
+      position: new THREE.Vector3(8.0, 0.0, -12.0),
+      rotationY: 0,
+      exitPoint: new THREE.Vector3(8.0, 0.0, -9.2),
+      exitYaw: 0,
+      unlockedByDefault: false,
+    }, scene, this.levelColliders);
+
+    this.portalManager.registerPortal(portalA);
+    this.portalManager.registerPortal(portalB);
+    this.portalManager.linkPair(portalA, portalB);
+    console.log('[LevelToyStory] ✅ Runic Portals (PortalPair_01) initialized & linked.');
 
     this.setupEnergyItems();
 
@@ -2817,25 +2805,39 @@ export class LevelToyStory {
       this.subtitleSystem.show('Cripta de Lava', '¡Cuidado con la lava ardiente! Cruza usando las plataformas móviles.');
     }
 
-    // ── Energy Item / Peach Pickup Check (Manual E key press with Full TakeItem Animation) ─────────────────────
+    // ── Runic Fast-Travel Portal System Update ──
+    const hud = (window as any).gameInstance?.hud;
+    const cameraController = (window as any).gameInstance?.cameraController;
+    if (hud && cameraController) {
+      this.portalManager.update(
+        delta,
+        playerPos,
+        this.inputManager,
+        hud,
+        this.audioManager,
+        this.player,
+        cameraController,
+        this.subtitleSystem
+      );
+    }
+
+    // ── Energy Item / Peach Pickup Check (Instantaneous Zero-Lag Collection) ──
     for (let i = this.energyItems.length - 1; i >= 0; i--) {
       const item = this.energyItems[i];
-      item.rotation.y += delta * 2.0; // Slow magical spin
+      item.rotation.y += delta * 2.0; // Smooth visual spin
       const distToEnergy = item.position.distanceTo(playerPos);
-      if (distToEnergy < 2.2 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
-        const hud = (window as any).gameInstance?.hud;
+      if (distToEnergy < 2.0 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
         hud?.showInteractionPrompt('Tomar Durazno Celestial [E]');
 
-        if (this.inputManager.keys['KeyE'] || distToEnergy < 1.4) {
+        if (this.inputManager.keys['KeyE'] || distToEnergy < 1.6 || (hud?.isTouchDevice?.() && distToEnergy < 1.8)) {
           hud?.hideInteractionPrompt();
-          const peachPos = item.position.clone();
+          this.collectibleSystem.spawnSparks(item.position);
           this.sceneManager.scene.remove(item);
           this.energyItems.splice(i, 1);
 
-          this.collectibleSystem.spawnSparks(peachPos);
-          this.audioManager.playCardPickup();
+          this.audioManager.playPotionPickup();
           this.player.heal(35);
-          this.subtitleSystem.show('Durazno Celestial', '¡Has recogido un Durazno Celestial! (+35 ENERGÍA)', 2200);
+          this.subtitleSystem.show('Durazno Celestial', '¡Has recogido un Durazno Celestial! (+35 ENERGÍA)', 2000);
         }
       }
     }

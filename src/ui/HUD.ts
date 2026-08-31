@@ -517,4 +517,26 @@ export class HUD {
     this.screenFadeEl.classList.add('hidden');
     return new Promise(resolve => setTimeout(resolve, durationMs));
   }
+
+  /**
+   * Ultra-snappy magical flash transition during portal teleportation.
+   * Total duration ~200-250ms with zero long black screens.
+   */
+  public triggerTeleportFlash(durationMs: number = 220): Promise<void> {
+    const half = Math.max(50, Math.floor(durationMs / 2));
+    this.screenFadeEl.style.transition = `opacity ${half}ms ease-out`;
+    this.screenFadeEl.style.background = 'radial-gradient(circle, rgba(0,229,255,0.7) 0%, rgba(5,20,35,0.85) 100%)';
+    this.screenFadeEl.classList.remove('hidden');
+
+    return new Promise(resolve => {
+      setTimeout(() => {
+        this.screenFadeEl.style.transition = `opacity ${half}ms ease-in`;
+        this.screenFadeEl.classList.add('hidden');
+        setTimeout(() => {
+          this.screenFadeEl.style.background = '#000000';
+          resolve();
+        }, half);
+      }, half);
+    });
+  }
 }

@@ -151,9 +151,8 @@ export class PlayerController {
     if (attachedStaff) attachedStaff.visible = false;
 
     if (visible && this.staffBackMesh) {
-      this.wandEffect.wandMesh.position.set(0, 0.56, 0);
-      this.staffBackMesh.add(this.wandEffect.wandMesh);
-      this.wandEffect.wandMesh.visible = true;
+      // Clean staff on back: NO permanent aura, NO particles, NO constant light
+      this.wandEffect.wandMesh.visible = false;
     } else {
       this.wandEffect.wandMesh.visible = false;
     }
@@ -625,10 +624,9 @@ export class PlayerController {
     if (this.staffHandMesh) this.staffHandMesh.visible = false;
     if (this.staffBackMesh) {
       this.staffBackMesh.visible = true;
+      // Clean staff on back: NO permanent aura, NO glow, NO floating particles
       if (this.wandEffect && this.wandEffect.wandMesh) {
-        this.wandEffect.wandMesh.position.set(0, 0.56, 0);
-        this.staffBackMesh.add(this.wandEffect.wandMesh);
-        this.wandEffect.wandMesh.visible = true;
+        this.wandEffect.wandMesh.visible = false;
       }
     }
   }

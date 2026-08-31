@@ -731,4 +731,77 @@ export class AudioManager {
       offset += note.d * 0.75;
     });
   }
+
+  /**
+   * Harmonic ascending chime when waking ancient runic portal pair
+   */
+  public playPortalActivate(): void {
+    const ctx = this.initCtx();
+    const now = ctx.currentTime;
+    const notes = [
+      { f: 329.63, d: 0.25 }, // E4
+      { f: 440.00, d: 0.25 }, // A4
+      { f: 554.37, d: 0.30 }, // C#5
+      { f: 880.00, d: 0.60 }  // A5
+    ];
+
+    let offset = 0;
+    notes.forEach(note => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(note.f, now + offset);
+
+      gain.gain.setValueAtTime(0.25 * this.sfxVolume * this.masterVolume, now + offset);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + offset + note.d);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now + offset);
+      osc.stop(now + offset + note.d);
+
+      offset += 0.12;
+    });
+  }
+
+  /**
+   * Resonant ethereal whoosh & crystal chord during instant teleportation
+   */
+  public playPortalTeleport(): void {
+    const ctx = this.initCtx();
+    const now = ctx.currentTime;
+
+    // 1. Ethereal whoosh sweep
+    const sweepOsc = ctx.createOscillator();
+    const sweepGain = ctx.createGain();
+    sweepOsc.type = 'sine';
+    sweepOsc.frequency.setValueAtTime(180, now);
+    sweepOsc.frequency.exponentialRampToValueAtTime(720, now + 0.18);
+
+    sweepGain.gain.setValueAtTime(0.3 * this.sfxVolume * this.masterVolume, now);
+    sweepGain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+
+    sweepOsc.connect(sweepGain);
+    sweepGain.connect(ctx.destination);
+    sweepOsc.start(now);
+    sweepOsc.stop(now + 0.28);
+
+    // 2. Resonant high chord
+    [659.25, 830.61, 987.77].forEach(freq => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now + 0.08);
+
+      gain.gain.setValueAtTime(0.18 * this.sfxVolume * this.masterVolume, now + 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + 0.08);
+      osc.stop(now + 0.35);
+    });
+  }
 }
