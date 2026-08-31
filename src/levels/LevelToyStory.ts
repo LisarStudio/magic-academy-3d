@@ -64,12 +64,21 @@ export class LevelToyStory {
   private cloudsUniforms: any = null;
 
   public getTerrainHeight(x: number, z: number): number {
-    if (x > -35 && x < 35 && z > -70 && z < 25) {
-      return 0.0;
-    }
-    const h1 = Math.sin(x * 0.04) * Math.cos(z * 0.04) * 2.8;
-    const h2 = Math.sin(x * 0.095 + z * 0.07) * 1.5;
-    return Math.max(0.0, h1 + h2);
+    // Gameplay zones (Castle fortress, arena, front entrance road) are strictly flat at y = 0.0
+    const castleDist = Math.max(Math.abs(x) - 14, Math.abs(z + 40) - 15);
+    const arenaDist = Math.hypot(x - 45, z + 40) - 15;
+
+    let blend = 1.0;
+    if (castleDist < 8) blend *= Math.max(0, castleDist / 8);
+    if (arenaDist < 8) blend *= Math.max(0, arenaDist / 8);
+    if (z > -22 && Math.abs(x) < 9) blend *= Math.max(0, Math.abs(x) / 9);
+
+    if (blend <= 0.001) return 0.0;
+
+    const hill1 = Math.sin(x * 0.05 + z * 0.04) * 2.2;
+    const hill2 = Math.cos(x * 0.09 - z * 0.07) * 1.4;
+    const knoll = Math.sin(x * 0.15) * Math.sin(z * 0.15) * 0.8;
+    return (hill1 + hill2 + knoll) * blend;
   }
 
   // Quest states & Gekko Mission State Machine
@@ -356,30 +365,14 @@ export class LevelToyStory {
     const posAttr = terrainGeo.attributes.position;
     for (let i = 0; i < posAttr.count; i++) {
       const x = posAttr.getX(i);
-      const z = posAttr.getZ(i) - 40; // Align with center at (0, 0, -40)
-
-      // Calculate distance to gameplay zones (Castle, Arena, Paths)
-      const castleDist = Math.max(Math.abs(x) - 14, Math.abs(z + 40) - 15);
-      const arenaDist = Math.hypot(x - 45, z + 40) - 15;
-
-      // Blend factor: 0.0 near gameplay zones (flat), 1.0 in open wilderness
-      let blend = 1.0;
-      if (castleDist < 8) blend *= Math.max(0, castleDist / 8);
-      if (arenaDist < 8) blend *= Math.max(0, arenaDist / 8);
-      if (z > -20 && Math.abs(x) < 8) blend *= Math.max(0, Math.abs(x) / 8);
-
-      // Layered organic noise for soft rolling hills, knolls, and valley dips
-      const hill1 = Math.sin(x * 0.05 + z * 0.04) * 2.2;
-      const hill2 = Math.cos(x * 0.09 - z * 0.07) * 1.4;
-      const knoll = Math.sin(x * 0.15) * Math.sin(z * 0.15) * 0.8;
-
-      const y = (hill1 + hill2 + knoll) * blend;
-      posAttr.setY(i, y);
+      const z = posAttr.getZ(i) - 40; // Center world coordinate
+      posAttr.setZ(i, z);
+      posAttr.setY(i, this.getTerrainHeight(x, z));
     }
     terrainGeo.computeVertexNormals();
 
     const worldFloor = new THREE.Mesh(terrainGeo, groundBaseMat);
-    worldFloor.position.set(0, 0, -40);
+    worldFloor.position.set(0, 0, 0);
     worldFloor.receiveShadow = true;
     scene.add(worldFloor);
     this.levelColliders.push(worldFloor);
@@ -900,9 +893,9 @@ export class LevelToyStory {
     const stairAngle = Math.atan(stairRise / stairLength);
     const stairRampDist = Math.hypot(stairLength, stairRise);
 
-    // 1. Solid Stone Foundation Ramp
-    const stairBase = new THREE.Mesh(new THREE.BoxGeometry(4.2, 2.0, stairRampDist + 0.5), stoneMat);
-    stairBase.position.set(8.5, 1.6, castleCenterZ + 4.0);
+    // 1. Solid Stone Foundation Ramp (Full width from atrium railing x=6.5 to outer wall x=13.8)
+    const stairBase = new THREE.Mesh(new THREE.BoxGeometry(7.2, 2.5, stairRampDist + 0.8), stoneMat);
+    stairBase.position.set(10.2, 1.6, castleCenterZ + 4.0);
     stairBase.rotation.x = stairAngle;
     scene.add(stairBase);
     this.levelColliders.push(stairBase);
@@ -913,26 +906,26 @@ export class LevelToyStory {
       const t = i / (numSteps - 1);
       const stepY = 0.4 + t * stairRise;
       const stepZ = -28.0 - t * stairLength;
-      const step = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.35, 1.15), stoneMat);
-      step.position.set(8.5, stepY, stepZ);
+      const step = new THREE.Mesh(new THREE.BoxGeometry(6.8, 0.35, 1.15), stoneMat);
+      step.position.set(10.2, stepY, stepZ);
       step.castShadow = true;
       step.receiveShadow = true;
       scene.add(step);
     }
 
-    // 3. Smooth Ramp Collider (100% fluid ascent/descent)
+    // 3. Smooth Ramp Collider (100% fluid ascent/descent, zero gaps)
     const stairSmoothRamp = new THREE.Mesh(
-      new THREE.BoxGeometry(4.4, 0.35, stairRampDist),
+      new THREE.BoxGeometry(7.4, 0.45, stairRampDist + 0.8),
       new THREE.MeshBasicMaterial({ visible: false })
     );
-    stairSmoothRamp.position.set(8.5, 2.9, castleCenterZ + 4.0);
+    stairSmoothRamp.position.set(10.2, 2.9, castleCenterZ + 4.0);
     stairSmoothRamp.rotation.x = stairAngle;
     scene.add(stairSmoothRamp);
     this.levelColliders.push(stairSmoothRamp);
 
     // 4. Crimson Red Wood Balustrade Railings with Lanterns
-    const balustradeR = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.0, stairRampDist), redWoodMat);
-    balustradeR.position.set(6.3, 3.4, castleCenterZ + 4.0);
+    const balustradeR = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.2, stairRampDist + 0.8), redWoodMat);
+    balustradeR.position.set(6.4, 3.4, castleCenterZ + 4.0);
     balustradeR.rotation.x = stairAngle;
     scene.add(balustradeR);
     this.levelColliders.push(balustradeR);
@@ -940,13 +933,13 @@ export class LevelToyStory {
     // Lantern posts at bottom & top of main staircase
     const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd32f2f, emissive: 0xff4400, emissiveIntensity: 1.5 });
     const postL1 = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 1.6, 8), redWoodMat);
-    postL1.position.set(6.3, 1.2, -28.0);
+    postL1.position.set(6.4, 1.2, -28.0);
     const lant1L = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), lanternMat);
-    lant1L.position.set(6.3, 2.1, -28.0);
+    lant1L.position.set(6.4, 2.1, -28.0);
     const postL2 = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 1.6, 8), redWoodMat);
-    postL2.position.set(6.3, 6.0, -44.0);
+    postL2.position.set(6.4, 6.0, -44.0);
     const lant1R = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), lanternMat);
-    lant1R.position.set(6.3, 6.9, -44.0);
+    lant1R.position.set(6.4, 6.9, -44.0);
     scene.add(postL1, lant1L, postL2, lant1R);
 
     // ── UPPER ROOF ACCESS STAIRCASE (Mezzanine y=5.2 to Roof Terrace y=10.0) ──
@@ -957,8 +950,8 @@ export class LevelToyStory {
     const upperAngle = Math.atan(upperRise / upperLength);
     const upperRampDist = Math.hypot(upperLength, upperRise);
 
-    const upperRampBase = new THREE.Mesh(new THREE.BoxGeometry(upperRampDist + 0.5, 2.0, 3.8), stoneMat);
-    upperRampBase.position.set(2.0, 6.4, castleCenterZ - 10.0);
+    const upperRampBase = new THREE.Mesh(new THREE.BoxGeometry(upperRampDist + 0.8, 2.5, 6.0), stoneMat);
+    upperRampBase.position.set(2.0, 6.4, castleCenterZ - 11.0);
     upperRampBase.rotation.z = upperAngle;
     scene.add(upperRampBase);
     this.levelColliders.push(upperRampBase);
@@ -967,18 +960,18 @@ export class LevelToyStory {
       const t = i / (upperSteps - 1);
       const stepX = 8.0 - t * upperLength;
       const stepY = 5.2 + t * upperRise;
-      const step = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.35, 3.8), stoneMat);
-      step.position.set(stepX, stepY, castleCenterZ - 10.0);
+      const step = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.35, 5.5), stoneMat);
+      step.position.set(stepX, stepY, castleCenterZ - 11.0);
       step.castShadow = true;
       step.receiveShadow = true;
       scene.add(step);
     }
 
     const upperRampCollider = new THREE.Mesh(
-      new THREE.BoxGeometry(upperRampDist, 0.35, 4.0),
+      new THREE.BoxGeometry(upperRampDist + 0.8, 0.45, 6.2),
       new THREE.MeshBasicMaterial({ visible: false })
     );
-    upperRampCollider.position.set(2.0, 7.7, castleCenterZ - 10.0);
+    upperRampCollider.position.set(2.0, 7.7, castleCenterZ - 11.0);
     upperRampCollider.rotation.z = upperAngle;
     scene.add(upperRampCollider);
     this.levelColliders.push(upperRampCollider);
@@ -1110,14 +1103,27 @@ export class LevelToyStory {
     this.levelColliders.push(this.lavaVaultHatch);
 
     // 2. Secret Subterranean Stairs descending from y = 0.2 to y = -5.8
-    const stairsSteps = 12;
+    const stairsSteps = 14;
     const stairLen = 8.0;
     const stairDrop = 6.0;
+    const subStairAngle = Math.atan(stairDrop / stairLen);
+    const subStairDist = Math.hypot(stairLen, stairDrop);
+
+    // Continuous Subterranean Smooth Ramp Collider (prevents falling into void)
+    const subRampCollider = new THREE.Mesh(
+      new THREE.BoxGeometry(4.2, 0.4, subStairDist + 0.5),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    subRampCollider.position.set(-9.0, -2.8, castleCenterZ + 4.0);
+    subRampCollider.rotation.x = subStairAngle;
+    scene.add(subRampCollider);
+    this.levelColliders.push(subRampCollider);
+
     for (let i = 0; i < stairsSteps; i++) {
       const t = i / (stairsSteps - 1);
       const stepY = 0.1 - t * stairDrop;
       const stepZ = (castleCenterZ + 8.0) - t * stairLen;
-      const step = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.35, 1.0), stoneMat);
+      const step = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.35, 1.0), stoneMat);
       step.position.set(-9.0, stepY, stepZ);
       step.castShadow = true;
       step.receiveShadow = true;
@@ -1126,7 +1132,7 @@ export class LevelToyStory {
     }
 
     // 3. Subterranean Entrance Ledge at y = -5.8 (x = -9.0, z = castleCenterZ)
-    const ledge = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.5, 6.0), stoneMat);
+    const ledge = new THREE.Mesh(new THREE.BoxGeometry(5.5, 0.6, 7.0), stoneMat);
     ledge.position.set(-9.0, -5.8, castleCenterZ);
     ledge.receiveShadow = true;
     scene.add(ledge);
