@@ -297,7 +297,8 @@ export class PlayerController {
       if (!hit.face) continue;
       const norm = hit.face.normal.clone();
       norm.transformDirection(hit.object.matrixWorld);
-      if (norm.y >= 0.4) { // Walkable floor or ramp slope
+      // Only accept walkable floor surfaces that are at or below Wukong's feet (never overhead objects)
+      if (norm.y >= 0.45 && hit.point.y <= this.mesh.position.y + 0.15) {
         validGroundHit = hit;
         break;
       }
@@ -306,11 +307,10 @@ export class PlayerController {
     const prevVelY = this.velocity.y;
     const terrainY = level?.getTerrainHeight ? level.getTerrainHeight(this.mesh.position.x, this.mesh.position.z) : 0.0;
     
-    // Exact floor level: highest of static collider hit or terrain height
-    const hitY = (validGroundHit && validGroundHit.distance <= 0.95) ? validGroundHit.point.y : -999;
-    const floorY = Math.max(hitY, terrainY);
+    // Exact floor level: static collider if walked on, otherwise natural terrain
+    const floorY = validGroundHit ? validGroundHit.point.y : terrainY;
 
-    if (this.mesh.position.y <= floorY + 0.12 && this.velocity.y <= 0) {
+    if (this.mesh.position.y <= floorY + 0.10 && this.velocity.y <= 0) {
       this.isGrounded = true;
       this.velocity.y = 0;
       this.mesh.position.y = floorY; // feet snap cleanly to floor

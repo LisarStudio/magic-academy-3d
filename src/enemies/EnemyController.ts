@@ -415,16 +415,16 @@ export class EnemyController {
         return;
       }
 
-      // Regular crabs: squash, spin, shrink to zero
+      // Regular crabs: squash, spin, shrink safely
       const t = Math.max(0, this.dyingTimer / this.dyingDuration); // 1→0
       const phase1 = Math.min(1, (1 - t) * 3);
-      const squashY = 1.0 - phase1 * 0.6;
-      const squashXZ = 1.0 + phase1 * 0.3;
-      const shrink = Math.max(0.001, t);
+      const squashY = Math.max(0.1, 1.0 - phase1 * 0.6);
+      const squashXZ = Math.max(0.1, 1.0 + phase1 * 0.3);
+      const shrink = Math.max(0.01, t);
       this.mesh.scale.set(
-        this.dyingScaleStart * squashXZ * shrink,
-        this.dyingScaleStart * squashY * shrink,
-        this.dyingScaleStart * squashXZ * shrink,
+        Math.max(0.01, this.dyingScaleStart * squashXZ * shrink),
+        Math.max(0.01, this.dyingScaleStart * squashY * shrink),
+        Math.max(0.01, this.dyingScaleStart * squashXZ * shrink),
       );
       this.mesh.rotation.y += delta * 8.0;
       this.mesh.rotation.z += delta * 5.0;
