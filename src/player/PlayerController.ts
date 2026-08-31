@@ -5,6 +5,7 @@ import { AnimationController } from './AnimationController';
 import { WandEffect } from '../spells/WandEffect';
 import { StaffFactory } from './StaffFactory';
 import { AttackAuraEffect } from './AttackAuraEffect';
+import { type WeaponType, WEAPON_DEFINITIONS } from './WeaponConfig';
 
 export const PLAYER_NAME = 'LISAR';
 
@@ -35,8 +36,26 @@ export class PlayerController {
   public onHealthChange?: (hp: number, maxHp: number) => void;
   public onManaChange?: (mp: number, maxMp: number) => void;
 
-  public hasStaff = false;
-  public staffEquipped = false;
+  // ── EXTENSIBLE WEAPON INVENTORY SYSTEM ──────────────────────────────────
+  public ownedWeapons: Set<WeaponType> = new Set();
+  public equippedWeapon: WeaponType | null = null;
+
+  public get hasStaff(): boolean {
+    return this.ownedWeapons.has('STAFF');
+  }
+  public set hasStaff(val: boolean) {
+    if (val) this.ownedWeapons.add('STAFF');
+    else this.ownedWeapons.delete('STAFF');
+  }
+
+  public get staffEquipped(): boolean {
+    return this.equippedWeapon === 'STAFF';
+  }
+  public set staffEquipped(val: boolean) {
+    if (val) this.equipWeapon('STAFF');
+    else if (this.equippedWeapon === 'STAFF') this.unequipWeapon();
+  }
+
   public jumpCount = 0;
   public doubleJumpSpinTimer = 0;
   public isAttacking = false;
@@ -45,21 +64,44 @@ export class PlayerController {
   private defaultVisualRotationX = 0;
 
   public isArmed(): boolean {
-    return this.hasStaff && this.staffEquipped;
+    return this.equippedWeapon !== null;
   }
 
-  public equipStaff(): void {
-    if (!this.hasStaff) return;
-    this.staffEquipped = true;
-    this.animationController.setArmed(true);
+  public obtainWeapon(weaponId: WeaponType, autoEquip = true): void {
+    this.ownedWeapons.add(weaponId);
+    console.log(`[PlayerController] ⚔️ Weapon acquired: ${weaponId}`);
+    if (autoEquip) {
+      this.equipWeapon(weaponId);
+    }
+  }
+
+  public equipWeapon(weaponId: WeaponType): void {
+    if (!this.ownedWeapons.has(weaponId)) {
+      console.warn(`[PlayerController] Cannot equip unowned weapon: ${weaponId}`);
+      return;
+    }
+    this.equippedWeapon = weaponId;
+    const def = WEAPON_DEFINITIONS[weaponId];
+    this.animationController.setArmed(def.animationSet === 'WOOD');
     this.attachStaffToBack();
+    console.log(`[PlayerController] ⚔️ Equipped weapon: ${weaponId} (Mode: ${def.animationSet})`);
   }
 
-  public unequipStaff(): void {
-    this.staffEquipped = false;
+  public unequipWeapon(): void {
+    this.equippedWeapon = null;
     this.animationController.setArmed(false);
     if (this.staffBackMesh) this.staffBackMesh.visible = false;
     if (this.staffHandMesh) this.staffHandMesh.visible = false;
+    this.attackAura.stop();
+    console.log('[PlayerController] 🤲 Unequipped all weapons (Mode: NOWOOD)');
+  }
+
+  public equipStaff(): void {
+    this.equipWeapon('STAFF');
+  }
+
+  public unequipStaff(): void {
+    this.unequipWeapon();
   }
 
   constructor(modelOrGroup: THREE.Group, animationController: AnimationController) {
@@ -98,16 +140,18 @@ export class PlayerController {
       this.staffHandMesh.parent.remove(this.staffHandMesh);
     }
 
+    const def = WEAPON_DEFINITIONS.STAFF;
+
     // 2. Find Spine bone for back mounting (targeting Spine2 / Chest upper torso)
     let spineBone: THREE.Object3D | null = null;
     let rightHandBone: THREE.Object3D | null = null;
 
     this.mesh.traverse((child) => {
       const n = child.name.toLowerCase();
-      if ((n.includes('spine2') || n.includes('chest') || n.includes('upperchest')) && !spineBone) {
+      if (def.backAttachment.boneNameSubstrings.some(sub => n.includes(sub)) && !spineBone) {
         spineBone = child;
       }
-      if (n.includes('righthand') && !n.includes('thumb') && !n.includes('index') && !n.includes('middle') && !n.includes('ring') && !n.includes('pinky')) {
+      if (def.handAttachment.boneNameSubstrings.some(sub => n.includes(sub)) && !n.includes('thumb') && !n.includes('index') && !n.includes('middle') && !n.includes('ring') && !n.includes('pinky')) {
         rightHandBone = child;
       }
     });
@@ -115,7 +159,7 @@ export class PlayerController {
     if (!spineBone) {
       this.mesh.traverse((child) => {
         const n = child.name.toLowerCase();
-        if ((n.includes('spine1') || n.includes('spine')) && !spineBone) {
+        if (def.backAttachment.fallbackBoneNames.some(sub => n.includes(sub)) && !spineBone) {
           spineBone = child;
         }
       });
@@ -135,18 +179,17 @@ export class PlayerController {
       this.mesh.updateMatrixWorld(true);
       const spineWorldScale = new THREE.Vector3();
       (spineBone as THREE.Object3D).getWorldScale(spineWorldScale);
-      const invX = spineWorldScale.x > 0.00001 ? 1.0 / spineWorldScale.x : 1.0;
-      const invY = spineWorldScale.y > 0.00001 ? 1.0 / spineWorldScale.y : 1.0;
-      const invZ = spineWorldScale.z > 0.00001 ? 1.0 / spineWorldScale.z : 1.0;
-      backStaff.scale.set(invX, invY, invZ);
+      // Ensure STRICT UNIFORM scaling factor to eliminate any non-uniform deformation
+      const uniformInv = spineWorldScale.x > 0.00001 ? 1.0 / spineWorldScale.x : 1.0;
+      backStaff.scale.set(uniformInv, uniformInv, uniformInv);
 
       // Snug against the upper thoracic back, diagonal orientation (/): lower-left waist to upper-right shoulder
-      backStaff.position.set(0.02, 0.06, -0.11);
-      backStaff.rotation.set(0.08, 0.0, -0.65);
+      backStaff.position.copy(def.backAttachment.position);
+      backStaff.rotation.copy(def.backAttachment.rotation);
       (spineBone as THREE.Object3D).add(backStaff);
     } else {
       backStaff.position.set(0.02, 1.05, -0.11);
-      backStaff.rotation.set(0.08, 0.0, -0.65);
+      backStaff.rotation.copy(def.backAttachment.rotation);
       this.mesh.add(backStaff);
     }
 
@@ -162,13 +205,11 @@ export class PlayerController {
       this.mesh.updateMatrixWorld(true);
       const handWorldScale = new THREE.Vector3();
       (rightHandBone as THREE.Object3D).getWorldScale(handWorldScale);
-      const invX = handWorldScale.x > 0.00001 ? 1.0 / handWorldScale.x : 1.0;
-      const invY = handWorldScale.y > 0.00001 ? 1.0 / handWorldScale.y : 1.0;
-      const invZ = handWorldScale.z > 0.00001 ? 1.0 / handWorldScale.z : 1.0;
-      handStaff.scale.set(invX, invY, invZ);
+      const uniformInv = handWorldScale.x > 0.00001 ? 1.0 / handWorldScale.x : 1.0;
+      handStaff.scale.set(uniformInv, uniformInv, uniformInv);
 
-      handStaff.position.set(0, 0.06, 0);
-      handStaff.rotation.set(Math.PI * 0.5, 0, 0);
+      handStaff.position.copy(def.handAttachment.position);
+      handStaff.rotation.copy(def.handAttachment.rotation);
       (rightHandBone as THREE.Object3D).add(handStaff);
     } else {
       handStaff.position.set(0.4, 1.0, 0.3);

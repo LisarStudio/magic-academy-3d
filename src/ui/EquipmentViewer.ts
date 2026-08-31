@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { PlayerController } from '../player/PlayerController';
-import { StaffFactory } from './../player/StaffFactory';
+import { StaffFactory } from '../player/StaffFactory';
+import { type WeaponType, WEAPON_DEFINITIONS } from '../player/WeaponConfig';
 
 export class EquipmentViewer {
   private player: PlayerController;
@@ -55,7 +56,6 @@ export class EquipmentViewer {
   }
 
   public onPauseOpened(): void {
-    // Reset to default active tab when pause opens
     const tabPause = document.getElementById('tab-btn-pause');
     const tabEquip = document.getElementById('tab-btn-equipment');
     const contentPause = document.getElementById('pause-tab-content-pause');
@@ -80,8 +80,8 @@ export class EquipmentViewer {
   private initThreeScene(): void {
     if (!this.canvas) return;
 
-    const width = this.canvas.clientWidth || 300;
-    const height = this.canvas.clientHeight || 360;
+    const width = this.canvas.clientWidth || 280;
+    const height = this.canvas.clientHeight || 320;
 
     this.scene = new THREE.Scene();
 
@@ -119,7 +119,9 @@ export class EquipmentViewer {
   private rebuildPreviewModel(): void {
     if (!this.scene) return;
 
+    let previousRotationY = 0;
     if (this.previewMesh) {
+      previousRotationY = this.previewMesh.rotation.y;
       this.scene.remove(this.previewMesh);
       this.previewMesh = null;
     }
@@ -127,22 +129,23 @@ export class EquipmentViewer {
     // Clone character visual model hierarchy
     const cloned = this.player.visualModel.clone(true) as THREE.Group;
     cloned.position.set(0, 0, 0);
-    cloned.rotation.set(0, 0, 0);
+    cloned.rotation.set(0, previousRotationY, 0);
     this.previewMesh = cloned;
     this.scene.add(cloned);
 
-    // Attach staff on back if equipped
+    // Attach weapon socket using shared configuration
+    const def = WEAPON_DEFINITIONS.STAFF;
     let spineBone: THREE.Object3D | null = null;
     cloned.traverse((child) => {
       const n = child.name.toLowerCase();
-      if ((n.includes('spine2') || n.includes('chest') || n.includes('upperchest')) && !spineBone) {
+      if (def.backAttachment.boneNameSubstrings.some(sub => n.includes(sub)) && !spineBone) {
         spineBone = child;
       }
     });
     if (!spineBone) {
       cloned.traverse((child) => {
         const n = child.name.toLowerCase();
-        if ((n.includes('spine1') || n.includes('spine')) && !spineBone) spineBone = child;
+        if (def.backAttachment.fallbackBoneNames.some(sub => n.includes(sub)) && !spineBone) spineBone = child;
       });
     }
 
@@ -153,23 +156,23 @@ export class EquipmentViewer {
       cloned.updateMatrixWorld(true);
       const spineWorldScale = new THREE.Vector3();
       (spineBone as THREE.Object3D).getWorldScale(spineWorldScale);
-      const invX = spineWorldScale.x > 0.00001 ? 1.0 / spineWorldScale.x : 1.0;
-      const invY = spineWorldScale.y > 0.00001 ? 1.0 / spineWorldScale.y : 1.0;
-      const invZ = spineWorldScale.z > 0.00001 ? 1.0 / spineWorldScale.z : 1.0;
-      this.previewStaffBack.scale.set(invX, invY, invZ);
-      this.previewStaffBack.position.set(0.02, 0.06, -0.11);
-      this.previewStaffBack.rotation.set(0.08, 0.0, -0.65);
+      // Strictly uniform scale to guarantee zero deformation in 3D preview
+      const uniformInv = spineWorldScale.x > 0.00001 ? 1.0 / spineWorldScale.x : 1.0;
+      this.previewStaffBack.scale.set(uniformInv, uniformInv, uniformInv);
+      this.previewStaffBack.position.copy(def.backAttachment.position);
+      this.previewStaffBack.rotation.copy(def.backAttachment.rotation);
       (spineBone as THREE.Object3D).add(this.previewStaffBack);
     } else {
       this.previewStaffBack.position.set(0.02, 1.05, -0.11);
-      this.previewStaffBack.rotation.set(0.08, 0.0, -0.65);
+      this.previewStaffBack.rotation.copy(def.backAttachment.rotation);
       cloned.add(this.previewStaffBack);
     }
 
-    // Play Idle Animation
+    // Play Idle Animation reflecting real equipped state (WOOD vs NOWOOD)
     this.previewMixer = new THREE.AnimationMixer(cloned);
-    const idleActionName = this.player.staffEquipped ? 'Wukong_Wood_Idle' : 'Wukong_NoWood_Idle';
+    const idleActionName = this.player.staffEquipped ? 'Idle_Armed' : 'Idle_Unarmed';
     const fallbackIdle = (this.player.animationController as any).allActions?.get(idleActionName) ||
+                         (this.player.animationController as any).allActions?.get(this.player.staffEquipped ? 'Wukong_Wood_Idle' : 'Wukong_NoWood_Idle') ||
                          (this.player.animationController as any).allActions?.get('Idle');
 
     if (fallbackIdle && fallbackIdle.getClip) {
@@ -213,7 +216,7 @@ export class EquipmentViewer {
   };
 
   private bindDragEvents(canvas: HTMLCanvasElement): void {
-    // Mouse Drag Rotation
+    // Mouse Drag 360° Rotation
     canvas.addEventListener('mousedown', (e) => {
       this.isDragging = true;
       this.lastPointerX = e.clientX;
@@ -230,7 +233,7 @@ export class EquipmentViewer {
       this.isDragging = false;
     });
 
-    // Touch Drag Rotation
+    // Touch Drag 360° Rotation
     canvas.addEventListener('touchstart', (e) => {
       if (e.touches.length > 0) {
         this.isDragging = true;
@@ -256,62 +259,66 @@ export class EquipmentViewer {
 
     listEl.innerHTML = '';
 
-    if (!this.player.hasStaff) {
+    if (this.player.ownedWeapons.size === 0) {
       listEl.innerHTML = `
         <div class="equipment-empty-hint">
           <div style="font-size: 28px; margin-bottom: 8px;">🗝️</div>
           <div style="font-weight: bold; color: #ffd700; margin-bottom: 4px;">Sin Armas Equipables</div>
           <div style="font-size: 12px; color: #a0aec0; line-height: 1.4;">
-            Explora el templo superior y abre el cofre sagrado para obtener el <b>Báculo Mítico</b> del Rey Mono.
+            Explora el santuario superior y abre el cofre sagrado para obtener el <b>Báculo Mítico</b> del Rey Mono.
           </div>
         </div>
       `;
       return;
     }
 
-    const isEquipped = this.player.staffEquipped;
+    // Render all owned weapons in inventory
+    this.player.ownedWeapons.forEach((weaponId: WeaponType) => {
+      const def = WEAPON_DEFINITIONS[weaponId];
+      const isEquipped = this.player.equippedWeapon === weaponId;
 
-    const card = document.createElement('div');
-    card.className = `weapon-card ${isEquipped ? 'equipped' : ''}`;
-    card.innerHTML = `
-      <div class="weapon-card-header">
-        <div class="weapon-icon">🥢</div>
-        <div class="weapon-info">
-          <div class="weapon-name">Báculo Sagrado (Ruyi Jingu Bang)</div>
-          <div class="weapon-type">Arma de Combate Cuerpo a Cuerpo</div>
+      const card = document.createElement('div');
+      card.className = `weapon-card ${isEquipped ? 'equipped' : ''}`;
+      card.innerHTML = `
+        <div class="weapon-card-header">
+          <div class="weapon-icon">${def.icon}</div>
+          <div class="weapon-info">
+            <div class="weapon-name">${def.name}</div>
+            <div class="weapon-type">${def.category}</div>
+          </div>
+          <div class="weapon-badge ${isEquipped ? 'badge-equipped' : 'badge-stored'}">
+            ${isEquipped ? '✓ EQUIPADO' : 'NO EQUIPADO'}
+          </div>
         </div>
-        <div class="weapon-badge ${isEquipped ? 'badge-equipped' : 'badge-stored'}">
-          ${isEquipped ? 'EQUIPADO' : 'GUARDADO'}
+        <div class="weapon-desc">
+          ${def.description}
         </div>
-      </div>
-      <div class="weapon-desc">
-        Báculo legendario del Rey Mono forjado en cinabrio sagrado y oro imperial. Permite ejecutar la técnica de golpe marcial <i>atack_wood</i>.
-      </div>
-      <div class="weapon-actions">
-        <button id="btn-toggle-equip-staff" class="btn-equip-action ${isEquipped ? 'unequip' : 'equip'}">
-          ${isEquipped ? 'DESEQUIPAR BÁCULO' : 'EQUIPAR BÁCULO'}
-        </button>
-      </div>
-    `;
+        <div class="weapon-actions">
+          <button id="btn-toggle-${weaponId}" class="btn-equip-action ${isEquipped ? 'unequip' : 'equip'}">
+            ${isEquipped ? 'DESEQUIPAR' : 'EQUIPAR'}
+          </button>
+        </div>
+      `;
 
-    listEl.appendChild(card);
+      listEl.appendChild(card);
 
-    const btnToggle = document.getElementById('btn-toggle-equip-staff');
-    if (btnToggle) {
-      btnToggle.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      const btnToggle = card.querySelector(`#btn-toggle-${weaponId}`);
+      if (btnToggle) {
+        btnToggle.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
 
-        if (this.player.staffEquipped) {
-          this.player.unequipStaff();
-        } else {
-          this.player.equipStaff();
-        }
+          if (isEquipped) {
+            this.player.unequipWeapon();
+          } else {
+            this.player.equipWeapon(weaponId);
+          }
 
-        // Refresh UI & 3D preview
-        this.rebuildPreviewModel();
-        this.renderWeaponList();
-      });
-    }
+          // Instant real-time update in 3D preview and UI
+          this.rebuildPreviewModel();
+          this.renderWeaponList();
+        });
+      }
+    });
   }
 }

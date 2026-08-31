@@ -132,11 +132,7 @@ export class ChestCinematic {
     // ── STATE: EQUIP_STAFF ─────────────────────────────────────────────────
     console.log('[ChestCinematic] EQUIP_STAFF — screen black');
 
-    player.hasStaff = true;
-    player.staffEquipped = true;
-    player.setStaffVisibility(true);
-    player.attachStaffToBack();
-    player.animationController.setArmed(true);
+    player.obtainWeapon('STAFF', true);
 
     hud.setObjective('Explora el Reino y reúne las 3 llaves místicas');
     await this.wait(300);
