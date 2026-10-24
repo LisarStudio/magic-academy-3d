@@ -3,6 +3,7 @@ import * as THREE from 'three';
 export interface DayNightConfig {
   cycleDuration?: number; // Total cycle seconds (e.g. 240s = 4 mins)
   startPhase?: number;    // Initial phase 0.0 - 1.0 (0.0 = Night, 0.45 = Dawn, 0.70 = Sunrise, 0.90 = Morning)
+  renderer?: THREE.WebGLRenderer;
 }
 
 export class DayNightCycle {
@@ -10,6 +11,7 @@ export class DayNightCycle {
   private dirLight: THREE.DirectionalLight;
   private ambientLight: THREE.AmbientLight;
   private cloudsUniforms?: any;
+  private renderer?: THREE.WebGLRenderer;
 
   public cycleDuration: number;
   public time = 0;
@@ -23,6 +25,10 @@ export class DayNightCycle {
   private tempColor1 = new THREE.Color();
   private tempColor2 = new THREE.Color();
   private tempColor3 = new THREE.Color();
+  private tempColor4 = new THREE.Color();
+  private cloudDayColor = new THREE.Color(0xffebd2);
+  private cloudNightColor = new THREE.Color(0x354060);
+  private readonly nightLights = new Map<THREE.PointLight, number>();
 
   // Phase Color Palettes
   // 1. Night (0.00 - 0.25)
@@ -51,7 +57,6 @@ export class DayNightCycle {
 
   // 5. Morning Bright Blue (0.88 - 1.00)
   private readonly cMorningSky = new THREE.Color(0x5b9df2);
-  private readonly cMorningFog = new THREE.Color(0x70acf7);
   private readonly cMorningAmbient = new THREE.Color(0xb8dcff);
   private readonly cMorningDir = new THREE.Color(0xfffae0);
 
@@ -66,6 +71,7 @@ export class DayNightCycle {
     this.dirLight = dirLight;
     this.ambientLight = ambientLight;
     this.cloudsUniforms = cloudsUniforms;
+    this.renderer = config.renderer;
     this.cycleDuration = config.cycleDuration ?? 240.0;
     this.phase = config.startPhase ?? 0.05; // Start at night, slowly progress to dawn
     this.time = this.phase * this.cycleDuration;
@@ -100,6 +106,11 @@ export class DayNightCycle {
     this.sunMesh.add(this.sunLight);
   }
 
+  /** Registers warm architectural lights so they fade naturally with the sun. */
+  public registerNightLight(light: THREE.PointLight): void {
+    this.nightLights.set(light, light.intensity);
+  }
+
   public update(delta: number, cameraPosition: THREE.Vector3): void {
     this.time += delta;
     if (this.time >= this.cycleDuration) {
@@ -111,71 +122,36 @@ export class DayNightCycle {
     this.sunMesh.position.x = cameraPosition.x + 85;
     this.sunMesh.position.z = cameraPosition.z - 75;
 
-    let skyColor: THREE.Color;
-    let fogColor: THREE.Color;
-    let ambientColor: THREE.Color;
-    let dirColor: THREE.Color;
-    let ambientIntensity: number;
-    let dirIntensity: number;
-    let sunY = -15;
-    let sunOpacity = 0.0;
-
-    if (this.phase < 0.25) {
-      // Phase 1: Deep Night
-      const t = this.phase / 0.25;
-      skyColor = this.tempColor1.lerpColors(this.cNightSky, this.cNightSky, t);
-      fogColor = this.tempColor2.lerpColors(this.cNightFog, this.cNightFog, t);
-      ambientColor = this.tempColor3.lerpColors(this.cNightAmbient, this.cNightAmbient, t);
-      dirColor = this.cNightDir;
-      ambientIntensity = 1.0;
-      dirIntensity = 1.8;
-      sunY = -20;
-      sunOpacity = 0.0;
-    } else if (this.phase < 0.45) {
-      // Phase 2: Pre-Dawn Cosmic Indigo
-      const t = (this.phase - 0.25) / 0.20;
-      skyColor = this.tempColor1.lerpColors(this.cNightSky, this.cPreDawnSky, t);
-      fogColor = this.tempColor2.lerpColors(this.cNightFog, this.cPreDawnFog, t);
-      ambientColor = this.tempColor3.lerpColors(this.cNightAmbient, this.cPreDawnAmbient, t);
-      dirColor = this.cPreDawnDir;
-      ambientIntensity = 1.0 + t * 0.15;
-      dirIntensity = 1.8 + t * 0.2;
-      sunY = -20 + t * 15; // Rising towards horizon
-      sunOpacity = t * 0.3;
-    } else if (this.phase < 0.70) {
-      // Phase 3: Dawn Amber & Rose Awakening
-      const t = (this.phase - 0.45) / 0.25;
-      skyColor = this.tempColor1.lerpColors(this.cPreDawnSky, this.cDawnSky, t);
-      fogColor = this.tempColor2.lerpColors(this.cPreDawnFog, this.cDawnFog, t);
-      ambientColor = this.tempColor3.lerpColors(this.cPreDawnAmbient, this.cDawnAmbient, t);
-      dirColor = this.cDawnDir;
-      ambientIntensity = 1.15 + t * 0.25;
-      dirIntensity = 2.0 + t * 0.3;
-      sunY = -5 + t * 25; // Rises above mountains (Y: -5 -> 20)
-      sunOpacity = 0.3 + t * 0.6;
-    } else if (this.phase < 0.88) {
-      // Phase 4: Sunrise Golden Azure
-      const t = (this.phase - 0.70) / 0.18;
-      skyColor = this.tempColor1.lerpColors(this.cDawnSky, this.cSunriseSky, t);
-      fogColor = this.tempColor2.lerpColors(this.cDawnFog, this.cSunriseFog, t);
-      ambientColor = this.tempColor3.lerpColors(this.cDawnAmbient, this.cSunriseAmbient, t);
-      dirColor = this.cSunriseDir;
-      ambientIntensity = 1.40 + t * 0.15;
-      dirIntensity = 2.3 + t * 0.2;
-      sunY = 20 + t * 25; // Y: 20 -> 45
-      sunOpacity = 0.9 + t * 0.1;
-    } else {
-      // Phase 5: Morning Clear Blue
-      const t = (this.phase - 0.88) / 0.12;
-      skyColor = this.tempColor1.lerpColors(this.cSunriseSky, this.cMorningSky, t);
-      fogColor = this.tempColor2.lerpColors(this.cSunriseFog, this.cMorningFog, t);
-      ambientColor = this.tempColor3.lerpColors(this.cSunriseAmbient, this.cMorningAmbient, t);
-      dirColor = this.cMorningDir;
-      ambientIntensity = 1.55;
-      dirIntensity = 2.5;
-      sunY = 45 + t * 10;
-      sunOpacity = 1.0;
+    // Cyclic keyframes cover both dawn and sunset. Smoothstep interpolation
+    // keeps sky, fog, ambient and sun continuous even at phase wrap.
+    const keys = [
+      { p: 0.00, sky: this.cNightSky, fog: this.cNightFog, ambient: this.cNightAmbient, dir: this.cNightDir, ai: 1.0, di: 1.8, y: -20, sun: 0 },
+      { p: 0.18, sky: this.cNightSky, fog: this.cNightFog, ambient: this.cNightAmbient, dir: this.cNightDir, ai: 1.0, di: 1.8, y: -20, sun: 0 },
+      { p: 0.30, sky: this.cPreDawnSky, fog: this.cPreDawnFog, ambient: this.cPreDawnAmbient, dir: this.cPreDawnDir, ai: 1.05, di: 1.9, y: -12, sun: 0.15 },
+      { p: 0.42, sky: this.cDawnSky, fog: this.cDawnFog, ambient: this.cDawnAmbient, dir: this.cDawnDir, ai: 1.2, di: 2.1, y: 2, sun: 0.5 },
+      { p: 0.58, sky: this.cSunriseSky, fog: this.cSunriseFog, ambient: this.cSunriseAmbient, dir: this.cSunriseDir, ai: 1.4, di: 2.3, y: 25, sun: 0.9 },
+      { p: 0.76, sky: this.cMorningSky, fog: this.cMorningSky, ambient: this.cMorningAmbient, dir: this.cMorningDir, ai: 1.55, di: 2.5, y: 48, sun: 1 },
+      { p: 0.84, sky: this.cMorningSky, fog: this.cMorningSky, ambient: this.cMorningAmbient, dir: this.cMorningDir, ai: 1.55, di: 2.5, y: 48, sun: 1 },
+      { p: 0.92, sky: this.cDawnSky, fog: this.cDawnFog, ambient: this.cDawnAmbient, dir: this.cDawnDir, ai: 1.2, di: 2.1, y: 8, sun: 0.45 },
+      { p: 0.97, sky: this.cPreDawnSky, fog: this.cPreDawnFog, ambient: this.cPreDawnAmbient, dir: this.cPreDawnDir, ai: 1.05, di: 1.9, y: -10, sun: 0.1 },
+      { p: 1.00, sky: this.cNightSky, fog: this.cNightFog, ambient: this.cNightAmbient, dir: this.cNightDir, ai: 1.0, di: 1.8, y: -20, sun: 0 },
+    ];
+    let left = keys[0];
+    let right = keys[1];
+    for (let i = 1; i < keys.length; i++) {
+      if (this.phase <= keys[i].p) { left = keys[i - 1]; right = keys[i]; break; }
     }
+    const linearT = THREE.MathUtils.clamp((this.phase - left.p) / Math.max(0.0001, right.p - left.p), 0, 1);
+    const t = linearT * linearT * (3 - 2 * linearT);
+    const skyColor = this.tempColor1.lerpColors(left.sky, right.sky, t);
+    const fogColor = this.tempColor2.lerpColors(left.fog, right.fog, t);
+    const ambientColor = this.tempColor3.lerpColors(left.ambient, right.ambient, t);
+    const dirColor = this.tempColor4.lerpColors(left.dir, right.dir, t);
+    const ambientIntensity = THREE.MathUtils.lerp(left.ai, right.ai, t);
+    const dirIntensity = THREE.MathUtils.lerp(left.di, right.di, t);
+    const sunY = THREE.MathUtils.lerp(left.y, right.y, t);
+    const sunOpacity = THREE.MathUtils.lerp(left.sun, right.sun, t);
+    const daylight = THREE.MathUtils.smoothstep(this.phase, 0.27, 0.64) * (1 - THREE.MathUtils.smoothstep(this.phase, 0.82, 0.99));
 
     // Apply smooth interpolated lighting & fog
     if (this.scene.background instanceof THREE.Color) {
@@ -189,11 +165,15 @@ export class DayNightCycle {
 
     this.dirLight.color.copy(dirColor);
     this.dirLight.intensity = dirIntensity;
+    if (this.renderer) this.renderer.toneMappingExposure = THREE.MathUtils.lerp(1.12, 1.3, daylight);
     this.dirLight.position.set(
       cameraPosition.x + 40,
       35 + sunY * 0.5,
       cameraPosition.z - 30
     );
+    for (const [light, baseIntensity] of this.nightLights) {
+      light.intensity = baseIntensity * (0.35 + 0.65 * (1 - daylight));
+    }
 
     // Update Sun position & opacity
     this.sunMesh.position.y = sunY;
@@ -204,11 +184,7 @@ export class DayNightCycle {
     if (this.cloudsUniforms) {
       if (this.cloudsUniforms.uSkyColor) this.cloudsUniforms.uSkyColor.value.copy(skyColor);
       if (this.cloudsUniforms.uCloudColor) {
-        this.cloudsUniforms.uCloudColor.value.lerpColors(
-          new THREE.Color(0x354060),
-          new THREE.Color(0xffebd2),
-          Math.max(0, (this.phase - 0.3) / 0.6)
-        );
+        this.cloudsUniforms.uCloudColor.value.lerpColors(this.cloudNightColor, this.cloudDayColor, daylight);
       }
       if (this.cloudsUniforms.uMoonColor) {
         this.cloudsUniforms.uMoonColor.value.copy(dirColor);

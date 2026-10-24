@@ -354,7 +354,7 @@ export class LevelToyStory {
       this.sceneManager.dirLight,
       this.sceneManager.ambientLight,
       this.cloudsUniforms,
-      { cycleDuration: 240.0, startPhase: 0.05 }
+      { cycleDuration: 240.0, startPhase: 0.05, renderer: this.sceneManager.renderer }
     );
 
     // Add key visual hints
@@ -424,8 +424,9 @@ export class LevelToyStory {
 
     if (pavilionResult.status === 'fulfilled') {
       const pavilion = pavilionResult.value.scene;
-      placeAsset(pavilion, 'chinese_pavilion_intro_reference', 14.5, 20, 24);
-      placeAsset(pavilion, 'chinese_pavilion_west_landmark', 14.5, -55, -75);
+      const mainPavilion = placeAsset(pavilion, 'chinese_pavilion_intro_reference', 8.5, 20, 24);
+      placeAsset(pavilion, 'chinese_pavilion_west_landmark', 8.5, -55, -75);
+      this.addPavilionCollision(mainPavilion, 8.5);
       hideLegacyStructure(scene.getObjectByName('legacy_mountain_pagoda'));
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese Pavilion asset.', pavilionResult.reason);
@@ -433,10 +434,10 @@ export class LevelToyStory {
 
     if (templeResult.status === 'fulfilled') {
       const temple = templeResult.value.scene;
-      // The first real temple anchors the route beyond Gekko; the second reuses
-      // the same source mesh/materials for the staff sanctuary on the east ridge.
-      placeAsset(temple, 'chinese_temple_gekko_route', 28, 0, -40);
-      placeAsset(temple, 'chinese_temple_staff_sanctuary', 28, 55, -75);
+      // One temple anchors the route beyond Gekko. The duplicate eastern
+      // sanctuary was removed; its staff reward now lives in the pavilion.
+      const routeTemple = placeAsset(temple, 'chinese_temple_gekko_route', 24, 0, -40);
+      this.addTempleCollision(routeTemple, 24, 8);
       hideLegacyStructure(scene.getObjectByName('legacy_staff_citadel'));
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese Temple asset.', templeResult.reason);
@@ -449,15 +450,17 @@ export class LevelToyStory {
     }
 
     if (lampResult.status === 'fulfilled') {
-      const lamps = placeAsset(lampResult.value.scene, 'chinese_red_lamp_entry_pair', 7.4, 0, -26.8);
-      const bounds = new THREE.Box3().setFromObject(lamps);
-      const lampY = Math.max(1.6, bounds.max.y - bounds.min.y * 0.2);
-      const anchors = [new THREE.Vector3(-2.55, lampY, -26.8), new THREE.Vector3(2.55, lampY, -26.8)];
+      const lamps = placeAsset(lampResult.value.scene, 'chinese_red_lamp_entry_pair', 3.8, 0, -26.8);
+      // The supplied asset is a paired hanging lantern prop. Lift its group
+      // under the entry eave instead of leaving it at character/ground level.
+      lamps.position.y += 4.8;
+      const anchors = [new THREE.Vector3(-2.25, 5.1, -26.8), new THREE.Vector3(2.25, 5.1, -26.8)];
       anchors.forEach((position) => {
-        const light = new THREE.PointLight(0xffaa58, 1.2, 8, 2);
+        const light = new THREE.PointLight(0xffaa58, 0.9, 7, 2);
         light.position.copy(position);
         light.castShadow = false;
         scene.add(light);
+        this.dayNightCycle?.registerNightLight(light);
       });
       const mobile = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0;
       this.lampMoths = new LampMothSystem(scene, anchors, mobile);
@@ -469,9 +472,65 @@ export class LevelToyStory {
     warmFill.position.set(0, this.getTerrainHeight(0, -34) + 7, -34);
     warmFill.castShadow = false;
     scene.add(warmFill);
+    this.dayNightCycle?.registerNightLight(warmFill);
     this.player.setColliders(this.levelColliders);
     this.cameraController.setCollisionObjects(this.levelColliders);
 
+  }
+
+  /** Lightweight static blockers around the pavilion; the entrances stay open. */
+  private addPavilionCollision(asset: THREE.Object3D, targetWidth: number): void {
+    const bounds = new THREE.Box3().setFromObject(asset);
+    const center = bounds.getCenter(new THREE.Vector3());
+    const half = targetWidth * 0.5;
+    const ground = bounds.min.y;
+    const mat = new THREE.MeshBasicMaterial({ visible: false });
+    const addWall = (w: number, h: number, d: number, x: number, z: number) => {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      wall.position.set(x, ground + h / 2, z);
+      wall.name = 'pavilion_static_collision';
+      this.sceneManager.scene.add(wall);
+      this.levelColliders.push(wall);
+    };
+    const doorWidth = 2.8;
+    addWall(0.35, 2.7, targetWidth, center.x - half, center.z);
+    addWall(0.35, 2.7, targetWidth, center.x + half, center.z);
+    addWall(half - doorWidth / 2, 2.7, 0.35, center.x - (half + doorWidth / 2) / 2, center.z + half);
+    addWall(half - doorWidth / 2, 2.7, 0.35, center.x + (half + doorWidth / 2) / 2, center.z + half);
+    addWall(targetWidth, 2.7, 0.35, center.x, center.z - half);
+    const columnHeight = Math.min(4.8, bounds.max.y - ground);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const column = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.38, columnHeight, 8), mat);
+      column.position.set(center.x + sx * half * 0.34, ground + columnHeight / 2, center.z + sz * half * 0.34);
+      column.name = 'pavilion_column_static_collision';
+      this.sceneManager.scene.add(column);
+      this.levelColliders.push(column);
+    }
+  }
+
+  /** Simple perimeter colliders preserve a walk-through entrance and avoid
+   * raycasting the high-poly decorative GLB on every player frame. */
+  private addTempleCollision(asset: THREE.Object3D, targetWidth: number, entranceWidth: number): void {
+    const bounds = new THREE.Box3().setFromObject(asset);
+    const center = bounds.getCenter(new THREE.Vector3());
+    const half = targetWidth * 0.5;
+    const ground = bounds.min.y;
+    const height = Math.min(6.5, bounds.max.y - ground);
+    const thickness = 0.45;
+    const mat = new THREE.MeshBasicMaterial({ visible: false });
+    const add = (w: number, d: number, x: number, z: number) => {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(w, height, d), mat);
+      wall.position.set(x, ground + height / 2, z);
+      wall.name = 'chinese_temple_static_collision';
+      this.sceneManager.scene.add(wall);
+      this.levelColliders.push(wall);
+    };
+    add(thickness, targetWidth, center.x - half, center.z);
+    add(thickness, targetWidth, center.x + half, center.z);
+    add(targetWidth, thickness, center.x, center.z - half);
+    const segment = (targetWidth - entranceWidth) / 2;
+    add(segment, thickness, center.x - half + segment / 2, center.z + half);
+    add(segment, thickness, center.x + half - segment / 2, center.z + half);
   }
 
   private createGrassGroundTexture(): THREE.CanvasTexture {
@@ -895,7 +954,10 @@ export class LevelToyStory {
       });
     })();
 
-    // 2. Central Castle / Main Building (visible from almost everywhere)
+    // 2. Central Castle / Main Building (legacy blockout, superseded by the GLB).
+    // Keep a snapshot so the old stacked floors/stairs can be removed as one
+    // coherent set while the separate curiosity vault and switch remain alive.
+    const sceneBeforeLegacyCastle = new Set(scene.children);
 
 
     // ── Castle: 28w × 28d × 15h Monumental Imperial Palace, centered at (0, 0, -40) ──
@@ -1133,7 +1195,9 @@ export class LevelToyStory {
 
     // ── DRAGON SWITCH (Mezzanine Floor Balcony: x = -8.5, y = 5.2, z = -40) ──
     const switchGroup = new THREE.Group();
-    switchGroup.position.set(-8.5, 5.2, castleCenterZ);
+    // The old switch was stranded on the removed mezzanine. Put it beside the
+    // hatch at ground level so the curiosity chain remains reachable.
+    switchGroup.position.set(-14.0, this.getTerrainHeight(-14.0, -34.1), -34.1);
 
     const switchPedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 0.9, 8), stoneMat);
     switchPedestal.position.y = 0.45;
@@ -1162,6 +1226,16 @@ export class LevelToyStory {
 
     scene.add(switchGroup);
     this.dragonSwitchMesh = switchGroup;
+
+    const obsoleteCastleObjects = scene.children.filter((object) =>
+      !sceneBeforeLegacyCastle.has(object) && object !== switchGroup
+    );
+    const obsoleteCastleDescendants = new Set<THREE.Object3D>();
+    obsoleteCastleObjects.forEach((object) => {
+      object.traverse((child) => obsoleteCastleDescendants.add(child));
+      scene.remove(object);
+    });
+    this.levelColliders = this.levelColliders.filter((collider) => !obsoleteCastleDescendants.has(collider));
 
     // ── SUBTERRANEAN LAVA VAULT & TRAPDOOR (x = -10.0 to -35.0, z = -26.0 to -54.0, y = -6.0) ──
     this.buildCuriosityVault(scene, stoneMat, castleCenterZ);
@@ -1809,7 +1883,7 @@ export class LevelToyStory {
     // The replacement temple is a visual GLB without gameplay collision or an
     // interior stair route. Keep the staff reward on the ground at its entrance
     // so the original reward remains reachable without jumping or noclipping.
-    const staffChestPosition = new THREE.Vector3(55.0, this.getTerrainHeight(55.0, -57.0) + 0.05, -57.0);
+    const staffChestPosition = new THREE.Vector3(20.0, this.getTerrainHeight(20.0, 24.0) + 1.75, 23.0);
     this.staffChest = new TreasureChest(staffChestPosition, Math.PI);
     scene.add(this.staffChest.mesh);
     this.chests.push(this.staffChest);
@@ -1819,14 +1893,14 @@ export class LevelToyStory {
     // ── Runic Fast-Travel Portal Network (PortalPair_01) ───────────────────────
     // Portal A sits beside the sanctuary path at ground level; the replaced
     // visual-only temple no longer provides a traversable balcony or stairs.
-    const staffPortalY = this.getTerrainHeight(62.5, -75.0) + 0.05;
+    const staffPortalY = this.getTerrainHeight(25.0, 24.0) + 0.05;
     const portalA = new RunicPortal({
       id: 'Portal_A_StaffTemple',
       pairId: 'PortalPair_01',
       displayName: 'Santuario del Báculo',
-      position: new THREE.Vector3(62.5, staffPortalY, -75.0),
+      position: new THREE.Vector3(25.0, staffPortalY, 24.0),
       rotationY: -Math.PI / 2,
-      exitPoint: new THREE.Vector3(59.8, this.getTerrainHeight(59.8, -75.0) + 0.05, -75.0),
+      exitPoint: new THREE.Vector3(22.0, this.getTerrainHeight(22.0, 24.0) + 0.05, 24.0),
       exitYaw: -Math.PI / 2,
       unlockedByDefault: false,
     }, scene, this.levelColliders);
@@ -1854,9 +1928,9 @@ export class LevelToyStory {
     const specialPotPositions = [
       new THREE.Vector3(-10, 0, 5),     // Near start
       new THREE.Vector3(-20, 0, -50),   // Far left field
-      new THREE.Vector3(12, 5.0, -45),  // Second floor balcony
+      new THREE.Vector3(18, this.getTerrainHeight(18, -48), -48),  // East route beside the temple
       new THREE.Vector3(45, 0, -10),    // North of boss arena
-      new THREE.Vector3(-2, 10.2, -44)  // On top of the castle roof tower
+      new THREE.Vector3(-18, this.getTerrainHeight(-18, -48), -48)  // West temple approach
     ];
 
     specialPotPositions.forEach((pos) => {
@@ -1890,7 +1964,7 @@ export class LevelToyStory {
     const gargoyleConfigs = [
       { pos: new THREE.Vector3(-12, 0, -25), platforms: [] },
       { pos: new THREE.Vector3(12, 0, -48), platforms: [] },
-      { pos: new THREE.Vector3(-10, 5.0, -48), platforms: [] },
+      { pos: new THREE.Vector3(-10, this.getTerrainHeight(-10, -48), -48), platforms: [] },
       { pos: new THREE.Vector3(30, 0, -15), platforms: [] }
     ];
 
@@ -1917,8 +1991,8 @@ export class LevelToyStory {
   private setupCheckpoints(): void {
     this.checkpointManager.addCheckpoint(0, new THREE.Vector3(0, 0.2, 10), Math.PI); // Spawn
     this.checkpointManager.addCheckpoint(1, new THREE.Vector3(0, 0.2, -22), Math.PI); // Castle Entrance
-    this.checkpointManager.addCheckpoint(2, new THREE.Vector3(0, 5.2, -40), Math.PI); // Mezzanine
-    this.checkpointManager.addCheckpoint(3, new THREE.Vector3(0, 10.0, -44), Math.PI); // Roof
+    this.checkpointManager.addCheckpoint(2, new THREE.Vector3(20, this.getTerrainHeight(20, 18) + 0.2, 18), Math.PI); // Pavilion approach
+    this.checkpointManager.addCheckpoint(3, new THREE.Vector3(-55, this.getTerrainHeight(-55, -68) + 0.2, -68), Math.PI); // West ridge pavilion
     this.checkpointManager.addCheckpoint(4, new THREE.Vector3(30, 0.2, -40), Math.PI * 0.5); // Boss Arena Entrance
   }
 
@@ -1935,7 +2009,7 @@ export class LevelToyStory {
       new THREE.Vector3(-30, 0, -35),
       new THREE.Vector3(30, 0, -35),
       new THREE.Vector3(0, 0, -45),
-      new THREE.Vector3(12.0, 5.5, -45.0), // Reubicado al balcón/segundo piso del palacio central (lejos del cofre)
+      new THREE.Vector3(18.0, 0, -46.0), // East approach, ground level
     ];
 
     const orbMat = new THREE.MeshStandardMaterial({
@@ -1983,25 +2057,23 @@ export class LevelToyStory {
 
     // 3. Grand East Staircase ascending to Mezzanine (6 coins)
     for (let i = 0; i < 6; i++) {
-      coinPositions.push(new THREE.Vector3(8.5, 1.0 + i * 0.8, -29.0 - i * 2.6));
+      const x = 8.5;
+      const z = -29.0 - i * 2.6;
+      coinPositions.push(new THREE.Vector3(x, this.getTerrainHeight(x, z) + 0.6, z));
     }
 
-    // 4. Mezzanine Balcony Walkway (8 coins at y = 5.6)
-    coinPositions.push(new THREE.Vector3(-8.0, 5.6, -44.0));
-    coinPositions.push(new THREE.Vector3(-8.0, 5.6, -36.0));
-    coinPositions.push(new THREE.Vector3(-4.0, 5.6, -48.0));
-    coinPositions.push(new THREE.Vector3(0.0, 5.6, -48.0));
-    coinPositions.push(new THREE.Vector3(4.0, 5.6, -48.0));
-    coinPositions.push(new THREE.Vector3(8.0, 5.6, -44.0));
-    coinPositions.push(new THREE.Vector3(4.0, 5.6, -34.0));
-    coinPositions.push(new THREE.Vector3(-4.0, 5.6, -34.0));
+    // 4. Temple-side ground route (the old mezzanine was removed)
+    [[-8, -44], [-8, -36], [-4, -48], [0, -51], [4, -48], [8, -44], [4, -34], [-4, -34]].forEach(([x, z]) => {
+      coinPositions.push(new THREE.Vector3(x, this.getTerrainHeight(x, z) + 0.6, z));
+    });
 
-    // 5. Upper Roof Staircase & Terrace (6 coins)
+    // 5. West/east ground approaches replace the removed rooftop path.
     for (let i = 0; i < 4; i++) {
-      coinPositions.push(new THREE.Vector3(7.0 - i * 3.0, 5.8 + i * 1.2, -48.0));
+      const x = 7.0 - i * 3.0;
+      const z = -53.0 - i * 2.0;
+      coinPositions.push(new THREE.Vector3(x, this.getTerrainHeight(x, z) + 0.6, z));
     }
-    coinPositions.push(new THREE.Vector3(-3.0, 10.6, -42.0));
-    coinPositions.push(new THREE.Vector3(3.0, 10.6, -42.0));
+    [[-3, -58], [3, -58]].forEach(([x, z]) => coinPositions.push(new THREE.Vector3(x, this.getTerrainHeight(x, z) + 0.6, z)));
 
     // 6. Boss Arena & East Garden Pathway (6 coins)
     coinPositions.push(new THREE.Vector3(18.0, 0.6, -35.0));
@@ -2034,12 +2106,9 @@ export class LevelToyStory {
     const validateCoinPosition = (pos: THREE.Vector3): THREE.Vector3 => {
       const checkedPos = pos.clone();
 
-      // 1. Surface Height Check (Castle slabs vs Balconies vs Roofs vs Outdoor Terrain)
-      if (Math.abs(checkedPos.x) <= 14 && checkedPos.z >= -54 && checkedPos.z <= -26 && checkedPos.y < 2.0) {
-        checkedPos.y = 0.85; // Sits 0.35m above Castle ground floor slab at y = 0.5
-      } else if (checkedPos.y < 1.5) {
-        checkedPos.y = this.getTerrainHeight(checkedPos.x, checkedPos.z) + 0.6;
-      }
+      // All exploration collectibles now sit on the real terrain surface;
+      // no coin remains suspended on removed mezzanine/roof geometry.
+      checkedPos.y = this.getTerrainHeight(checkedPos.x, checkedPos.z) + 0.6;
 
       // 2. Horizontal Wall Collision Test (Cast rays in 4 cardinal directions to ensure no clipping inside walls)
       const raycaster = new THREE.Raycaster();
@@ -2128,9 +2197,9 @@ export class LevelToyStory {
       new THREE.Vector3(10, this.getTerrainHeight(10, -65), -65)
     ]);
 
-    // Guards on the 2nd floor (2 crabs) - sitting cleanly on 2nd floor slab
-    const patrol4 = new EnemyController('crab_second_floor_1', new THREE.Vector3(-6, 5.0, -40));
-    const patrol5 = new EnemyController('crab_second_floor_2', new THREE.Vector3(6, 5.0, -40));
+    // Former upper-floor guards remain on the temple approach at ground height.
+    const patrol4 = new EnemyController('crab_second_floor_1', new THREE.Vector3(-10, this.getTerrainHeight(-10, -52), -52));
+    const patrol5 = new EnemyController('crab_second_floor_2', new THREE.Vector3(10, this.getTerrainHeight(10, -52), -52));
 
     // Boss Giant Crab in the Sand Arena (firmly grounded at y = 0.2)
     const bossY = 0.2;
@@ -2229,8 +2298,8 @@ export class LevelToyStory {
 
   // Spawns the physical key objects in the world for 3D collection (except Gekko's which is dialog based)
   private spawnKeysInWorld(): void {
-    // Key 3: Platforming challenge (Castle Roof)
-    this.spawn3DKey('key3_platform', new THREE.Vector3(0, 10.8, -44));
+    // Key 3 remains in the temple route, moved off the removed castle roof.
+    this.spawn3DKey('key3_platform', new THREE.Vector3(15, this.getTerrainHeight(15, -47) + 0.8, -47));
   }
 
   public spawn3DKey(id: string, pos: THREE.Vector3): void {
