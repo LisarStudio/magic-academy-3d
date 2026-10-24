@@ -8,8 +8,10 @@ export class AudioManager {
   } as const;
   private readonly musicUrls = new Map<keyof typeof this.musicPaths, string>();
   private musicPreparation: Promise<void> | null = null;
+  private gameplayMusicPreparation: Promise<void> | null = null;
   private bossMusicPreparation: Promise<void> | null = null;
   private musicPrepared = false;
+  private readonly preparedGameplayTracks = new Set<'intro' | 'gameplayB'>();
   private musicMode: 'intro' | 'gameplay' | 'boss' | null = null;
   private currentMusicTrack: keyof typeof this.musicPaths | null = null;
   private returnTrack: 'intro' | 'gameplayB' = 'intro';
@@ -87,46 +89,30 @@ export class AudioManager {
     if (this.musicPreparation) return this.musicPreparation;
 
     const base = import.meta.env.BASE_URL;
-    this.musicPreparation = Promise.all(
-      Object.entries(this.musicPaths).filter(([key]) => key !== 'crabBoss').map(async ([key, path]) => {
-        const response = await this.fetchMusicAsset(`${base}${path}`);
-        if (!response.ok) throw new Error(`Could not load music asset: ${path} (${response.status})`);
-        const blob = await response.blob();
-        this.musicUrls.set(key as keyof typeof this.musicPaths, URL.createObjectURL(blob));
-      })
-    ).then(async () => {
+    const introPath = this.musicPaths.intro;
+    this.musicPreparation = this.fetchMusicAsset(`${base}${introPath}`).then(async (response) => {
+      if (!response.ok) throw new Error(`Could not load music asset: ${introPath} (${response.status})`);
+      this.musicUrls.set('intro', URL.createObjectURL(await response.blob()));
       this.setMusicSource('intro');
       this.bgmAudio.loop = true;
-      await new Promise<void>((resolve, reject) => {
-        if (this.bgmAudio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
-          resolve();
-          return;
-        }
-        const onCanPlay = () => { cleanup(); resolve(); };
-        const onError = () => { cleanup(); reject(new Error('The intro music could not be decoded.')); };
-        const cleanup = () => {
-          this.bgmAudio.removeEventListener('canplay', onCanPlay);
-          this.bgmAudio.removeEventListener('error', onError);
-        };
-        this.bgmAudio.addEventListener('canplay', onCanPlay, { once: true });
-        this.bgmAudio.addEventListener('error', onError, { once: true });
-      });
-      await Promise.all((['gameplayB'] as const).map((track) => {
-        const url = this.musicUrls.get(track);
-        return url ? this.preflightTrack(url) : Promise.reject(new Error(`Missing prepared music: ${track}`));
-      }));
-      // Source selection above is done only before playback or when a gameplay track ends.
-      // The intro starts at its first prepared sample; state changes never call this path.
+      await this.waitForMediaReady(this.bgmAudio);
       this.bgmAudio.currentTime = 0;
+      this.preparedGameplayTracks.add('intro');
       this.musicPrepared = true;
-      // This large, encounter-only theme must not hold the intro screen open.
-      // Download/decode it in the background while the player starts the level.
+      // The intro's own score is ready before the intro starts. The second
+      // playlist track decodes in the background and becomes eligible only
+      // after its preflight succeeds, so it never delays the first frame.
+      void this.prepareGameplayMusicAsset().catch((error: unknown) => {
+        console.warn('[AudioManager] Gameplay playlist track is not ready yet; it will retry later.', error);
+      });
       void this.prepareBossMusicAsset().catch((error: unknown) => {
         console.warn('[AudioManager] Crab theme is not ready yet; it will retry when needed.', error);
       });
     }).catch((error: unknown) => {
-      for (const url of this.musicUrls.values()) URL.revokeObjectURL(url);
-      this.musicUrls.clear();
+      const url = this.musicUrls.get('intro');
+      if (url) URL.revokeObjectURL(url);
+      this.musicUrls.delete('intro');
+      this.preparedGameplayTracks.delete('intro');
       throw error;
     }).finally(() => {
       this.musicPreparation = null;
@@ -153,6 +139,9 @@ export class AudioManager {
 
   public startGameplayMusic(): void {
     if (!this.musicPrepared) return;
+    void this.prepareGameplayMusicAsset().catch((error: unknown) => {
+      console.warn('[AudioManager] Gameplay playlist track preparation failed.', error);
+    });
     void this.prepareBossMusicAsset().catch((error: unknown) => {
       console.warn('[AudioManager] Background crab theme preparation failed.', error);
     });
@@ -177,8 +166,31 @@ export class AudioManager {
   }
 
   private pickGameplayTrack(exclude?: 'intro' | 'gameplayB'): 'intro' | 'gameplayB' {
-    const choices: Array<'intro' | 'gameplayB'> = exclude ? (exclude === 'intro' ? ['gameplayB'] : ['intro']) : ['intro', 'gameplayB'];
-    return choices[Math.floor(Math.random() * choices.length)];
+    const ready = Array.from(this.preparedGameplayTracks);
+    const alternate = exclude ? ready.filter((track) => track !== exclude) : ready;
+    const choices = alternate.length ? alternate : ready;
+    return choices[Math.floor(Math.random() * choices.length)] ?? 'intro';
+  }
+
+  private prepareGameplayMusicAsset(): Promise<void> {
+    if (this.preparedGameplayTracks.has('gameplayB')) return Promise.resolve();
+    if (this.gameplayMusicPreparation) return this.gameplayMusicPreparation;
+    const base = import.meta.env.BASE_URL;
+    const path = this.musicPaths.gameplayB;
+    this.gameplayMusicPreparation = this.fetchMusicAsset(`${base}${path}`).then(async (response) => {
+      if (!response.ok) throw new Error(`Could not load music asset: ${path} (${response.status})`);
+      const url = URL.createObjectURL(await response.blob());
+      this.musicUrls.set('gameplayB', url);
+      try {
+        await this.preflightTrack(url);
+        this.preparedGameplayTracks.add('gameplayB');
+      } catch (error) {
+        URL.revokeObjectURL(url);
+        this.musicUrls.delete('gameplayB');
+        throw error;
+      }
+    }).finally(() => { this.gameplayMusicPreparation = null; });
+    return this.gameplayMusicPreparation;
   }
 
   public async startBossMusic(): Promise<void> {
