@@ -22,6 +22,7 @@ import { MovingPlatform } from '../world/MovingPlatform';
 import { KeyPickupSequence, type KeyData } from '../player/KeyPickupSequence';
 import { RunicPortal, PortalManager } from '../world/RunicPortal';
 import { DayNightCycle } from '../world/DayNightCycle';
+import { LampMothSystem } from '../world/LampMothSystem';
 
 export class LevelToyStory {
   private sceneManager: SceneManager;
@@ -50,8 +51,9 @@ export class LevelToyStory {
     key1_gekko: false, // 50 coins quest
     key2_boss: false,  // boss arena
     key3_platform: false, // high tower
-    key4_gargoyles: false, // 4 gargoyles lit
-    key5_pots: false // 5 special pots smashed
+    key4_curiosity: false,
+    key5_pots: false,
+    key6_gargoyles: false
   };
   public totalKeysCount = 0;
 
@@ -68,6 +70,14 @@ export class LevelToyStory {
   private grassSectors: THREE.InstancedMesh[] = [];
   private grassCullElapsed = 0;
   private cloudsUniforms: any = null;
+  private lampMoths: LampMothSystem | null = null;
+  private curiosityChest!: TreasureChest;
+  public curiosityChestOpen = false;
+  private curiosityKeySpawned = false;
+  private hatchPivot!: THREE.Group;
+  private hatchOpenProgress = 0;
+  private hatchTarget = 0;
+  private leverTarget = Math.PI / 4;
 
   public getTerrainHeight(x: number, z: number): number {
     // Gameplay zones (Castle fortress, arena, front entrance road) are strictly flat at y = 0.0
@@ -101,7 +111,8 @@ export class LevelToyStory {
     key1_gekko: { id: 'key1_gekko', name: 'Llave de la Riqueza (Gekko)', color: 0xff6600, emissiveColor: 0xff8800, obtained: false },
     key2_boss: { id: 'key2_boss', name: 'Llave de la Valentía (Jefe Cangrejo)', color: 0xff2200, emissiveColor: 0xff4400, obtained: false },
     key3_platform: { id: 'key3_platform', name: 'Llave de Plataformas (Tejado)', color: 0x00e5ff, emissiveColor: 0x00bfff, obtained: false },
-    key4_gargoyles: { id: 'key4_gargoyles', name: 'Llave del Secreto (Gárgolas)', color: 0xa855f7, emissiveColor: 0x9333ea, obtained: false },
+    key4_curiosity: { id: 'key4_curiosity', name: 'Llave de la Curiosidad', color: 0xffdc62, emissiveColor: 0xffb51b, obtained: false },
+    key6_gargoyles: { id: 'key6_gargoyles', name: 'Llave del Secreto (Gargolas)', color: 0xa855f7, emissiveColor: 0x9333ea, obtained: false },
     key5_pots: { id: 'key5_pots', name: 'Llave de Destrucción (Gemas)', color: 0xffd700, emissiveColor: 0xffaa00, obtained: false },
   };
 
@@ -360,9 +371,12 @@ export class LevelToyStory {
   private async loadIntroEnvironmentAssets(): Promise<void> {
     const base = import.meta.env.BASE_URL + 'assets/environment/';
     const loader = new GLTFLoader();
-    const pavilionResult = await Promise.allSettled([
+    const [pavilionResult, templeResult, lionResult, lampResult] = await Promise.allSettled([
       loader.loadAsync(`${base}chinese-pavilion.glb`),
-    ]).then(([result]) => result);
+      loader.loadAsync(`${base}wukong-chinese-temple.glb`),
+      loader.loadAsync(`${base}wukong-porcelain-lion.glb`),
+      loader.loadAsync(`${base}wukong-red-lamp.glb`),
+    ]);
 
     const terrain = this.sceneManager.scene.getObjectByName('world-terrain') as THREE.Mesh | null;
     if (terrain && terrain.material instanceof THREE.MeshStandardMaterial) {
@@ -376,39 +390,87 @@ export class LevelToyStory {
       terrain.material.needsUpdate = true;
     }
 
-    if (pavilionResult.status === 'fulfilled') {
-      const pavilion = pavilionResult.value.scene;
-      pavilion.name = 'intro_chinese_pavilion';
-      // Keep the pavilion in the same visual scale as Wukong and adjacent
-      // palace modules. The intro itself is a separate video and stays untouched.
-      pavilion.scale.setScalar(0.9);
-      const centerX = 20;
-      const centerZ = 24;
-      const slopeX = (this.getTerrainHeight(centerX + 1, centerZ) - this.getTerrainHeight(centerX - 1, centerZ)) / 2;
-      const slopeZ = (this.getTerrainHeight(centerX, centerZ + 1) - this.getTerrainHeight(centerX, centerZ - 1)) / 2;
-      pavilion.rotation.set(-Math.atan(slopeZ), 0, Math.atan(slopeX));
-      pavilion.updateMatrixWorld(true);
-
-      const bounds = new THREE.Box3().setFromObject(pavilion);
+    const scene = this.sceneManager.scene;
+    const hideLegacyStructure = (group?: THREE.Object3D | null): void => {
+      if (!group) return;
+      const descendants = new Set<THREE.Object3D>();
+      group.traverse((object) => descendants.add(object));
+      group.visible = false;
+      this.levelColliders = this.levelColliders.filter((collider) => !descendants.has(collider));
+    };
+    const placeAsset = (source: THREE.Object3D, name: string, targetWidth: number, x: number, z: number, rotationY = 0): THREE.Object3D => {
+      const asset = source.clone(true);
+      asset.name = name;
+      const rawBounds = new THREE.Box3().setFromObject(asset);
+      const rawSize = rawBounds.getSize(new THREE.Vector3());
+      const horizontalWidth = Math.max(rawSize.x, rawSize.z, 0.001);
+      asset.scale.setScalar(targetWidth / horizontalWidth);
+      asset.rotation.y = rotationY;
+      asset.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(asset);
       const center = bounds.getCenter(new THREE.Vector3());
-      pavilion.position.set(centerX - center.x, this.getTerrainHeight(centerX, centerZ) - bounds.min.y, centerZ - center.z);
-      pavilion.updateMatrixWorld(true);
-      pavilion.traverse((child) => {
+      const groundY = this.getTerrainHeight(x, z);
+      asset.position.set(x - center.x, groundY - bounds.min.y, z - center.z);
+      asset.updateMatrixWorld(true);
+      asset.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
           child.castShadow = false;
           child.receiveShadow = true;
         }
       });
-      this.sceneManager.scene.add(pavilion);
-      this.levelColliders.push(pavilion);
+      scene.add(asset);
+      return asset;
+    };
 
-      const warmFill = new THREE.PointLight(0xffb56b, 4.5, 28, 2);
-      warmFill.position.set(centerX, this.getTerrainHeight(centerX, centerZ) + 5, centerZ);
-      warmFill.castShadow = false;
-      this.sceneManager.scene.add(warmFill);
+    if (pavilionResult.status === 'fulfilled') {
+      const pavilion = pavilionResult.value.scene;
+      placeAsset(pavilion, 'chinese_pavilion_intro_reference', 14.5, 20, 24);
+      placeAsset(pavilion, 'chinese_pavilion_west_landmark', 14.5, -55, -75);
+      hideLegacyStructure(scene.getObjectByName('legacy_mountain_pagoda'));
     } else {
-      console.warn('[LevelToyStory] Could not load the intro Chinese Pavilion.', pavilionResult.reason);
+      console.warn('[LevelToyStory] Could not load the Chinese Pavilion asset.', pavilionResult.reason);
     }
+
+    if (templeResult.status === 'fulfilled') {
+      const temple = templeResult.value.scene;
+      // The first real temple anchors the route beyond Gekko; the second reuses
+      // the same source mesh/materials for the staff sanctuary on the east ridge.
+      placeAsset(temple, 'chinese_temple_gekko_route', 28, 0, -40);
+      placeAsset(temple, 'chinese_temple_staff_sanctuary', 28, 55, -75);
+      hideLegacyStructure(scene.getObjectByName('legacy_staff_citadel'));
+    } else {
+      console.warn('[LevelToyStory] Could not load the Chinese Temple asset.', templeResult.reason);
+    }
+
+    if (lionResult.status === 'fulfilled') {
+      placeAsset(lionResult.value.scene, 'chinese_porcelain_guardian_pair', 7.6, 0, -21.7);
+    } else {
+      console.warn('[LevelToyStory] Could not load the Chinese Porcelain Lion asset.', lionResult.reason);
+    }
+
+    if (lampResult.status === 'fulfilled') {
+      const lamps = placeAsset(lampResult.value.scene, 'chinese_red_lamp_entry_pair', 7.4, 0, -26.8);
+      const bounds = new THREE.Box3().setFromObject(lamps);
+      const lampY = Math.max(1.6, bounds.max.y - bounds.min.y * 0.2);
+      const anchors = [new THREE.Vector3(-2.55, lampY, -26.8), new THREE.Vector3(2.55, lampY, -26.8)];
+      anchors.forEach((position) => {
+        const light = new THREE.PointLight(0xffaa58, 1.2, 8, 2);
+        light.position.copy(position);
+        light.castShadow = false;
+        scene.add(light);
+      });
+      const mobile = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0;
+      this.lampMoths = new LampMothSystem(scene, anchors, mobile);
+    } else {
+      console.warn('[LevelToyStory] Could not load the Chinese red lamp asset.', lampResult.reason);
+    }
+
+    const warmFill = new THREE.PointLight(0xffb56b, 3.5, 26, 2);
+    warmFill.position.set(0, this.getTerrainHeight(0, -34) + 7, -34);
+    warmFill.castShadow = false;
+    scene.add(warmFill);
+    this.player.setColliders(this.levelColliders);
+    this.cameraController.setCollisionObjects(this.levelColliders);
 
   }
 
@@ -842,11 +904,22 @@ export class LevelToyStory {
     const goldMat = new THREE.MeshStandardMaterial({ color: 0xf5c842, metalness: 0.8, roughness: 0.2 });
 
     // Castle Base / Ground Floor Foundation (y = 0.4)
-    const castleGroundFloor = new THREE.Mesh(new THREE.BoxGeometry(28, 0.4, 28), floorMat);
-    castleGroundFloor.position.set(0, 0.2, castleCenterZ);
-    castleGroundFloor.receiveShadow = true;
-    scene.add(castleGroundFloor);
-    this.levelColliders.push(castleGroundFloor);
+    // Leave a real 4.2m opening around the trapdoor. The old single slab stayed
+    // solid underneath the hatch, so moving the lid never actually opened a way down.
+    const groundFloorSections: Array<[number, number, number, number, number, number]> = [
+      [28, 0.4, 3.9, 0, 0.2, -27.95],
+      [28, 0.4, 19.9, 0, 0.2, -44.05],
+      [2.9, 0.4, 4.2, -12.55, 0.2, -32],
+      [20.9, 0.4, 4.2, 3.55, 0.2, -32],
+    ];
+    groundFloorSections.forEach(([width, height, depth, x, y, z], index) => {
+      const section = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), floorMat);
+      section.name = `castle_ground_floor_section_${index}`;
+      section.position.set(x, y, z);
+      section.receiveShadow = true;
+      scene.add(section);
+      this.levelColliders.push(section);
+    });
 
     // Symmetrical Front Grand Entrance Staircase (z = -23.5 to z = -26.5, rising smoothly from y = 0.0 to y = 0.4)
     const frontStepCount = 4;
@@ -1091,7 +1164,7 @@ export class LevelToyStory {
     this.dragonSwitchMesh = switchGroup;
 
     // ── SUBTERRANEAN LAVA VAULT & TRAPDOOR (x = -10.0 to -35.0, z = -26.0 to -54.0, y = -6.0) ──
-    this.buildSubterraneanLavaVault(scene, stoneMat, castleCenterZ);
+    this.buildCuriosityVault(scene, stoneMat, castleCenterZ);
 
 
     // 4. Combat Boss Arena (to the East, broad sand circular area)
@@ -1130,133 +1203,82 @@ export class LevelToyStory {
     this.player.setColliders(this.levelColliders);
   }
 
-  private buildSubterraneanLavaVault(
-    scene: THREE.Scene,
-    stoneMat: THREE.Material,
-    castleCenterZ: number
-  ): void {
-    // 1. Trapdoor Stone Slab at Ground Floor (x = -9.0, z = -32.0, y = 0.2)
+  private buildCuriosityVault(scene: THREE.Scene, stoneMat: THREE.Material, castleCenterZ: number): void {
+    // Real floor opening; the original solid 28m slab continued beneath its hatch.
+    this.hatchPivot = new THREE.Group();
+    this.hatchPivot.name = 'curiosity_hatch_hinge';
+    this.hatchPivot.position.set(-9.0, 0.4, castleCenterZ + 5.9);
     this.lavaVaultHatch = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.35, 4.2), stoneMat);
-    this.lavaVaultHatch.position.set(-9.0, 0.2, castleCenterZ + 8.0);
+    this.lavaVaultHatch.name = 'curiosity_hatch_lid';
+    this.lavaVaultHatch.position.set(0, -0.2, 2.1);
+    this.lavaVaultHatch.castShadow = true;
     this.lavaVaultHatch.receiveShadow = true;
-    scene.add(this.lavaVaultHatch);
+    this.hatchPivot.add(this.lavaVaultHatch);
+    scene.add(this.hatchPivot);
     this.levelColliders.push(this.lavaVaultHatch);
 
-    // 2. Secret Subterranean Stairs descending from y = 0.2 to y = -5.8
-    const stairsSteps = 16;
     const stairLen = 8.0;
     const stairDrop = 6.0;
-    const subStairAngle = Math.atan(stairDrop / stairLen);
-    const subStairDist = Math.hypot(stairLen, stairDrop);
+    const angle = Math.atan(stairDrop / stairLen);
+    const ramp = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.14, Math.hypot(stairLen, stairDrop)), new THREE.MeshBasicMaterial({ visible: false }));
+    ramp.name = 'curiosity_stair_ramp_collider';
+    ramp.position.set(-9.0, -2.93, castleCenterZ + 4.0);
+    ramp.rotation.x = -angle;
+    scene.add(ramp);
+    this.levelColliders.push(ramp);
 
-    // Continuous Subterranean Smooth Ramp Collider (prevents falling into void)
-    const subRampCollider = new THREE.Mesh(
-      new THREE.BoxGeometry(4.2, 0.16, subStairDist),
-      new THREE.MeshBasicMaterial({ visible: false })
-    );
-    subRampCollider.name = 'subterranean_stair_ramp_collider';
-    // Descending toward the back of the palace means z decreases while y falls.
-    subRampCollider.position.set(-9.0, -2.93, castleCenterZ + 4.0);
-    subRampCollider.rotation.x = -subStairAngle;
-    scene.add(subRampCollider);
-    this.levelColliders.push(subRampCollider);
-
-    for (let i = 0; i < stairsSteps; i++) {
-      const t = i / (stairsSteps - 1);
-      const stepY = 0.1 - t * stairDrop;
-      const stepZ = (castleCenterZ + 8.0) - t * stairLen;
-      const step = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.35, 1.0), stoneMat);
-      step.name = `subterranean_stair_step_${i}`;
-      step.position.set(-9.0, stepY, stepZ);
-      step.castShadow = true;
-      step.receiveShadow = true;
+    for (let i = 0; i < 16; i++) {
+      const t = i / 15;
+      const step = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.28, 0.62), stoneMat);
+      step.name = `curiosity_stair_step_${i}`;
+      step.position.set(-9.0, 0.1 - t * stairDrop, castleCenterZ + 8 - t * stairLen);
+      step.castShadow = step.receiveShadow = true;
       scene.add(step);
       this.levelColliders.push(step);
     }
 
-    // 3. Subterranean Entrance Ledge at y = -5.8 (x = -9.0, z = castleCenterZ)
-    const ledge = new THREE.Mesh(new THREE.BoxGeometry(5.5, 0.6, 7.0), stoneMat);
-    ledge.position.set(-9.0, -5.8, castleCenterZ);
-    ledge.receiveShadow = true;
-    scene.add(ledge);
-    this.levelColliders.push(ledge);
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(29.5, 0.4, 27.5), stoneMat);
+    floor.name = 'curiosity_chamber_floor';
+    floor.position.set(-22.25, -6.1, castleCenterZ);
+    floor.receiveShadow = true;
+    scene.add(floor);
+    this.levelColliders.push(floor);
 
-    // 4. Subterranean Chamber Walls
-    const wallN = new THREE.Mesh(new THREE.BoxGeometry(32.0, 8.0, 1.0), stoneMat);
-    wallN.position.set(-22.0, -4.0, castleCenterZ - 14.0);
-    const wallS = new THREE.Mesh(new THREE.BoxGeometry(32.0, 8.0, 1.0), stoneMat);
-    wallS.position.set(-22.0, -4.0, castleCenterZ + 14.0);
-    const wallW = new THREE.Mesh(new THREE.BoxGeometry(1.0, 8.0, 28.0), stoneMat);
-    wallW.position.set(-37.0, -4.0, castleCenterZ);
-    scene.add(wallN, wallS, wallW);
-    this.levelColliders.push(wallN, wallS, wallW);
-
-    // 5. Glowing Lava Floor at y = -8.2
-    const lavaMat = new THREE.MeshStandardMaterial({
-      color: 0xff2200,
-      emissive: 0xff3300,
-      emissiveIntensity: 1.8,
-      roughness: 0.2,
-      metalness: 0.1
+    const walls = [
+      [29.5, 7.0, 0.7, -22.25, -2.45, castleCenterZ - 13.75],
+      [29.5, 7.0, 0.7, -22.25, -2.45, castleCenterZ + 13.75],
+      [0.7, 7.0, 27.5, -37.0, -2.45, castleCenterZ],
+    ];
+    walls.forEach(([width, height, depth, x, y, z], index) => {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), stoneMat);
+      wall.name = `curiosity_chamber_wall_${index}`;
+      wall.position.set(x, y, z);
+      scene.add(wall);
+      this.levelColliders.push(wall);
     });
-    const lavaMesh = new THREE.Mesh(new THREE.PlaneGeometry(30.0, 26.0), lavaMat);
-    lavaMesh.position.set(-22.0, -8.2, castleCenterZ);
-    lavaMesh.rotation.x = -Math.PI / 2;
-    scene.add(lavaMesh);
 
-    // Lava Ambient PointLights
-    const lavaLight1 = new THREE.PointLight(0xff4400, 3.5, 12.0);
-    lavaLight1.position.set(-16.0, -6.5, castleCenterZ);
-    const lavaLight2 = new THREE.PointLight(0xff4400, 3.5, 12.0);
-    lavaLight2.position.set(-28.0, -6.5, castleCenterZ);
-    scene.add(lavaLight1, lavaLight2);
+    const floorMark = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.08, 1.6), new THREE.MeshStandardMaterial({ color: 0xb78a4b, roughness: 0.7 }));
+    floorMark.position.set(-22.5, -5.86, castleCenterZ - 13.28);
+    scene.add(floorMark);
+    [new THREE.Vector3(-15.0, -2.8, castleCenterZ), new THREE.Vector3(-29.5, -2.8, castleCenterZ)].forEach((position) => {
+      const light = new THREE.PointLight(0xffb45e, 1.7, 9, 2);
+      light.position.copy(position);
+      light.castShadow = false;
+      scene.add(light);
+    });
 
-    // 6. 4 Moving Stone Platforms across the Lava Chasm (y = -5.8)
-    const plat1 = new MovingPlatform(
-      new THREE.Vector3(-14.5, -5.8, castleCenterZ - 6.0),
-      new THREE.Vector3(-14.5, -5.8, castleCenterZ + 6.0),
-      1.8,
-      3.2, 3.2
-    );
-    const plat2 = new MovingPlatform(
-      new THREE.Vector3(-19.5, -5.8, castleCenterZ + 6.0),
-      new THREE.Vector3(-19.5, -5.8, castleCenterZ - 6.0),
-      2.2,
-      3.2, 3.2
-    );
-    const plat3 = new MovingPlatform(
-      new THREE.Vector3(-24.5, -5.8, castleCenterZ - 6.0),
-      new THREE.Vector3(-24.5, -5.8, castleCenterZ + 6.0),
-      2.0,
-      3.2, 3.2
-    );
-    const plat4 = new MovingPlatform(
-      new THREE.Vector3(-29.5, -5.8, castleCenterZ + 5.0),
-      new THREE.Vector3(-29.5, -5.8, castleCenterZ - 5.0),
-      1.7,
-      3.2, 3.2
-    );
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.3, 6.0), stoneMat);
+    plinth.name = 'curiosity_chest_plinth';
+    plinth.position.set(-33.4, -5.75, castleCenterZ);
+    plinth.receiveShadow = true;
+    scene.add(plinth);
+    this.levelColliders.push(plinth);
 
-    scene.add(plat1.mesh, plat2.mesh, plat3.mesh, plat4.mesh);
-    this.movingPlatforms.push(plat1, plat2, plat3, plat4);
-    this.levelColliders.push(plat1.mesh, plat2.mesh, plat3.mesh, plat4.mesh);
-
-    // 7. Ancient Fire Altar & Shrine Floor on the far west side (x = -34.0, z = castleCenterZ)
-    const shrineFloor = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.5, 6.0), stoneMat);
-    shrineFloor.position.set(-34.0, -5.8, castleCenterZ);
-    shrineFloor.receiveShadow = true;
-    scene.add(shrineFloor);
-    this.levelColliders.push(shrineFloor);
-
-    // Pedestal holding Key 4 (Llave del Secreto / Fuego Subterráneo)
-    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.0, 8), stoneMat);
-    pedestal.position.set(-34.0, -5.3, castleCenterZ);
-    pedestal.castShadow = true;
-    scene.add(pedestal);
-    this.levelColliders.push(pedestal);
-
-    // Spawn 3D Key 4 at the shrine altar!
-    this.spawn3DKey('key4_gargoyles', new THREE.Vector3(-34.0, -4.6, castleCenterZ));
+    this.curiosityChest = new TreasureChest(new THREE.Vector3(-33.4, -5.6, castleCenterZ), Math.PI);
+    this.curiosityChest.mesh.name = 'curiosity_key_chest';
+    scene.add(this.curiosityChest.mesh);
+    this.chests.push(this.curiosityChest);
+    this.levelColliders.push(this.curiosityChest.mesh);
   }
 
   private buildAncientRuinsAndLandmarks(): void {
@@ -1361,6 +1383,7 @@ export class LevelToyStory {
     const buildMountainPagoda = (cx: number, cz: number) => {
       const cy = this.getTerrainHeight(cx, cz);
       const pag = new THREE.Group();
+      pag.name = 'legacy_mountain_pagoda';
       pag.position.set(cx, cy, cz);
 
       // Base Octagonal Foundation (grounded)
@@ -1431,6 +1454,7 @@ export class LevelToyStory {
     const buildDragonCitadel = (cx: number, cz: number) => {
       const cy = this.getTerrainHeight(cx, cz);
       const cit = new THREE.Group();
+      cit.name = 'legacy_staff_citadel';
       cit.position.set(cx, cy, cz);
 
       // ── 1. BASE RAMPARTS & GRAND ENTRANCE STAIRCASE (Gran Basamento y Gradería Frontal) ──
@@ -1878,7 +1902,7 @@ export class LevelToyStory {
         this.subtitleSystem.show('Sistema', `Gárgola iluminada (${this.litGargoylesCount}/4)`);
         
         if (this.litGargoylesCount >= 4) {
-          this.awardKey('key4_gargoyles', new THREE.Vector3(0, 0.5, -35)); // Spawns inside castle entrance
+          this.awardKey('key6_gargoyles', new THREE.Vector3(0, 0.5, -35)); // Spawns inside castle entrance
         }
       };
     });
@@ -2222,7 +2246,10 @@ export class LevelToyStory {
     } else if (id === 'key3_platform') {
       baseColor = 0x00ff88;     // Emerald Green for Castle Roof
       emissiveColor = 0x00cc66;
-    } else if (id === 'key4_gargoyles') {
+    } else if (id === 'key4_curiosity') {
+      baseColor = 0xffdc62;
+      emissiveColor = 0xffb51b;
+    } else if (id === 'key6_gargoyles') {
       baseColor = 0xa855f7;     // Arcane Violet for Gargoyles
       emissiveColor = 0x9333ea;
     } else if (id === 'key5_pots') {
@@ -2278,15 +2305,16 @@ export class LevelToyStory {
     if (keyId === 'key1_gekko') keyName = 'Llave de la Riqueza (Gekko 50 Monedas)';
     if (keyId === 'key2_boss') keyName = 'Llave de la Valentía (Jefe Cangrejo)';
     if (keyId === 'key3_platform') keyName = 'Llave de Plataformas (Tejado)';
-    if (keyId === 'key4_gargoyles') keyName = 'Llave del Secreto (Gárgolas)';
+    if (keyId === 'key4_curiosity') keyName = 'Llave de la Curiosidad';
+    if (keyId === 'key6_gargoyles') keyName = 'Llave del Secreto (Gárgolas)';
     if (keyId === 'key5_pots') keyName = 'Llave de Destrucción (Gemas)';
 
-    this.subtitleSystem.show('LISAR', `¡Has obtenido la ${keyName}! (${this.totalKeysCount}/3 Requeridas)`);
+    this.subtitleSystem.show('LISAR', `¡Has obtenido la ${keyName}! (${this.totalKeysCount}/4 Requeridas)`);
 
     // Check if exit door is now unlocked (STRICT VALIDATION: EXACTLY 3 OR MORE KEYS REQUIRED)
-    if (this.totalKeysCount >= 3 && this.exitDoor && !this.exitDoor.isOpen) {
+    if (this.totalKeysCount >= 4 && this.exitDoor && !this.exitDoor.isOpen) {
       this.exitDoor.open();
-      this.subtitleSystem.show('LISAR', '¡PORTÓN ABIERTO! Has reunido las 3 llaves místicas. El portal de salida en el castillo está desbloqueado.');
+      this.subtitleSystem.show('LISAR', '¡PORTÓN ABIERTO! Has reunido las 4 llaves místicas. El portal de salida en el castillo está desbloqueado.');
     }
   }
 
@@ -2300,7 +2328,7 @@ export class LevelToyStory {
       if (!this.stateFlags.introCompleted) {
         this.stateFlags.introCompleted = true;
         this.subtitleSystem.show('Sistema', 'Explora el mapa para conseguir las 5 llaves. Empieza buscando tu báculo en el cofre dentro del castillo.');
-        (window as any).gameInstance?.hud.setObjective('Consigue las 5 llaves para abrir el portal');
+        (window as any).gameInstance?.hud.setObjective('Consigue 4 llaves para abrir el portal');
       }
     });
     this.triggerZones.push(tIntro);
@@ -2706,6 +2734,15 @@ export class LevelToyStory {
     if (this.cloudsUniforms) {
       this.cloudsUniforms.uTime.value = performance.now() / 1000.0;
     }
+    if (this.lampMoths) this.lampMoths.update(delta, playerPos);
+    if (this.hatchPivot && this.hatchTarget !== this.hatchOpenProgress) {
+      this.hatchOpenProgress = THREE.MathUtils.damp(this.hatchOpenProgress, this.hatchTarget, 3.2, delta);
+      if (Math.abs(this.hatchOpenProgress - this.hatchTarget) < 0.002) this.hatchOpenProgress = this.hatchTarget;
+      this.hatchPivot.rotation.x = -this.hatchOpenProgress * Math.PI * 0.5;
+    }
+    if (this.dragonLeverStick) {
+      this.dragonLeverStick.rotation.x = THREE.MathUtils.damp(this.dragonLeverStick.rotation.x, this.leverTarget, 9, delta);
+    }
     // Update elevator platforms
     this.movingPlatforms.forEach(p => p.update(delta));
 
@@ -2717,6 +2754,10 @@ export class LevelToyStory {
       this.staffChest.mesh.position.distanceTo(playerPos) < 2.2 &&
       !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying;
     const openStaffChest = chestInRange && this.inputManager.consumeInteractPress();
+    const curiosityChestInRange = this.isLavaVaultOpen && !this.curiosityChestOpen &&
+      this.curiosityChest.mesh.position.distanceTo(playerPos) < 2.7 &&
+      !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying;
+    const openCuriosityChest = curiosityChestInRange && this.inputManager.consumeInteractPress();
     const gekkoPosForAction = this.gekkoNPC?.mesh?.position;
     const gekkoDistanceForAction = gekkoPosForAction
       ? Math.hypot(playerPos.x - gekkoPosForAction.x, playerPos.z - gekkoPosForAction.z)
@@ -2855,16 +2896,17 @@ export class LevelToyStory {
       if (distToSwitch < 2.8 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
         const hud = (window as any).gameInstance?.hud;
         if (!this.isLavaVaultOpen) {
-          hud?.showInteractionPrompt('Activar Palanca del Dragón [E]');
+          hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Activar Palanca · Acción' : 'Activar Palanca [E]');
           if (this.inputManager.consumeInteractPress()) {
             this.isLavaVaultOpen = true;
-            this.dragonLeverStick.rotation.x = -Math.PI / 4;
-            this.lavaVaultHatch.position.y = -20; // Open hatch down
+            this.leverTarget = -Math.PI / 4;
+            this.hatchTarget = 1;
             this.audioManager.playCardPickup();
+            void this.runCuriosityReveal();
             this.subtitleSystem.show('Mecanismo Secreto', '¡Has activado la Palanca del Dragón! La Cripta de Lava Subterránea se ha abierto en la planta baja.');
           }
         } else {
-          hud?.showInteractionPrompt('Palanca Activada (Cripta de Lava Abierta)');
+          hud?.showInteractionPrompt('Trampilla abierta: baja por las escaleras');
         }
       }
     }
@@ -2877,7 +2919,7 @@ export class LevelToyStory {
       this.audioManager.playPlayerHurt();
       const hud = (window as any).gameInstance?.hud;
       if (hud) hud.triggerDamageFlash();
-      this.subtitleSystem.show('Cripta de Lava', '¡Cuidado con la lava ardiente! Cruza usando las plataformas móviles.');
+      this.subtitleSystem.show('Cámara secreta', 'Regresa por las escaleras para volver a la superficie.');
     }
 
     // ── Runic Fast-Travel Portal System Update ──
@@ -2919,6 +2961,21 @@ export class LevelToyStory {
     }
 
     // ── Chest Interaction — Staff Pickup ──────────────────────────────────────
+    if (curiosityChestInRange) {
+      hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Abrir cofre · Acción' : 'Abrir cofre [E]');
+    }
+    if (openCuriosityChest) {
+      hud?.hideInteractionPrompt();
+      this.curiosityChestOpen = true;
+      this.curiosityChest.isUnlocked = true;
+      this.curiosityChest.unlock(this.audioManager, this.collectibleSystem, () => {
+        if (this.curiosityKeySpawned || this.collectedKeys.key4_curiosity) return;
+        this.curiosityKeySpawned = true;
+        this.spawn3DKey('key4_curiosity', this.curiosityChest.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0)));
+        this.subtitleSystem.show('Cofre antiguo', 'Dentro del cofre está la Llave de la Curiosidad.');
+      });
+    }
+
     if (!this.stateFlags.staffFound && this.staffChest.mesh.position.distanceTo(playerPos) < 2.2 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
       const hud = (window as any).gameInstance?.hud;
       hud?.showInteractionPrompt('Presiona [E] para abrir cofre');
@@ -2964,6 +3021,56 @@ export class LevelToyStory {
       }
     }
     interactionHud?.endInteractionFrame();
+  }
+
+  private async runCuriosityReveal(): Promise<void> {
+    if (this.isCinematicPlaying) return;
+    const game = (window as any).gameInstance;
+    const cinematicCamera = game?.cinematicCamera;
+    const cameraController = game?.cameraController;
+    if (!cinematicCamera || !cameraController) return;
+
+    this.isCinematicPlaying = true;
+    this.player.isControlsLocked = true;
+    this.player.isMovementLocked = true;
+    this.player.velocity.set(0, 0, 0);
+    this.enemies.forEach((enemy) => { enemy.isPaused = true; });
+    try {
+      const hatchLook = new THREE.Vector3(-9, 0.2, this.curiosityChest.mesh.position.z + 6);
+      const from = cameraController.camera.position.clone();
+      const to = new THREE.Vector3(-5.5, 5.5, hatchLook.z + 5.5);
+      await cinematicCamera.moveCamera(from, to, this.player.mesh.position.clone().add(new THREE.Vector3(0, 1, 0)), hatchLook, 1.8);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    } catch (error) {
+      console.warn('[CuriosityVault] Reveal camera failed; restoring gameplay camera.', error);
+    } finally {
+      cinematicCamera.abort();
+      cameraController.setTarget(this.player.mesh);
+      cameraController.resumeAfterCinematic();
+      this.player.isControlsLocked = false;
+      this.player.isMovementLocked = false;
+      this.player.velocity.set(0, 0, 0);
+      this.enemies.forEach((enemy) => { enemy.isPaused = false; });
+      this.isCinematicPlaying = false;
+    }
+  }
+
+  public restoreCuriosityPuzzle(hatchOpen: boolean, chestOpen: boolean, preserveLegacyExit = false): void {
+    this.isLavaVaultOpen = hatchOpen;
+    this.hatchTarget = hatchOpen ? 1 : 0;
+    this.hatchOpenProgress = this.hatchTarget;
+    this.leverTarget = hatchOpen ? -Math.PI / 4 : Math.PI / 4;
+    if (this.hatchPivot) this.hatchPivot.rotation.x = -this.hatchOpenProgress * Math.PI * 0.5;
+    if (this.dragonLeverStick) this.dragonLeverStick.rotation.x = this.leverTarget;
+    this.curiosityChestOpen = chestOpen;
+    if (chestOpen) {
+      this.curiosityChest.restoreOpen();
+      if (!this.collectedKeys.key4_curiosity) {
+        this.curiosityKeySpawned = true;
+        this.spawn3DKey('key4_curiosity', this.curiosityChest.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0)));
+      }
+    }
+    if (preserveLegacyExit && this.exitDoor) this.exitDoor.open();
   }
 
   public restoreBossDefeated(): void {

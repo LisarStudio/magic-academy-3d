@@ -59,7 +59,7 @@ export class ChestCinematic {
       this.staffInChest = null;
       player.equipWeapon('STAFF');
       player.animationController.playState('Idle', 0.18);
-      hud.setObjective('Explora el Reino y reúne las 3 llaves místicas');
+      hud.setObjective('Explora el Reino y reúne 4 llaves para abrir el portal');
     } catch (error) {
       console.error('[ChestCinematic] Pickup failed; restoring a playable state:', error);
       this.stopStaffBob();

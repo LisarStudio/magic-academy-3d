@@ -567,7 +567,7 @@ export class Game {
 
   public saveGame(): void {
     const saveData = {
-      version: 1,
+      version: 2,
       levelId: 'magic-academy-3d',
       playerPos: { x: this.player.mesh.position.x, y: this.player.mesh.position.y, z: this.player.mesh.position.z },
       playerRotY: this.player.mesh.rotation.y,
@@ -582,6 +582,8 @@ export class Game {
       checkpointId: this.checkpointManager.getCurrentCheckpointId(),
       collectedKeys: this.level01.collectedKeys,
       totalKeysCount: this.level01.totalKeysCount,
+      curiosityHatchOpen: this.level01.isLavaVaultOpen,
+      curiosityChestOpen: this.level01.curiosityChestOpen,
       stateFlags: {
         staffFound: this.level01.stateFlags.staffFound,
         gekkoTalked: this.level01.stateFlags.gekkoTalked,
@@ -603,7 +605,7 @@ export class Game {
     }
     try {
       const data = JSON.parse(raw);
-      if (data.version !== undefined && data.version !== 1) throw new Error('Versión de partida no compatible.');
+      if (data.version !== undefined && data.version !== 1 && data.version !== 2) throw new Error('Versión de partida no compatible.');
       if (data.playerPos) {
         this.player.mesh.position.set(data.playerPos.x, data.playerPos.y, data.playerPos.z);
       }
@@ -633,7 +635,10 @@ export class Game {
       }
       if (typeof data.checkpointId === 'number') this.checkpointManager.setActiveCheckpoint(data.checkpointId);
       if (data.collectedKeys && typeof data.collectedKeys === 'object') {
-        Object.assign(this.level01.collectedKeys, data.collectedKeys);
+        const migratedKeys = { ...data.collectedKeys };
+        if (migratedKeys.key4_gargoyles === true) migratedKeys.key6_gargoyles = true;
+        delete migratedKeys.key4_gargoyles;
+        Object.assign(this.level01.collectedKeys, migratedKeys);
         this.level01.totalKeysCount = Number(data.totalKeysCount) || 0;
         this.hud.setKeyCount(this.level01.totalKeysCount);
       }
@@ -641,6 +646,11 @@ export class Game {
         Object.assign(this.level01.stateFlags, data.stateFlags);
       }
       this.level01.restoreStaffChest();
+      this.level01.restoreCuriosityPuzzle(
+        data.curiosityHatchOpen === true || (data.version === 1 && (Number(data.totalKeysCount) || 0) >= 3),
+        data.curiosityChestOpen === true,
+        data.version === 1 && (Number(data.totalKeysCount) || 0) >= 3
+      );
       // Older saves only recorded that the intro cinematic had played. Allow
       // that encounter to be attempted again unless its victory was saved.
       this.level01.stateFlags.bossDefeated = data.stateFlags?.bossDefeated === true;

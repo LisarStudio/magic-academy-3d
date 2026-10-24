@@ -332,7 +332,7 @@ export class HUD {
     this.lastKeys = count;
 
     if (this.keyCounterEl) {
-      this.keyCounterEl.textContent = `Llaves: ${count} / 5`;
+      this.keyCounterEl.textContent = `Llaves: ${count} / 6`;
     }
   }
 
