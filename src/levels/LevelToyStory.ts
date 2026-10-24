@@ -1264,7 +1264,7 @@ export class LevelToyStory {
     }
 
     // 5. Exit Portal/Door at the back of the castle
-    this.exitDoor = new Door('door_exit', new THREE.Vector3(0, 0, castleCenterZ - 12.5), 0, true);
+    this.exitDoor = new Door('door_exit', new THREE.Vector3(0, this.getTerrainHeight(0, castleCenterZ - 15) + 0.1, castleCenterZ - 15), 0, true);
     scene.add(this.exitDoor.mesh);
     this.doors.push(this.exitDoor);
     this.levelColliders.push(this.exitDoor.mesh);
@@ -1879,10 +1879,9 @@ export class LevelToyStory {
   private setupInteractiveProps(): void {
     const scene = this.sceneManager.scene;
 
-    // Relocate Staff Chest on top of the Altar inside the Secret Chamber of Templo 03 ("Templo del Báculo")
-    // The replacement temple is a visual GLB without gameplay collision or an
-    // interior stair route. Keep the staff reward on the ground at its entrance
-    // so the original reward remains reachable without jumping or noclipping.
+    // Put the existing staff reward on the pavilion's center table. The chest
+    // remains the single inventory/save-backed reward and stays interactable
+    // from the floor beside the table.
     const staffChestPosition = new THREE.Vector3(20.0, this.getTerrainHeight(20.0, 24.0) + 1.75, 23.0);
     this.staffChest = new TreasureChest(staffChestPosition, Math.PI);
     scene.add(this.staffChest.mesh);
@@ -2625,13 +2624,13 @@ export class LevelToyStory {
           );
           if (introFinished) return;
 
-          // ── TOMA 3: Templos del Norte y Santuario Heloidal ──
-          this.subtitleSystem.show('LISAR', 'En la cima del santuario sagrado te aguarda el legendario Báculo.', 2200);
+          // ── TOMA 3: Temple route after removing the duplicate eastern temple ──
+          this.subtitleSystem.show('LISAR', 'El templo imperial y el pabellón marcan las rutas del reino.', 2200);
           await cinematicCamera.moveCamera(
-            new THREE.Vector3(26.0, 14.0, -35.0),
-            new THREE.Vector3(12.0, 9.0, -52.0),
-            new THREE.Vector3(0, 10.0, -75.0),
-            new THREE.Vector3(0, 8.0, -75.0),
+            new THREE.Vector3(24.0, 12.0, -28.0),
+            new THREE.Vector3(14.0, 8.0, -36.0),
+            new THREE.Vector3(0, 7.0, -40.0),
+            new THREE.Vector3(0, 6.0, -40.0),
             2.2
           );
           if (introFinished) return;
