@@ -65,6 +65,8 @@ export class LevelToyStory {
   public isLavaVaultOpen = false;
   private lavaVaultHatch!: THREE.Mesh;
   private grassUniforms: any = null;
+  private grassSectors: THREE.InstancedMesh[] = [];
+  private grassCullElapsed = 0;
   private cloudsUniforms: any = null;
 
   public getTerrainHeight(x: number, z: number): number {
@@ -354,32 +356,24 @@ export class LevelToyStory {
     await this.loadIntroEnvironmentAssets();
   }
 
-  /** Adds the intro's pavilion, dirt texture and grass models as scenery only. */
+  /** Adds the pavilion and a subtle green ground texture as scenery only. */
   private async loadIntroEnvironmentAssets(): Promise<void> {
     const base = import.meta.env.BASE_URL + 'assets/environment/';
     const loader = new GLTFLoader();
-    const textureLoader = new THREE.TextureLoader();
-    const [pavilionResult, grassResult, dirtResult] = await Promise.allSettled([
+    const pavilionResult = await Promise.allSettled([
       loader.loadAsync(`${base}chinese-pavilion.glb`),
-      loader.loadAsync(`${base}wukong-grass-clumps.glb`),
-      textureLoader.loadAsync(`${base}wukong-dirt-base.jpg`)
-    ]);
+    ]).then(([result]) => result);
 
-    if (dirtResult.status === 'fulfilled') {
-      const terrain = this.sceneManager.scene.getObjectByName('world-terrain') as THREE.Mesh | null;
-      if (terrain && terrain.material instanceof THREE.MeshStandardMaterial) {
-        const dirt = dirtResult.value;
-        dirt.colorSpace = THREE.SRGBColorSpace;
-        dirt.wrapS = THREE.RepeatWrapping;
-        dirt.wrapT = THREE.RepeatWrapping;
-        dirt.repeat.set(24, 24);
-        dirt.anisotropy = Math.min(8, this.sceneManager.renderer.capabilities.getMaxAnisotropy());
-        terrain.material.map = dirt;
-        terrain.material.color.setHex(0xa9b879);
-        terrain.material.needsUpdate = true;
-      }
-    } else {
-      console.warn('[LevelToyStory] Could not load the intro ground texture.', dirtResult.reason);
+    const terrain = this.sceneManager.scene.getObjectByName('world-terrain') as THREE.Mesh | null;
+    if (terrain && terrain.material instanceof THREE.MeshStandardMaterial) {
+      const ground = this.createGrassGroundTexture();
+      ground.repeat.set(6, 6);
+      ground.anisotropy = Math.min(8, this.sceneManager.renderer.capabilities.getMaxAnisotropy());
+      terrain.material.map = ground;
+      terrain.material.color.setHex(0x9eac63);
+      terrain.material.emissive.setHex(0x18200a);
+      terrain.material.emissiveIntensity = 0.12;
+      terrain.material.needsUpdate = true;
     }
 
     if (pavilionResult.status === 'fulfilled') {
@@ -416,55 +410,46 @@ export class LevelToyStory {
       console.warn('[LevelToyStory] Could not load the intro Chinese Pavilion.', pavilionResult.reason);
     }
 
-    if (grassResult.status === 'fulfilled') {
-      this.addIntroGrassInstances(grassResult.value.scene, 20, 24);
-    } else {
-      console.warn('[LevelToyStory] Could not load the intro grass models.', grassResult.reason);
-    }
   }
 
-  private addIntroGrassInstances(source: THREE.Group, centerX: number, centerZ: number): void {
-    const templates = new Map<string, THREE.Mesh>();
-    source.traverse((child) => {
-      if (!(child as THREE.Mesh).isMesh) return;
-      const mesh = child as THREE.Mesh;
-      templates.set(mesh.name.toLowerCase(), mesh);
-    });
+  private createGrassGroundTexture(): THREE.CanvasTexture {
+    const size = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Could not create the grass ground texture.');
 
-    const mobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    const variants = [
-      { name: 'Grass_Short', count: mobile ? 10 : 30, height: 2.8, width: 2.8 },
-      { name: 'Grass_Lush', count: mobile ? 8 : 22, height: 3.2, width: 3.0 },
-      { name: 'Grass_Tall', count: mobile ? 4 : 12, height: 1.8, width: 1.8 }
-    ];
-    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
-
-    for (const [variantIndex, variant] of variants.entries()) {
-      const template = templates.get(variant.name.toLowerCase());
-      if (!template) continue;
-      const instanced = new THREE.InstancedMesh(template.geometry, template.material, variant.count);
-      instanced.name = `intro_${variant.name.toLowerCase()}`;
-      instanced.castShadow = false;
-      instanced.receiveShadow = true;
-      instanced.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-
-      const dummy = new THREE.Object3D();
-      for (let i = 0; i < variant.count; i++) {
-        const angle = (i + variantIndex * 0.34) * goldenAngle;
-        const radius = 7.6 + ((i * 17 + variantIndex * 13) % 29) / 29 * 2.8;
-        const x = centerX + Math.cos(angle) * radius;
-        const z = centerZ + Math.sin(angle) * radius;
-        const scale = 0.8 + ((i * 11 + variantIndex * 7) % 17) / 17 * 0.45;
-        dummy.position.set(x, this.getTerrainHeight(x, z) + 0.025, z);
-        dummy.rotation.set(0, (i * 2.399 + variantIndex) % (Math.PI * 2), 0);
-        dummy.scale.set(variant.width * scale, variant.height * scale, variant.width * scale);
-        dummy.updateMatrix();
-        instanced.setMatrixAt(i, dummy.matrix);
+    // Low-contrast olive noise reads as covered soil instead of dark bare dirt.
+    const gridSize = 17;
+    let seed = 98317;
+    const random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+    const grid = Array.from({ length: gridSize * gridSize }, () => random() * 2 - 1);
+    const pixels = context.createImageData(size, size);
+    for (let y = 0; y < size; y++) {
+      const gy = y / size * (gridSize - 1);
+      const iy = Math.floor(gy), fy = gy - iy;
+      for (let x = 0; x < size; x++) {
+        const gx = x / size * (gridSize - 1);
+        const ix = Math.floor(gx), fx = gx - ix;
+        const a = grid[iy * gridSize + ix], b = grid[iy * gridSize + ix + 1];
+        const c = grid[(iy + 1) * gridSize + ix], d = grid[(iy + 1) * gridSize + ix + 1];
+        const noise = THREE.MathUtils.lerp(THREE.MathUtils.lerp(a, b, fx), THREE.MathUtils.lerp(c, d, fx), fy) * 9 + (random() - 0.5) * 5;
+        const i = (y * size + x) * 4;
+        pixels.data[i] = 87 + noise;
+        pixels.data[i + 1] = 112 + noise;
+        pixels.data[i + 2] = 45 + noise * 0.55;
+        pixels.data[i + 3] = 255;
       }
-      instanced.instanceMatrix.needsUpdate = true;
-      instanced.computeBoundingSphere();
-      this.sceneManager.scene.add(instanced);
     }
+    context.putImageData(pixels, 0, 0);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.generateMipmaps = true;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    return texture;
   }
 
   private buildToyStoryLevelGeometry(): void {
@@ -486,7 +471,7 @@ export class LevelToyStory {
       roughness: 0.78,
       metalness: 0.12
     });
-    const groundBaseMat = new THREE.MeshStandardMaterial({ color: 0x224925, roughness: 0.95 }); // Deep rich base for grass
+    const groundBaseMat = new THREE.MeshStandardMaterial({ color: 0x526b32, roughness: 0.98 }); // Warm green distant ground LOD
     const sandMat = new THREE.MeshStandardMaterial({ color: 0xc2b280, roughness: 0.85 });  // Arena floor
 
     // 1. Rolling Undulating Terrain Mesh (160 x 160, 64x64 segments)
@@ -518,286 +503,160 @@ export class LevelToyStory {
     // Roots are pinned. Only tips sway. Exactly like Nintendo/Breath of the Wild.
     // ═══════════════════════════════════════════════════════════════════════════════
 
+    // Continuous low grass carpet, split into instanced sectors so Three.js can
+    // frustum-cull whole patches. The olive terrain material fills the distant LOD.
     (() => {
-      const SEG     = 6;        // vertical segments per blade (quality of bending)
-      const BW      = 0.20;     // blade half-width at base
-      const BH      = 1.4;      // blade height (world units)
-
-      // ── Build one tapered blade (PlaneGeometry with manual taper) ──────────────
-      const buildBlade = (rotY: number): THREE.BufferGeometry => {
-        const vCount = (SEG + 1) * 2; // 2 verts per row
-        const positions = new Float32Array(vCount * 3);
-        const uvs       = new Float32Array(vCount * 2);
-        const normals   = new Float32Array(vCount * 3);
-
-        for (let row = 0; row <= SEG; row++) {
-          const t     = row / SEG;             // 0 (root) → 1 (tip)
-          const y     = t * BH;
-          const taper = 1.0 - t * 0.85;       // narrows to 15% at tip
-          const w     = BW * taper;
-
-          const lIdx = row * 2;
-          const rIdx = row * 2 + 1;
-
-          // Left vertex
-          positions[lIdx * 3 + 0] = -w;
-          positions[lIdx * 3 + 1] =  y;
-          positions[lIdx * 3 + 2] =  0;
-          uvs[lIdx * 2 + 0] = 0;
-          uvs[lIdx * 2 + 1] = t;
-          normals[lIdx * 3 + 0] = 0; normals[lIdx * 3 + 1] = 0; normals[lIdx * 3 + 2] = 1;
-
-          // Right vertex
-          positions[rIdx * 3 + 0] =  w;
-          positions[rIdx * 3 + 1] =  y;
-          positions[rIdx * 3 + 2] =  0;
-          uvs[rIdx * 2 + 0] = 1;
-          uvs[rIdx * 2 + 1] = t;
-          normals[rIdx * 3 + 0] = 0; normals[rIdx * 3 + 1] = 0; normals[rIdx * 3 + 2] = 1;
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      const sectorSize = 20;
+      const spacing = isMobile ? 0.58 : 0.42;
+      const bladeHeight = 0.44;
+      const bladeWidth = 0.14;
+      const segments = 3;
+      const positions: number[] = [];
+      const uvs: number[] = [];
+      const indices: number[] = [];
+      for (const yaw of [0, Math.PI / 3, -Math.PI / 3]) {
+        const offset = positions.length / 3;
+        const sin = Math.sin(yaw), cos = Math.cos(yaw);
+        for (let row = 0; row <= segments; row++) {
+          const t = row / segments;
+          const halfWidth = bladeWidth * (1 - t * 0.92);
+          const y = bladeHeight * t;
+          positions.push(-halfWidth * cos, y, halfWidth * sin, halfWidth * cos, y, -halfWidth * sin);
+          uvs.push(0, t, 1, t);
+          if (row < segments) {
+            const a = offset + row * 2;
+            indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+          }
         }
+      }
+      const grassGeometry = new THREE.BufferGeometry();
+      grassGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      grassGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      grassGeometry.setIndex(indices);
+      grassGeometry.computeVertexNormals();
+      grassGeometry.computeBoundingSphere();
 
-        // Build quad strip indices
-        const iCount = SEG * 6;
-        const indices = new Uint16Array(iCount);
-        for (let s = 0; s < SEG; s++) {
-          const base = s * 6;
-          const v    = s * 2;
-          indices[base + 0] = v;     indices[base + 1] = v + 1; indices[base + 2] = v + 2;
-          indices[base + 3] = v + 1; indices[base + 4] = v + 3; indices[base + 5] = v + 2;
-        }
-
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geo.setAttribute('uv',       new THREE.BufferAttribute(uvs, 2));
-        geo.setAttribute('normal',   new THREE.BufferAttribute(normals, 3));
-        geo.setIndex(new THREE.BufferAttribute(indices, 1));
-
-        // Apply rotation around Y axis
-        geo.applyMatrix4(new THREE.Matrix4().makeRotationY(rotY));
-        return geo;
-      };
-
-      // ── Merge 3 blades at 0°, 60°, -60° ──────────────────────────────────────
-      const b1 = buildBlade(0);
-      const b2 = buildBlade(Math.PI / 3);
-      const b3 = buildBlade(-Math.PI / 3);
-
-      const totalVerts = b1.attributes.position.count * 3;
-      const mergedPos  = new Float32Array(totalVerts * 3);
-      const mergedUV   = new Float32Array(totalVerts * 2);
-      const mergedNorm = new Float32Array(totalVerts * 3);
-
-      const vc = b1.attributes.position.count;
-      const p1a = b1.attributes.position.array as Float32Array;
-      const p2a = b2.attributes.position.array as Float32Array;
-      const p3a = b3.attributes.position.array as Float32Array;
-      mergedPos.set(p1a, 0);
-      mergedPos.set(p2a, p1a.length);
-      mergedPos.set(p3a, p1a.length + p2a.length);
-
-      const u1a = b1.attributes.uv.array as Float32Array;
-      const u2a = b2.attributes.uv.array as Float32Array;
-      const u3a = b3.attributes.uv.array as Float32Array;
-      mergedUV.set(u1a, 0);
-      mergedUV.set(u2a, u1a.length);
-      mergedUV.set(u3a, u1a.length + u2a.length);
-
-      const n1a = b1.attributes.normal.array as Float32Array;
-      const n2a = b2.attributes.normal.array as Float32Array;
-      const n3a = b3.attributes.normal.array as Float32Array;
-      mergedNorm.set(n1a, 0);
-      mergedNorm.set(n2a, n1a.length);
-      mergedNorm.set(n3a, n1a.length + n2a.length);
-
-      const i1a = b1.index!.array as Uint16Array;
-      const i2a = b2.index!.array as Uint16Array;
-      const i3a = b3.index!.array as Uint16Array;
-      const totalIdx = (i1a.length + i2a.length + i3a.length);
-      const mergedIdx = new Uint32Array(totalIdx);
-      mergedIdx.set(i1a, 0);
-      for (let i = 0; i < i2a.length; i++) mergedIdx[i1a.length + i] = i2a[i] + vc;
-      for (let i = 0; i < i3a.length; i++) mergedIdx[i1a.length + i2a.length + i] = i3a[i] + vc * 2;
-
-      const clumpGeo = new THREE.BufferGeometry();
-      clumpGeo.setAttribute('position', new THREE.BufferAttribute(mergedPos, 3));
-      clumpGeo.setAttribute('uv',       new THREE.BufferAttribute(mergedUV, 2));
-      clumpGeo.setAttribute('normal',   new THREE.BufferAttribute(mergedNorm, 3));
-      clumpGeo.setIndex(new THREE.BufferAttribute(mergedIdx, 1));
-
-      b1.dispose(); b2.dispose(); b3.dispose();
-
-      // ── Material with wind shader ────────────────────────────────────────────
       const grassMat = new THREE.MeshStandardMaterial({
-        color: 0x52c65a,
-        roughness: 0.80,
-        metalness: 0.0,
-        side: THREE.DoubleSide,
-        alphaTest: 0.04,
+        color: 0x9eaa48, roughness: 0.92, side: THREE.DoubleSide,
       });
-      // Unique cache key so Three.js always uses our custom shader
-      grassMat.customProgramCacheKey = () => 'grass_botw_aaa_v5';
-
+      grassMat.customProgramCacheKey = () => 'wukong_continuous_grass_v1';
       grassMat.onBeforeCompile = (shader) => {
-        shader.uniforms.uTime      = { value: 0.0 };
+        shader.uniforms.uTime = { value: 0 };
         shader.uniforms.uPlayerPos = { value: new THREE.Vector3(999, 999, 999) };
         this.grassUniforms = shader.uniforms;
-
-        shader.vertexShader = [
-          'uniform float uTime;',
-          'uniform vec3  uPlayerPos;',
-          shader.vertexShader
-        ].join('\n');
-
-        shader.vertexShader = shader.vertexShader.replace(
-          '#include <begin_vertex>',
-          /* glsl */`
+        shader.vertexShader = `uniform float uTime;\nuniform vec3 uPlayerPos;\n${shader.vertexShader}`;
+        shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `
           #include <begin_vertex>
-
           #ifdef USE_INSTANCING
             vec3 wpos = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
           #else
             vec3 wpos = vec3(0.0);
           #endif
-
-          // Normalized height: 0 = root, 1 = tip
-          float nH = clamp(position.y / ${BH.toFixed(2)}, 0.0, 1.0);
-          float bend = nH * nH * nH;
-
-          float drift = sin(uTime * 1.4 + wpos.x * 0.09 + wpos.z * 0.07) * 0.25;
-
-          float n1 = sin(wpos.x * 0.19 + wpos.z * 0.14 + uTime * 2.2) * 0.14;
-          float n2 = cos(wpos.x * 0.09 - wpos.z * 0.25 + uTime * 1.1) * 0.09;
-          float fbm = n1 + n2;
-
-          float windDot = wpos.x * 0.62 + wpos.z * 0.45;
-          float gust    = sin(uTime * 1.8 + windDot * 0.11) * 0.30 * (0.5 + 0.5 * sin(uTime * 0.3 + wpos.x * 0.01));
-
-          float totalX = (drift + fbm + gust) * bend;
-          float totalZ = (drift * 0.5 + fbm * 0.6 + gust * 0.5) * bend;
-
-          transformed.x += totalX * 0.75 + totalZ * 0.25;
-          transformed.z += totalX * 0.30 + totalZ * 0.70;
-
-          // Player push
-          vec2 toPlayer2 = wpos.xz - uPlayerPos.xz;
-          float pDist = length(toPlayer2);
-          float pRadius = 2.0;
-          if (pDist < pRadius && pDist > 0.001) {
-            float pushStr = (1.0 - pDist / pRadius) * 0.95 * bend;
-            vec2 pDir = toPlayer2 / pDist;
-            transformed.x += pDir.x * pushStr;
-            transformed.z += pDir.y * pushStr;
+          float tip = clamp(position.y / ${bladeHeight.toFixed(2)}, 0.0, 1.0);
+          float sway = (sin(uTime * 1.15 + wpos.x * 0.12 + wpos.z * 0.09) * 0.075
+            + sin(uTime * 0.63 - wpos.x * 0.07 + wpos.z * 0.11) * 0.035) * tip * tip;
+          transformed.x += sway;
+          vec2 toPlayer = wpos.xz - uPlayerPos.xz;
+          float distanceToPlayer = length(toPlayer);
+          if (distanceToPlayer < 1.25 && distanceToPlayer > 0.001) {
+            transformed.xz += normalize(toPlayer) * (1.25 - distanceToPlayer) * 0.24 * tip;
           }
-          `
-        );
-
-        // Fragment: rich multi-tone green gradient + tip warmth + subsurface hint
-        shader.fragmentShader = shader.fragmentShader.replace(
-          '#include <color_fragment>',
-          /* glsl */`
+        `);
+        shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `
           #include <color_fragment>
-          // Height gradient: dark roots → vivid mid → warm golden tips
-          float vH = vUv.y;
-          // Base color is the diffuseColor from instanceColor
-          // Darken roots slightly for ground-contact shading (AO)
-          float rootDark  = 1.0 - smoothstep(0.0, 0.18, vH) * 0.35;
-          // Warm up tips to golden/yellow-green
-          float tipWarm   = smoothstep(0.65, 1.0, vH);
-          diffuseColor.rgb *= rootDark;
-          diffuseColor.rgb += vec3(tipWarm * 0.12, tipWarm * 0.09, -tipWarm * 0.04);
-          // Fake SSS: bright fringe when backlit (simulate light through thin blade)
-          float sss = smoothstep(0.4, 1.0, vH) * 0.08;
-          diffuseColor.rgb += vec3(sss * 0.5, sss * 0.9, sss * 0.1);
-          `
-        );
+          float tipWarm = smoothstep(0.58, 1.0, vUv.y);
+          diffuseColor.rgb *= mix(0.96, 1.08, vUv.y);
+          diffuseColor.rgb += vec3(tipWarm * 0.07, tipWarm * 0.055, tipWarm * 0.004);
+        `);
       };
 
-      // ── Instance placement ──────────────────────────────────────────────────
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      const COUNT = isMobile ? 12000 : 80000;
-
-      const grassMesh = new THREE.InstancedMesh(clumpGeo, grassMat, COUNT);
-      grassMesh.frustumCulled = false;   // Field is always partially in view
-      grassMesh.castShadow    = false;   // Too expensive; use ambient instead
-      grassMesh.receiveShadow = true;
-
+      let seed = 412731;
+      const random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
       const dummy = new THREE.Object3D();
+      const up = new THREE.Vector3(0, 1, 0);
+      const normal = new THREE.Vector3();
+      const slopeRotation = new THREE.Quaternion();
+      const yawRotation = new THREE.Quaternion();
+      const segmentDistance = (x: number, z: number, ax: number, az: number, bx: number, bz: number) => {
+        const dx = bx - ax, dz = bz - az;
+        const t = THREE.MathUtils.clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+        return Math.hypot(x - (ax + dx * t), z - (az + dz * t));
+      };
+      const roads = [
+        [[-12, -35], [-22, -45], [-35, -58], [-48, -68], [-55, -75]],
+        [[12, -35], [22, -45], [35, -58], [48, -68], [55, -75]],
+      ];
+      const excluded = (x: number, z: number): boolean => {
+        // Buildings, plazas, stairs/temple aprons, arena and intentional paths.
+        if (Math.abs(x) < 18.5 && Math.abs(z + 40) < 18.5) return true;
+        if (Math.hypot(x - 45, z + 40) < 16.2) return true;
+        if (Math.hypot(x + 55, z + 75) < 11.2 || Math.hypot(x - 55, z + 75) < 19.2) return true;
+        if (Math.hypot(x - 20, z - 24) < 7.5) return true;
+        if (Math.hypot(x + 30, z - 10) < 9 || Math.hypot(x + 45, z + 40) < 9) return true;
+        if (Math.abs(x) < 4.2 && z > -27 && z < 17) return true;
+        if (Math.abs(z + 75) < 2.8 && Math.abs(x) < 56) return true;
+        for (const road of roads) {
+          for (let i = 0; i < road.length - 1; i++) {
+            if (segmentDistance(x, z, road[i][0], road[i][1], road[i + 1][0], road[i + 1][1]) < 3.15) return true;
+          }
+        }
+        return false;
+      };
 
-      // Deterministic seeded random (no Math.random() — reproducible layout)
-      let seed = 98765;
-      const rnd = () => { seed = (seed * 16807 + 0) % 2147483647; return (seed - 1) / 2147483646; };
+      let placedTotal = 0;
+      for (let sectorX = 0; sectorX < 8; sectorX++) {
+        for (let sectorZ = 0; sectorZ < 8; sectorZ++) {
+          const x0 = -80 + sectorX * sectorSize;
+          const z0 = -120 + sectorZ * sectorSize;
+          const matrices: THREE.Matrix4[] = [];
+          const colors: THREE.Color[] = [];
+          const steps = Math.ceil(sectorSize / spacing);
+          for (let gx = 0; gx < steps; gx++) {
+            for (let gz = 0; gz < steps; gz++) {
+              const x = x0 + (gx + 0.16 + random() * 0.68) * spacing;
+              const z = z0 + (gz + 0.16 + random() * 0.68) * spacing;
+              if (x > 80 || z > 40 || excluded(x, z)) continue;
 
-      let placed = 0;
-      const maxTries = COUNT * 4;
-      let tries = 0;
+              const groundY = this.getTerrainHeight(x, z);
+              const slopeX = (this.getTerrainHeight(x + 0.18, z) - this.getTerrainHeight(x - 0.18, z)) / 0.36;
+              const slopeZ = (this.getTerrainHeight(x, z + 0.18) - this.getTerrainHeight(x, z - 0.18)) / 0.36;
+              normal.set(-slopeX, 1, -slopeZ).normalize();
+              slopeRotation.setFromUnitVectors(up, normal);
+              yawRotation.setFromAxisAngle(normal, random() * Math.PI * 2);
+              const heightScale = 0.72 + random() * 0.56;
+              const widthScale = 0.78 + random() * 0.42;
+              dummy.position.set(x, groundY + 0.012, z);
+              dummy.quaternion.copy(slopeRotation).multiply(yawRotation);
+              dummy.scale.set(widthScale, heightScale, widthScale);
+              dummy.updateMatrix();
+              matrices.push(dummy.matrix.clone());
 
-      while (placed < COUNT && tries < maxTries) {
-        tries++;
-
-        // Spread: 160 wide × 150 deep, centered on the field
-        const x = (rnd() - 0.5) * 155;
-        const z = -110 + rnd() * 145;
-
-        // ── Exclusion zones ──
-        // Castle interior
-        if (x > -14 && x < 14 && z > -55 && z < -20) continue;
-        // Boss arena (circle)
-        if (Math.hypot(x - 40, z + 45) < 17) continue;
-        // Ruin patches
-        if (Math.hypot(x + 30, z - 10) < 8) continue;
-        if (Math.hypot(x + 45, z + 40) < 8) continue;
-        // Castle walls & entrance corridor thick envelope
-        if (x > -17 && x < 17 && z > -58 && z < -17) continue;
-        // Central Paved Avenue (CAMINO) clean corridor (keeps main path 100% legible)
-        if (Math.abs(x) < 3.5 && z > -25 && z < 15) continue;
-
-        // ── Organic density: clumping via noise ──
-        const clump = Math.sin(x * 0.38) * Math.cos(z * 0.29) + Math.sin(x * 0.17 + z * 0.22) * 0.6;
-        // Create natural sparse patches (bare earth)
-        if (clump < -0.5 && rnd() > 0.15) continue;
-        // Dense clusters near center
-        const centerDist = Math.hypot(x, z + 35);
-        if (centerDist > 65 && rnd() > 0.55) continue;
-
-        // ── Placement ──
-        dummy.position.set(
-          x + (rnd() - 0.5) * 0.6,
-          0.01, // just above the ground plane
-          z + (rnd() - 0.5) * 0.6,
-        );
-        // Random rotation around Y (full 360°)
-        dummy.rotation.set(
-          (rnd() - 0.5) * 0.12,  // slight lean
-          rnd() * Math.PI * 2,
-          (rnd() - 0.5) * 0.12,
-        );
-        // Height variation: 0.45–1.6 (short scrub to tall reed)
-        const sy = 0.45 + rnd() * 1.15;
-        // XZ scale independent of Y for natural look
-        const sxz = 0.55 + rnd() * 0.75;
-        dummy.scale.set(sxz, sy, sxz);
-        dummy.updateMatrix();
-        grassMesh.setMatrixAt(placed, dummy.matrix);
-
-        // ── Rich color palette — 7 green variants ──
-        const ct = rnd();
-        let h: number, s: number, l: number;
-        if      (ct < 0.18) { h = 0.30; s = 0.80; l = 0.36 + rnd() * 0.08; } // vivid spring
-        else if (ct < 0.34) { h = 0.35; s = 0.65; l = 0.24 + rnd() * 0.08; } // dark forest
-        else if (ct < 0.50) { h = 0.27; s = 0.72; l = 0.40 + rnd() * 0.10; } // medium fresh
-        else if (ct < 0.63) { h = 0.23; s = 0.58; l = 0.38 + rnd() * 0.08; } // warm olive
-        else if (ct < 0.75) { h = 0.25; s = 0.85; l = 0.44 + rnd() * 0.10; } // lime accent
-        else if (ct < 0.88) { h = 0.18; s = 0.65; l = 0.46 + rnd() * 0.10; } // golden dry
-        else                { h = 0.32; s = 0.50; l = 0.30 + rnd() * 0.06; } // deep shade
-
-        grassMesh.setColorAt(placed, new THREE.Color().setHSL(h, s, l));
-        placed++;
+              const hue = 0.20 + random() * 0.11;
+              const saturation = 0.36 + random() * 0.22;
+              const lightness = 0.32 + random() * 0.16;
+              colors.push(new THREE.Color().setHSL(hue, saturation, lightness));
+            }
+          }
+          if (!matrices.length) continue;
+          const sector = new THREE.InstancedMesh(grassGeometry, grassMat, matrices.length);
+          sector.name = `grass-sector-${sectorX}-${sectorZ}`;
+          sector.userData.grassCenter = new THREE.Vector2(x0 + sectorSize * 0.5, z0 + sectorSize * 0.5);
+          sector.castShadow = false;
+          sector.receiveShadow = false;
+          sector.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+          matrices.forEach((matrix, index) => {
+            sector.setMatrixAt(index, matrix);
+            sector.setColorAt(index, colors[index]);
+          });
+          sector.instanceMatrix.needsUpdate = true;
+          if (sector.instanceColor) sector.instanceColor.needsUpdate = true;
+          scene.add(sector);
+          this.grassSectors.push(sector);
+          placedTotal += matrices.length;
+        }
       }
-
-      grassMesh.instanceMatrix.needsUpdate = true;
-      if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
-      scene.add(grassMesh);
-      console.log(`[Grass AAA] ✅ ${placed}/${COUNT} blades placed in ${tries} tries`);
+      console.info(`[Grass] ${placedTotal} low grass tufts in 20m culling sectors (${isMobile ? 'mobile' : 'desktop'} spacing ${spacing}m)`);
     })();
 
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -2825,6 +2684,17 @@ export class LevelToyStory {
       if (this.grassUniforms.uPlayerPos) {
         this.grassUniforms.uPlayerPos.value.copy(playerPos);
       }
+    }
+    this.grassCullElapsed -= delta;
+    if (this.grassCullElapsed <= 0) {
+      const grassDistanceSq = 152 * 152;
+      for (const sector of this.grassSectors) {
+        const center = sector.userData.grassCenter as THREE.Vector2;
+        const dx = playerPos.x - center.x;
+        const dz = playerPos.z - center.y;
+        sector.visible = dx * dx + dz * dz <= grassDistanceSq;
+      }
+      this.grassCullElapsed = 0.35;
     }
     if (this.cloudsUniforms) {
       this.cloudsUniforms.uTime.value = performance.now() / 1000.0;
