@@ -52,10 +52,12 @@ export class MainMenu {
   constructor(callbacks: MainMenuCallbacks) {
     this.callbacks = callbacks;
     const base = import.meta.env.BASE_URL;
+    this.introVideo.setAttribute('fetchpriority', 'high');
     this.introVideo.src = `${base}assets/cinematics/wukong-intro.mp4`;
+    this.idleVideo.preload = 'none';
     this.idleVideo.src = `${base}assets/cinematics/wukong-menu-idle.mp4`;
     this.idleVideo.loop = true;
-    this.startVideo.preload = 'auto';
+    this.startVideo.preload = 'none';
     this.startVideo.src = `${base}assets/cinematics/wukong-start.mp4`;
     this.loadPreferences();
     this.bindEvents();
@@ -336,6 +338,7 @@ export class MainMenu {
     if (this.startVideoPreparation) return this.startVideoPreparation;
 
     this.refreshContinueButton();
+    this.startVideo.preload = 'auto';
     this.startVideoPreparation = new Promise<void>((resolve, reject) => {
       let settled = false;
       const cleanup = () => {

@@ -94,16 +94,18 @@ export class Game {
     // previously kept the blue backdrop onscreen during the whole preparation.
     this.lastFrameTime = performance.now();
     requestAnimationFrame((t) => this.loop(t));
-    void Promise.all([musicPreparation, introVideoPreparation]).then(([musicReady, videoReady]) => {
-      if (musicReady && videoReady) {
-        void this.mainMenu.playIntro();
-        return;
-      }
+    const [musicReady, videoReady] = await Promise.all([musicPreparation, introVideoPreparation]);
+    if (musicReady && videoReady) {
+      // Present the intro's first frame before the heavier model and animation
+      // downloads start. On cold Chrome sessions those FBX requests could starve
+      // the 16 MB intro video while every resource competed for network capacity.
+      await this.mainMenu.playIntro();
+    } else {
       const message = !videoReady
-        ? 'No se pudo preparar el vídeo de intro. Comprueba la conexión y vuelve a intentarlo.'
-        : 'No se pudo preparar la música de la aventura. Comprueba la conexión y vuelve a intentarlo.';
+        ? 'No se pudo preparar el v?deo de intro. Comprueba la conexi?n y vuelve a intentarlo.'
+        : 'No se pudo preparar la m?sica de la aventura. Comprueba la conexi?n y vuelve a intentarlo.';
       this.mainMenu.showLoadingError(message, () => void this.retryIntroMedia());
-    });
+    }
 
     // 1. Load Player Model (GLB or Procedural Fallback)
     const playerData = await this.assetManager.loadPlayerModel();
