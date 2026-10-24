@@ -546,7 +546,7 @@ export class LevelToyStory {
         shader.uniforms.uTime = { value: 0 };
         shader.uniforms.uPlayerPos = { value: new THREE.Vector3(999, 999, 999) };
         this.grassUniforms = shader.uniforms;
-        shader.vertexShader = `uniform float uTime;\nuniform vec3 uPlayerPos;\n${shader.vertexShader}`;
+        shader.vertexShader = `uniform float uTime;\nuniform vec3 uPlayerPos;\nvarying float vGrassTip;\n${shader.vertexShader}`;
         shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `
           #include <begin_vertex>
           #ifdef USE_INSTANCING
@@ -555,6 +555,7 @@ export class LevelToyStory {
             vec3 wpos = vec3(0.0);
           #endif
           float tip = clamp(position.y / ${bladeHeight.toFixed(2)}, 0.0, 1.0);
+          vGrassTip = tip;
           float sway = (sin(uTime * 1.15 + wpos.x * 0.12 + wpos.z * 0.09) * 0.075
             + sin(uTime * 0.63 - wpos.x * 0.07 + wpos.z * 0.11) * 0.035) * tip * tip;
           transformed.x += sway;
@@ -564,10 +565,10 @@ export class LevelToyStory {
             transformed.xz += normalize(toPlayer) * (1.25 - distanceToPlayer) * 0.24 * tip;
           }
         `);
-        shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `
+        shader.fragmentShader = `varying float vGrassTip;\n${shader.fragmentShader}`.replace('#include <color_fragment>', `
           #include <color_fragment>
-          float tipWarm = smoothstep(0.58, 1.0, vUv.y);
-          diffuseColor.rgb *= mix(0.96, 1.08, vUv.y);
+          float tipWarm = smoothstep(0.58, 1.0, vGrassTip);
+          diffuseColor.rgb *= mix(0.96, 1.08, vGrassTip);
           diffuseColor.rgb += vec3(tipWarm * 0.07, tipWarm * 0.055, tipWarm * 0.004);
         `);
       };

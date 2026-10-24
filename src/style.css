@@ -747,6 +747,7 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
 .logo-de { fill: #fff0c9; stroke: #812919; stroke-width: 11px; font-size: 40px; }
 .logo-staff { filter: drop-shadow(0 3px 1px #39140e); }
 .menu-actions { display: grid; gap: clamp(8px, 1.1vh, 13px); margin: 6px 0 0 11%; }
+.menu-loading-status { margin: 10px 0 0 11%; color: #ffe7aa; font-size: clamp(12px, 1.2vw, 15px); font-weight: 700; text-shadow: 0 2px 4px #000; }
 .menu-button {
   display: flex;
   align-items: center;

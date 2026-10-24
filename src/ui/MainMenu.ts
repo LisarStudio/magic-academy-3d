@@ -44,8 +44,8 @@ export class MainMenu {
   private loadingRetry: () => void = () => window.location.reload();
   private transitionStarted = false;
   private startVideoReady = false;
-  private startVideoFailed = false;
   private startVideoPreparation: Promise<void> | null = null;
+  private gameplayReady = false;
   private introStartPending = false;
   private introFallbackStarted = false;
 
@@ -79,6 +79,15 @@ export class MainMenu {
     if (asset) status.textContent = `Cargando ${this.friendlyAssetName(asset)}…`;
   }
 
+  public prepareIntroVideo(): Promise<void> {
+    return this.waitForVideoData(this.introVideo, 'La_leyenda_de_Wukong_Intro');
+  }
+
+  public setGameplayReady(ready: boolean): void {
+    this.gameplayReady = ready;
+    this.refreshContinueButton();
+  }
+
   private friendlyAssetName(url: string): string {
     const name = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'recursos');
     if (/wukong|player/i.test(name)) return 'a Wukong';
@@ -108,31 +117,37 @@ export class MainMenu {
         return;
       }
       await this.startIntroVideo();
-    } catch {
-      // Intro playback is optional; continue into the menu instead of showing
-      // a dead-end loading error if a browser blocks or cannot decode the clip.
-      this.skipUnavailableIntro();
+    } catch (error) {
+      const mediaError = error instanceof Error ? error : new Error(String(error));
+      console.error('[MainMenu] Intro playback failed:', this.describeVideoFailure(this.introVideo, mediaError));
+      if (mediaError.name === 'NotAllowedError') this.showIntroStartPrompt();
+      else this.handleIntroMediaError();
     } finally {
       this.introStartPending = false;
     }
   }
 
-  private startIntroVideo(): Promise<void> {
+  private async startIntroVideo(): Promise<void> {
     this.introFallbackStarted = false;
     this.startIntroButton.classList.add('hidden');
-    this.loadingPanel.classList.add('hidden');
     this.mainMenu.classList.add('hidden');
+    if (this.introVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      throw new Error(`Intro frame was not prepared before playback (readyState=${this.introVideo.readyState}).`);
+    }
     this.introVideo.currentTime = 0;
     this.introVideo.onended = () => void this.enterMenuIdle();
-    this.introVideo.onerror = () => this.skipUnavailableIntro();
+    this.introVideo.onerror = () => this.handleIntroMediaError();
     this.introVideo.classList.add('is-visible');
     this.setState('Intro');
-    return this.introVideo.play();
+    await this.introVideo.play();
+    await this.waitForVideoFrame(this.introVideo);
+    this.loadingPanel.classList.add('hidden');
   }
 
   private showIntroStartPrompt(): void {
     this.introVideo.pause();
-    this.introVideo.classList.remove('is-visible');
+    this.introVideo.currentTime = 0;
+    this.introVideo.classList.add('is-visible');
     this.mainMenu.classList.add('hidden');
     this.loadingPanel.classList.remove('hidden');
     document.getElementById('loading-status')!.textContent = 'Todo está listo. Pulsa Comenzar para iniciar la aventura con música.';
@@ -143,12 +158,19 @@ export class MainMenu {
     this.setState('Loading');
   }
 
-  private skipUnavailableIntro(): void {
+  private handleIntroMediaError(): void {
     if (this.state !== 'Intro' || this.introFallbackStarted) return;
     this.introFallbackStarted = true;
+    console.error('[MainMenu] Intro media error:', this.describeVideoFailure(this.introVideo));
     this.introVideo.pause();
-    this.introVideo.classList.remove('is-visible');
-    void this.enterMenuIdle();
+    this.showLoadingError('No se pudo cargar la intro. Revisa la conexión e inténtalo otra vez.', () => {
+      this.introFallbackStarted = false;
+      this.introVideo.load();
+      void this.prepareIntroVideo().then(() => this.playIntro(true)).catch((error: unknown) => {
+        console.error('[MainMenu] Intro retry failed:', this.describeVideoFailure(this.introVideo, error));
+        this.showLoadingError('La intro sigue sin estar disponible. Comprueba el recurso e inténtalo de nuevo.', () => void this.playIntro(true));
+      });
+    });
   }
 
   private async enterMenuIdle(): Promise<void> {
@@ -156,24 +178,48 @@ export class MainMenu {
     this.idleVideo.currentTime = 0;
     try {
       await this.idleVideo.play();
+      await this.waitForVideoFrame(this.idleVideo);
       this.idleVideo.classList.add('is-visible');
       this.introVideo.classList.remove('is-visible');
       this.mainMenu.classList.remove('hidden');
-      this.refreshContinueButton();
       this.setState('MenuIdle');
-      void this.prepareStartVideo().catch(() => undefined);
+      this.refreshContinueButton();
+      void this.prepareStartVideo().catch((error: unknown) => {
+        console.error('[MainMenu] Start-video preparation failed:', this.describeVideoFailure(this.startVideo, error));
+        this.showDialogError('No se pudo preparar la transición. Reintenta para volver a cargarla.', () => void this.retryStartTransition('new'));
+      });
       window.setTimeout(() => {
         if (this.state === 'MenuIdle') {
           this.introVideo.pause();
           this.introVideo.currentTime = 0;
         }
       }, 800);
-    } catch {
-      // Keep the final intro frame behind the menu if the idle preview cannot play.
+    } catch (error) {
+      console.error('[MainMenu] Menu-idle playback failed:', this.describeVideoFailure(this.idleVideo, error));
+      this.showLoadingError('No se pudo reproducir el fondo animado del men?. Reintenta para volver a cargarlo.', () => void this.retryMenuIdleVideo());
+    }
+  }
+
+  private async retryMenuIdleVideo(): Promise<void> {
+    this.idleVideo.pause();
+    this.idleVideo.load();
+    try {
+      await this.waitForVideoData(this.idleVideo, 'MenuIdle_3x_preview');
+      await this.idleVideo.play();
+      await this.waitForVideoFrame(this.idleVideo);
+      this.idleVideo.classList.add('is-visible');
+      this.introVideo.classList.remove('is-visible');
+      this.loadingPanel.classList.add('hidden');
       this.mainMenu.classList.remove('hidden');
-      this.refreshContinueButton();
       this.setState('MenuIdle');
-      void this.prepareStartVideo().catch(() => undefined);
+      this.refreshContinueButton();
+      void this.prepareStartVideo().catch((retryError: unknown) => {
+        console.error('[MainMenu] Start-video retry failed:', this.describeVideoFailure(this.startVideo, retryError));
+        this.showDialogError('No se pudo preparar la transici?n. Reintenta para volver a cargarla.', () => void this.retryStartTransition('new'));
+      });
+    } catch (retryError) {
+      console.error('[MainMenu] Menu-idle retry failed:', this.describeVideoFailure(this.idleVideo, retryError));
+      this.showLoadingError('El fondo animado sigue sin estar disponible. Revisa el recurso e int?ntalo de nuevo.', () => void this.retryMenuIdleVideo());
     }
   }
 
@@ -181,8 +227,6 @@ export class MainMenu {
     this.loadingRetry = retry;
     this.loadingPanel.classList.remove('hidden');
     this.mainMenu.classList.add('hidden');
-    this.introVideo.classList.remove('is-visible');
-    this.idleVideo.classList.remove('is-visible');
     document.getElementById('loading-status')!.textContent = message;
     document.getElementById('loading-percent')!.textContent = 'No se pudo completar la carga';
     document.getElementById('loading-progress')!.style.width = '0';
@@ -193,7 +237,7 @@ export class MainMenu {
 
   private bindEvents(): void {
     this.introVideo.addEventListener('error', () => {
-      this.skipUnavailableIntro();
+      this.handleIntroMediaError();
     });
     document.getElementById('btn-retry-loading')!.addEventListener('click', () => this.loadingRetry());
     this.newGameButton.addEventListener('click', () => this.requestStart('new'));
@@ -267,7 +311,6 @@ export class MainMenu {
       if (this.state === 'StartingGame') {
         this.recoverStartTransition('No se pudo reproducir la transición. Reintenta para volver a cargar el vídeo.');
       } else {
-        this.startVideoFailed = true;
         this.refreshContinueButton();
       }
     });
@@ -275,6 +318,7 @@ export class MainMenu {
 
   private requestStart(mode: StartMode): void {
     if (this.state !== 'MenuIdle' || this.transitionStarted) return;
+    if (!this.gameplayReady || !this.startVideoReady) return;
     if (mode === 'continue') {
       if (!this.hasValidSave()) { this.refreshContinueButton(); return; }
       this.beginTransition('continue');
@@ -291,7 +335,6 @@ export class MainMenu {
     if (this.startVideoReady) return;
     if (this.startVideoPreparation) return this.startVideoPreparation;
 
-    this.startVideoFailed = false;
     this.refreshContinueButton();
     this.startVideoPreparation = new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -312,16 +355,13 @@ export class MainMenu {
         this.startVideo.pause();
         this.startVideo.currentTime = 0;
         this.startVideoReady = true;
-        this.startVideoFailed = false;
         this.refreshContinueButton();
         resolve();
       };
-      const onError = () => fail(new Error('Start video could not be loaded.'));
+      const onError = () => fail(new Error(this.describeVideoFailure(this.startVideo)));
       const onLoadedData = () => {
         if (this.startVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
-        if (!this.requestVideoFrameCallback(this.startVideo, framePresented)) {
-          requestAnimationFrame(() => framePresented());
-        }
+        void this.waitForVideoFrame(this.startVideo).then(framePresented, fail);
         this.startVideo.play().catch((error: unknown) => fail(error instanceof Error ? error : new Error('Start video playback was blocked.')));
       };
 
@@ -330,7 +370,6 @@ export class MainMenu {
       if (this.startVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) onLoadedData();
       else this.startVideo.load();
     }).catch((error: unknown) => {
-      this.startVideoFailed = true;
       this.startVideo.pause();
       this.startVideo.currentTime = 0;
       this.refreshContinueButton();
@@ -370,18 +409,68 @@ export class MainMenu {
   }
 
   private waitForVideoFrame(video: HTMLVideoElement): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.requestVideoFrameCallback(video, resolve)) {
-        video.addEventListener('playing', () => requestAnimationFrame(() => resolve()), { once: true });
+    return new Promise((resolve, reject) => {
+      let timeoutId = 0;
+      const cleanup = () => {
+        window.clearTimeout(timeoutId);
+        video.removeEventListener('error', onError);
+        video.removeEventListener('loadeddata', onData);
+        video.removeEventListener('playing', onPlaying);
+      };
+      const onError = () => { cleanup(); reject(new Error(this.describeVideoFailure(video))); };
+      const onFrameReady = () => {
+        if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth <= 0) return;
+        cleanup();
+        // HAVE_CURRENT_DATA means the decoded current frame is available. Let one
+        // paint happen before swapping the layer so the compositor has a frame.
+        requestAnimationFrame(() => resolve());
+      };
+      const onData = () => onFrameReady();
+      const onPlaying = () => onFrameReady();
+      video.addEventListener('error', onError, { once: true });
+      video.addEventListener('loadeddata', onData);
+      video.addEventListener('playing', onPlaying);
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0) {
+        onFrameReady();
+        return;
       }
+      timeoutId = window.setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timed out waiting for decoded video frame: ${this.describeVideoFailure(video)}`));
+      }, 10_000);
     });
   }
 
-  private requestVideoFrameCallback(video: HTMLVideoElement, callback: () => void): boolean {
-    const frameVideo = video as unknown as { requestVideoFrameCallback?: (callback: () => void) => number };
-    if (typeof frameVideo.requestVideoFrameCallback !== 'function') return false;
-    frameVideo.requestVideoFrameCallback(callback);
-    return true;
+  private waitForVideoData(video: HTMLVideoElement, label = video.currentSrc || video.id): Promise<void> {
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return Promise.resolve();
+    if (video.error) return Promise.reject(new Error(this.describeVideoFailure(video)));
+
+    return new Promise<void>((resolve, reject) => {
+      let timeoutId = 0;
+      const cleanup = () => {
+        window.clearTimeout(timeoutId);
+        video.removeEventListener('loadeddata', onReady);
+        video.removeEventListener('error', onError);
+        video.removeEventListener('abort', onAbort);
+      };
+      const onReady = () => { cleanup(); resolve(); };
+      const onError = () => { cleanup(); reject(new Error(this.describeVideoFailure(video))); };
+      const onAbort = () => { cleanup(); reject(new Error(`Video request aborted: ${label}`)); };
+      video.addEventListener('loadeddata', onReady, { once: true });
+      video.addEventListener('error', onError, { once: true });
+      video.addEventListener('abort', onAbort, { once: true });
+      timeoutId = window.setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timed out loading video data: ${label} (readyState=${video.readyState}, networkState=${video.networkState})`));
+      }, 30_000);
+      if (video.networkState === HTMLMediaElement.NETWORK_EMPTY) video.load();
+    });
+  }
+
+  private describeVideoFailure(video: HTMLVideoElement, cause?: unknown): string {
+    const mediaError = video.error;
+    const reason = cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause || 'media element error');
+    return `${video.currentSrc || video.src || video.id}; mediaError=${mediaError?.code ?? 'none'}; readyState=${video.readyState}; networkState=${video.networkState}; ${reason}`;
   }
 
   private waitForOpacityTransition(element: HTMLElement): Promise<void> {
@@ -421,7 +510,6 @@ export class MainMenu {
 
   private async retryStartTransition(mode: StartMode): Promise<void> {
     this.startVideoReady = false;
-    this.startVideoFailed = false;
     this.refreshContinueButton();
     this.startVideo.currentTime = 0;
     try {
@@ -479,11 +567,16 @@ export class MainMenu {
 
   private refreshContinueButton(): void {
     const canContinue = this.hasValidSave();
-    const canStart = this.startVideoReady || this.startVideoFailed;
+    const canStart = this.gameplayReady && this.startVideoReady;
     this.continueButton.disabled = !canContinue || !canStart;
     this.newGameButton.disabled = !canStart;
     this.continueButton.classList.toggle('menu-button-primary', canContinue);
     this.newGameButton.classList.toggle('menu-button-primary', !canContinue);
+    const loadingStatus = document.getElementById('menu-loading-status');
+    if (loadingStatus) {
+      loadingStatus.textContent = !this.gameplayReady ? 'Preparando el nivel…' : !this.startVideoReady ? 'Preparando la transición…' : '';
+      loadingStatus.classList.toggle('hidden', this.state !== 'MenuIdle' || canStart);
+    }
   }
 
   private openDialog(view: 'options' | 'credits' | 'confirm'): void {

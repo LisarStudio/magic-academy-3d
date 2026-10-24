@@ -84,6 +84,26 @@ export class Game {
       console.warn('[Game] Could not prepare Wukong music before the intro:', error);
       return false;
     });
+    const introVideoPreparation = this.mainMenu.prepareIntroVideo().then(() => true, (error: unknown) => {
+      console.error('[Game] Intro video could not be decoded:', error);
+      return false;
+    });
+
+    // Start drawing and launch the cinematic as soon as its own media is ready.
+    // Waiting for all gameplay clips, the level and shader compilation here
+    // previously kept the blue backdrop onscreen during the whole preparation.
+    this.lastFrameTime = performance.now();
+    requestAnimationFrame((t) => this.loop(t));
+    void Promise.all([musicPreparation, introVideoPreparation]).then(([musicReady, videoReady]) => {
+      if (musicReady && videoReady) {
+        void this.mainMenu.playIntro();
+        return;
+      }
+      const message = !videoReady
+        ? 'No se pudo preparar el vídeo de intro. Comprueba la conexión y vuelve a intentarlo.'
+        : 'No se pudo preparar la música de la aventura. Comprueba la conexión y vuelve a intentarlo.';
+      this.mainMenu.showLoadingError(message, () => void this.retryIntroMedia());
+    });
 
     // 1. Load Player Model (GLB or Procedural Fallback)
     const playerData = await this.assetManager.loadPlayerModel();
@@ -369,14 +389,7 @@ export class Game {
       }
     };
 
-    // 8. Start Game Loop
-    if (await musicPreparation) {
-      void this.mainMenu.playIntro();
-    } else {
-      this.mainMenu.showLoadingError('No se pudo preparar la música. Comprueba la conexión e inténtalo de nuevo.', () => void this.retryIntroMusic());
-    }
-    this.lastFrameTime = performance.now();
-    requestAnimationFrame((t) => this.loop(t));
+    this.mainMenu.setGameplayReady(true);
   }
 
   private initUIListeners(): void {
@@ -437,16 +450,16 @@ export class Game {
     this.hud.showGameplayHUD();
   }
 
-  private async retryIntroMusic(): Promise<void> {
+  private async retryIntroMedia(): Promise<void> {
     try {
       await this.audioManager.prepareMusic();
-      await this.mainMenu.playIntro();
+      await this.mainMenu.prepareIntroVideo();
+      await this.mainMenu.playIntro(true);
     } catch (error) {
-      console.warn('[Game] Music retry failed:', error);
-      this.mainMenu.showLoadingError('La música todavía no está disponible. Inténtalo de nuevo.', () => void this.retryIntroMusic());
+      console.error('[Game] Intro media retry failed:', error);
+      this.mainMenu.showLoadingError('El vídeo o la música todavía no están disponibles. Inténtalo de nuevo.', () => void this.retryIntroMedia());
     }
   }
-
   public togglePause(forceState?: boolean): void {
     const nextState = forceState !== undefined ? forceState : !this.isPaused;
     this.isPaused = nextState;
