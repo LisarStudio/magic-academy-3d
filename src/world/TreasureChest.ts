@@ -83,5 +83,13 @@ export class TreasureChest {
     };
     animateLid();
   }
+
+  /** Restore the already-open state from a saved game without replaying audio or animation. */
+  public restoreOpen(): void {
+    this.isUnlocked = true;
+    this.lockMesh.visible = false;
+    this.lockLight.color.setHex(0x3df3ff);
+    this.lidMesh.rotation.x = -Math.PI * 0.55;
+  }
 }
 

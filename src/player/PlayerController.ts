@@ -183,12 +183,16 @@ export class PlayerController {
       const uniformInv = spineWorldScale.x > 0.00001 ? 1.0 / spineWorldScale.x : 1.0;
       backStaff.scale.set(uniformInv, uniformInv, uniformInv);
 
-      // Snug against the upper thoracic back, diagonal orientation (/): lower-left waist to upper-right shoulder
-      backStaff.position.copy(def.backAttachment.position);
+      // The GLB rig includes an internal 0.01 scale below the character root.
+      // Convert metre offsets to the actual local units of the Spine2 socket.
+      backStaff.position.copy(def.backAttachment.position).divide(spineWorldScale);
       backStaff.rotation.copy(def.backAttachment.rotation);
       (spineBone as THREE.Object3D).add(backStaff);
     } else {
-      backStaff.position.set(0.02, 1.05, -0.11);
+      const rootWorldScale = new THREE.Vector3();
+      this.mesh.getWorldScale(rootWorldScale);
+      backStaff.scale.setScalar(rootWorldScale.x > 0.00001 ? 1 / rootWorldScale.x : 1);
+      backStaff.position.set(0.02 / rootWorldScale.x, 1.05 / rootWorldScale.y, -0.20 / rootWorldScale.z);
       backStaff.rotation.copy(def.backAttachment.rotation);
       this.mesh.add(backStaff);
     }
@@ -208,7 +212,7 @@ export class PlayerController {
       const uniformInv = handWorldScale.x > 0.00001 ? 1.0 / handWorldScale.x : 1.0;
       handStaff.scale.set(uniformInv, uniformInv, uniformInv);
 
-      handStaff.position.copy(def.handAttachment.position);
+      handStaff.position.copy(def.handAttachment.position).divide(handWorldScale);
       handStaff.rotation.copy(def.handAttachment.rotation);
       (rightHandBone as THREE.Object3D).add(handStaff);
     } else {
@@ -232,6 +236,19 @@ export class PlayerController {
     if (this.wandEffect && this.wandEffect.wandMesh) {
       this.wandEffect.wandMesh.visible = false;
     }
+  }
+
+  /** Clone the already-built staff geometry/materials for chest presentation. */
+  public cloneStaffProp(name = 'staff_pickup_prop'): THREE.Group | null {
+    const source = this.staffBackMesh || this.staffHandMesh;
+    if (!source) return null;
+    const prop = source.clone(true);
+    prop.name = name;
+    prop.position.set(0, 0, 0);
+    prop.rotation.set(0, 0, 0);
+    prop.scale.set(1, 1, 1);
+    prop.visible = true;
+    return prop;
   }
 
   public useMana(amount: number): boolean {
@@ -300,7 +317,7 @@ export class PlayerController {
   private static readonly DOWN_DIR = new THREE.Vector3(0, -1, 0);
   private static readonly TEMP_NORM = new THREE.Vector3();
 
-  public update(delta: number, input: InputManager, cameraController: CameraController): void {
+  public update(delta: number, input: InputManager, cameraController: CameraController, animationDelta = delta): void {
     // ── Fail-Safe Control Recovery ──────────────────────────────────────────
     // If controls are locked but NO cinematic or pickup sequence is active, force-unlock!
     const level = (window as any).gameInstance?.level01;
@@ -335,7 +352,7 @@ export class PlayerController {
     }
 
     if (this.isControlsLocked) {
-      this.animationController.update(delta);
+      this.animationController.update(animationDelta);
       return;
     }
 
@@ -630,7 +647,7 @@ export class PlayerController {
 
     this.wandEffect.update(delta);
     this.attackAura.update(delta);
-    this.animationController.update(delta);
+    this.animationController.update(animationDelta);
 
     // 7. Abyss Death (Fall off map)
     if (this.mesh.position.y < -10 && !this.isMovementLocked) {

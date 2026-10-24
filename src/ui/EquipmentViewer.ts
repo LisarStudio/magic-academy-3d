@@ -159,7 +159,7 @@ export class EquipmentViewer {
       // Strictly uniform scale to guarantee zero deformation in 3D preview
       const uniformInv = spineWorldScale.x > 0.00001 ? 1.0 / spineWorldScale.x : 1.0;
       this.previewStaffBack.scale.set(uniformInv, uniformInv, uniformInv);
-      this.previewStaffBack.position.copy(def.backAttachment.position);
+      this.previewStaffBack.position.copy(def.backAttachment.position).divide(spineWorldScale);
       this.previewStaffBack.rotation.copy(def.backAttachment.rotation);
       (spineBone as THREE.Object3D).add(this.previewStaffBack);
     } else {

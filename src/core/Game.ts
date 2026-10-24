@@ -155,11 +155,20 @@ export class Game {
     this.cameraController.setTarget(this.player.mesh);
 
     // Pre-compile WebGL shaders & pipeline into GPU memory to eliminate runtime shader compilation stutter
+    const backStaffWasVisible = this.player.staffBackMesh?.visible ?? false;
+    const handStaffWasVisible = this.player.staffHandMesh?.visible ?? false;
     try {
+      // The sockets are normally hidden until pickup. Compile their shared
+      // materials before the player can interact with the chest.
+      if (this.player.staffBackMesh) this.player.staffBackMesh.visible = true;
+      if (this.player.staffHandMesh) this.player.staffHandMesh.visible = true;
       this.sceneManager.renderer.compile(this.sceneManager.scene, this.sceneManager.camera);
       console.log('[Game] ✅ Pre-compiled all WebGL shaders and materials into GPU memory.');
     } catch (e) {
       console.warn('[Game] Shader precompilation warning:', e);
+    } finally {
+      if (this.player.staffBackMesh) this.player.staffBackMesh.visible = backStaffWasVisible;
+      if (this.player.staffHandMesh) this.player.staffHandMesh.visible = handStaffWasVisible;
     }
 
     // 6. Bind Player & HUD Status Callbacks
@@ -489,12 +498,17 @@ export class Game {
   private loop(currentTime: number): void {
     // Limit movement and collision updates after a slow mobile frame; a 100 ms
     // step moves Wukong almost a meter at sprint speed and looks like teleporting.
-    const delta = Math.min(1 / 30, Math.max(0, (currentTime - this.lastFrameTime) / 1000));
+    const elapsed = Math.max(0, (currentTime - this.lastFrameTime) / 1000);
+    const delta = Math.min(1 / 30, elapsed);
+    // Keep animation playback on real elapsed time while movement/physics use
+    // the bounded step above; otherwise the full pickup clip can take many
+    // tens of seconds on a throttled device and outlive its timeline.
+    const animationDelta = Math.min(0.5, elapsed);
     this.lastFrameTime = currentTime;
     this.hud.mobileControls?.setGameplayEnabled(this.menuState === 'Playing' && !this.isPaused);
 
     if (!this.isPaused) {
-      this.update(delta);
+      this.update(delta, animationDelta);
     }
     this.sceneManager.render();
 
@@ -509,16 +523,16 @@ export class Game {
     requestAnimationFrame((t) => this.loop(t));
   }
 
-  private update(delta: number): void {
+  private update(delta: number, animationDelta: number): void {
     if (this.menuState !== 'Playing') return;
     this.inputManager.beginFrame();
     // Update Game Components
     if (this.cinematicCamera.isActive()) {
       this.cinematicCamera.update(delta);
       // Still update player animations during cinematics
-      this.player.update(delta, this.inputManager, this.cameraController);
+      this.player.update(delta, this.inputManager, this.cameraController, animationDelta);
     } else {
-      this.player.update(delta, this.inputManager, this.cameraController);
+      this.player.update(delta, this.inputManager, this.cameraController, animationDelta);
       this.cameraController.update(delta, this.inputManager);
     }
 
@@ -562,6 +576,7 @@ export class Game {
       mana: this.player.mana,
       maxMana: this.player.maxMana,
       hasStaff: this.player.hasStaff,
+      staffEquipped: this.player.staffEquipped,
       coinsCount: this.collectibleSystem.coinCount,
       gekkoMissionState: this.level01.gekkoMissionState,
       checkpointId: this.checkpointManager.getCurrentCheckpointId(),
@@ -604,9 +619,10 @@ export class Game {
         this.hud.setMana(this.player.mana, this.player.maxMana);
       }
       if (data.hasStaff) {
-        this.player.hasStaff = true;
-        this.player.setStaffVisibility(true);
-        this.player.attachStaffToBack();
+        // Old saves only had hasStaff; treat that as equipped so continuing
+        // a collected-staff save restores both the weapon mode and back socket.
+        this.player.obtainWeapon('STAFF', data.staffEquipped !== false);
+        if (data.staffEquipped === false) this.player.unequipStaff();
       }
       if (data.coinsCount !== undefined) {
         this.collectibleSystem.coinCount = data.coinsCount;
@@ -624,6 +640,7 @@ export class Game {
       if (data.stateFlags && typeof data.stateFlags === 'object') {
         Object.assign(this.level01.stateFlags, data.stateFlags);
       }
+      this.level01.restoreStaffChest();
       // Older saves only recorded that the intro cinematic had played. Allow
       // that encounter to be attempted again unless its victory was saved.
       this.level01.stateFlags.bossDefeated = data.stateFlags?.bossDefeated === true;

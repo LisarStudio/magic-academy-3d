@@ -277,12 +277,18 @@ export class AnimationController {
    * Play the one-shot TakeItem pickup animation. When it finishes,
    * switch to Armed mode and call onComplete.
    */
-  public playTakeItemAnimation(onComplete?: () => void): void {
+  public playTakeItemAnimation(onContact?: () => void, onComplete?: (completed: boolean) => void): void {
     const action = this.allActions.get('TakeItem');
     if (!action || !this.mixer) {
-      // No TakeItem clip available — just switch immediately
-      this.setArmed(true);
-      if (onComplete) onComplete();
+      onContact?.();
+      onComplete?.(false);
+      return;
+    }
+
+    const duration = action.getClip().duration;
+    if (!Number.isFinite(duration) || duration <= 0 || action.getClip().tracks.length === 0) {
+      onContact?.();
+      onComplete?.(false);
       return;
     }
 
@@ -293,19 +299,74 @@ export class AnimationController {
       this.currentAction.fadeOut(0.2);
     }
 
-    action.reset().setEffectiveWeight(1).fadeIn(0.15).play();
+    action.reset().setLoop(THREE.LoopOnce, 1).setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(0.15).play();
+    action.clampWhenFinished = true;
     this.currentAction = action;
+    this.currentState = 'Idle';
 
+    let contacted = false;
+    let settled = false;
+    let lastActionTime = action.time;
+    let stalledFrames = 0;
+    const contactAt = duration * 0.72;
+    const contact = () => {
+      if (contacted) return;
+      contacted = true;
+      try {
+        onContact?.();
+      } catch (error) {
+        console.error('[AnimCtrl] TakeItem contact callback failed:', error);
+      }
+    };
+    const finish = (completed: boolean) => {
+      if (settled) return;
+      settled = true;
+      this.mixer?.removeEventListener('finished', onFinished as any);
+      contact();
+      this.isPlayingOneShot = false;
+      try {
+        onComplete?.(completed);
+      } catch (error) {
+        console.error('[AnimCtrl] TakeItem completion callback failed:', error);
+      }
+    };
     const onFinished = (e: { action: THREE.AnimationAction }) => {
       if (e.action === action) {
-        this.mixer?.removeEventListener('finished', onFinished as any);
-        this.isPlayingOneShot = false;
-        this.setArmed(true);
-        if (onComplete) onComplete();
+        finish(true);
       }
     };
 
     this.mixer.addEventListener('finished', onFinished as any);
+
+    const checkContact = () => {
+      if (settled) return;
+      if (!this.isPlayingOneShot || this.currentAction !== action) {
+        finish(false);
+        return;
+      }
+      if (action.time > lastActionTime + 0.0001) {
+        lastActionTime = action.time;
+        stalledFrames = 0;
+      } else {
+        stalledFrames++;
+      }
+      if (action.time >= contactAt) contact();
+      // The mixer 'finished' event is the primary signal, but also watch the
+      // action clock so a dropped event cannot leave the interaction locked.
+      if (action.time >= duration - 0.025) {
+        finish(true);
+        return;
+      }
+      // A stalled mixer (stopped action or external interruption) must never
+      // strand the player. Count actual render frames rather than wall-clock
+      // milliseconds so a slow device can still finish the full clip.
+      if (stalledFrames >= 180 || !action.isRunning()) {
+        finish(false);
+        return;
+      }
+      requestAnimationFrame(checkContact);
+    };
+    requestAnimationFrame(checkContact);
   }
 
   /**

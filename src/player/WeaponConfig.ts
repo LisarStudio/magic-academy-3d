@@ -41,8 +41,10 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDefinition> = {
       fallbackBoneNames: ['spine1', 'spine'],
       // Harmonious heroic diagonal: Top-Right (over right shoulder) to Bottom-Left (waist)
       // Clears head, clears monkey tail on left, flush against back fabric
-      position: new THREE.Vector3(0.00, 0.12, -0.115),
-      rotation: new THREE.Euler(0.06, -0.08, 0.68, 'XYZ')
+      // Offsets are metres in the local bone axes. PlayerController converts
+      // them to this rig's (centimetre-scaled) bone coordinates at binding.
+      position: new THREE.Vector3(0.02, -0.28, -0.22),
+      rotation: new THREE.Euler(0.02, -0.06, 0.78, 'XYZ')
     },
     handAttachment: {
       boneNameSubstrings: ['righthand'],

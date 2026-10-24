@@ -147,8 +147,8 @@ export class ItemPickupVFX {
     }
 
     // 5. Play TakeItem animation clip
-    player.animationController.playTakeItemAnimation(() => {
-      // Cleanup after clip finishes
+    player.animationController.playTakeItemAnimation(undefined, () => {
+      // This older pickup presentation owns its own completion callback below.
     });
 
     // 6. Presentation animation loop over ~2.0 seconds

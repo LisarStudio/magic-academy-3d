@@ -2926,6 +2926,7 @@ export class LevelToyStory {
       if (openStaffChest && !this.staffChest.isUnlocked) {
         this.stateFlags.staffFound = true;
         this.staffChest.isUnlocked = true;
+        this.isCinematicPlaying = true;
         hud?.hideInteractionPrompt();
 
         // Pause enemy AI!
@@ -2944,6 +2945,7 @@ export class LevelToyStory {
           },
           onComplete: () => {
             console.log('[LevelToyStory] Staff cinematic complete — gameplay resumes.');
+            this.isCinematicPlaying = false;
             this.subtitleSystem.show('Báculo Mágico', hud?.isTouchDevice?.() ? '¡Has obtenido el Báculo Sagrado! Está guardado a la espalda. Pulsa Golpe para atacar.' : '¡Has obtenido el Báculo Sagrado! Báculo guardado a la espalda. Ataca con Click Izquierdo.');
             // Resume enemy AI!
             this.enemies.forEach(e => e.isPaused = false);
@@ -2952,6 +2954,7 @@ export class LevelToyStory {
 
         cinematic.run().catch(err => {
           console.error('[LevelToyStory] ChestCinematic error:', err);
+          this.isCinematicPlaying = false;
           this.player.isMovementLocked = false;
           this.player.hasStaff = true;
           this.player.setStaffVisibility(true);
@@ -2969,6 +2972,10 @@ export class LevelToyStory {
     this.stateFlags.bossCinematicPlayed = true;
     this.bossEnemy.dispose();
     (window as any).gameInstance?.hud?.hideBossHealth();
+  }
+
+  public restoreStaffChest(): void {
+    if (this.stateFlags.staffFound) this.staffChest.restoreOpen();
   }
 
   private showCombatControlsHint(): void {
