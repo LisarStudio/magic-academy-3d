@@ -1,6 +1,15 @@
 export class AudioManager {
   private ctx: AudioContext | null = null;
-  private bgmAudio: HTMLAudioElement | null = null;
+  private readonly bgmAudio = new Audio();
+  private readonly musicPaths = {
+    intro: 'assets/music/wukong-intro-theme.mp3',
+    gameplayB: 'assets/music/wukong-game-lisar-studio.mp3'
+  } as const;
+  private readonly musicUrls = new Map<keyof typeof this.musicPaths, string>();
+  private musicPreparation: Promise<void> | null = null;
+  private musicPrepared = false;
+  private musicMode: 'intro' | 'gameplay' | null = null;
+  private currentMusicTrack: keyof typeof this.musicPaths | null = null;
 
   // Volume channels
   public masterVolume = 1.0;
@@ -11,6 +20,9 @@ export class AudioManager {
   private isAudioUnlocked = false;
 
   constructor() {
+    this.bgmAudio.preload = 'auto';
+    this.bgmAudio.volume = this.musicVolume * this.masterVolume;
+    this.bgmAudio.addEventListener('ended', () => this.playNextGameplayTrack());
     this.setupMobileTouchUnlock();
   }
 
@@ -29,7 +41,7 @@ export class AudioManager {
           ctx.resume();
         }
 
-        if (this.bgmAudio && this.bgmAudio.paused) {
+        if (this.musicMode && this.bgmAudio.paused) {
           this.bgmAudio.play().catch(e => console.warn('[AudioManager] BGM unlock resume error:', e));
         }
 
@@ -64,22 +76,103 @@ export class AudioManager {
     return this.ctx;
   }
 
-  public startBGM(): void {
-    if (this.bgmAudio) return;
-    
-    this.bgmAudio = new Audio(import.meta.env.BASE_URL + 'assets/Castle Dawn Escape.mp3');
-    this.bgmAudio.loop = true;
-    this.bgmAudio.volume = this.musicVolume * this.masterVolume;
-    this.bgmAudio.play().catch(err => {
-      console.warn('[AudioManager] BGM autoplay blocked or failed to load:', err);
+  public prepareMusic(): Promise<void> {
+    if (this.musicPrepared) return Promise.resolve();
+    if (this.musicPreparation) return this.musicPreparation;
+
+    const base = import.meta.env.BASE_URL;
+    this.musicPreparation = Promise.all(
+      Object.entries(this.musicPaths).map(async ([key, path]) => {
+        const response = await fetch(`${base}${path}`, { cache: 'force-cache' });
+        if (!response.ok) throw new Error(`Could not load music asset: ${path} (${response.status})`);
+        const blob = await response.blob();
+        this.musicUrls.set(key as keyof typeof this.musicPaths, URL.createObjectURL(blob));
+      })
+    ).then(async () => {
+      this.setMusicSource('intro');
+      this.bgmAudio.loop = true;
+      await new Promise<void>((resolve, reject) => {
+        if (this.bgmAudio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+          resolve();
+          return;
+        }
+        const onCanPlay = () => { cleanup(); resolve(); };
+        const onError = () => { cleanup(); reject(new Error('The intro music could not be decoded.')); };
+        const cleanup = () => {
+          this.bgmAudio.removeEventListener('canplay', onCanPlay);
+          this.bgmAudio.removeEventListener('error', onError);
+        };
+        this.bgmAudio.addEventListener('canplay', onCanPlay, { once: true });
+        this.bgmAudio.addEventListener('error', onError, { once: true });
+      });
+      // Source selection above is done only before playback or when a gameplay track ends.
+      // The intro starts at its first prepared sample; state changes never call this path.
+      this.bgmAudio.currentTime = 0;
+      this.musicPrepared = true;
+    }).catch((error: unknown) => {
+      for (const url of this.musicUrls.values()) URL.revokeObjectURL(url);
+      this.musicUrls.clear();
+      throw error;
+    }).finally(() => {
+      this.musicPreparation = null;
     });
+
+    return this.musicPreparation;
+  }
+
+  public async startIntroMusic(): Promise<boolean> {
+    if (!this.musicPrepared) return false;
+    this.musicMode = 'intro';
+    this.bgmAudio.loop = true;
+    if (this.currentMusicTrack !== 'intro') this.setMusicSource('intro');
+    if (!this.bgmAudio.paused && this.currentMusicTrack === 'intro') return true;
+
+    try {
+      await this.bgmAudio.play();
+      return true;
+    } catch (error) {
+      console.info('[AudioManager] Waiting for a user gesture to start the intro music.', error);
+      return false;
+    }
+  }
+
+  public startGameplayMusic(): void {
+    if (!this.musicPrepared) return;
+    this.musicMode = 'gameplay';
+    this.bgmAudio.loop = false;
+    const nextTrack = this.pickGameplayTrack();
+    if (nextTrack !== this.currentMusicTrack) this.setMusicSource(nextTrack);
+    if (this.bgmAudio.paused) {
+      this.bgmAudio.play().catch(error => console.warn('[AudioManager] Gameplay music playback failed:', error));
+    }
+  }
+
+  private playNextGameplayTrack(): void {
+    if (this.musicMode !== 'gameplay') return;
+    const nextTrack = this.pickGameplayTrack();
+    if (nextTrack !== this.currentMusicTrack) this.setMusicSource(nextTrack);
+    this.bgmAudio.loop = false;
+    this.bgmAudio.play().catch(error => console.warn('[AudioManager] Gameplay playlist could not continue:', error));
+  }
+
+  private pickGameplayTrack(): 'intro' | 'gameplayB' {
+    const choices: Array<'intro' | 'gameplayB'> = ['intro', 'gameplayB'];
+    return choices[Math.floor(Math.random() * choices.length)];
+  }
+
+  private setMusicSource(track: keyof typeof this.musicPaths): void {
+    const url = this.musicUrls.get(track);
+    if (!url) return;
+    this.bgmAudio.pause();
+    this.bgmAudio.src = url;
+    this.bgmAudio.load();
+    this.bgmAudio.volume = this.musicVolume * this.masterVolume;
+    this.currentMusicTrack = track;
   }
 
   public setMusicVolume(volume: number): void {
     this.musicVolume = Math.max(0, Math.min(1.0, volume));
-    if (this.bgmAudio) {
-      this.bgmAudio.volume = this.musicVolume * this.masterVolume;
-    }
+    this.bgmAudio.volume = this.musicVolume * this.masterVolume;
   }
 
   public setSFXVolume(volume: number): void {
@@ -102,13 +195,6 @@ export class AudioManager {
     gain.connect(ctx.destination);
     oscillator.start(now);
     oscillator.stop(now + 0.1);
-  }
-
-  public stopBGM(): void {
-    if (this.bgmAudio) {
-      this.bgmAudio.pause();
-      this.bgmAudio.currentTime = 0;
-    }
   }
 
   // ── Multi-Variant Physical Hit Impact SFX (with pitch/volume variation) ──────

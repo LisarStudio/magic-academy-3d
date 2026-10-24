@@ -58,6 +58,7 @@ export class Game {
 
     this.mainMenu = new MainMenu({
       onStateChange: (state) => { this.menuState = state; },
+      onStartIntroMusic: () => this.audioManager.startIntroMusic(),
       onBeginTransition: () => {
         this.audioManager.resume();
         this.inputManager.resetInputs();
@@ -83,6 +84,10 @@ export class Game {
 
   public async start(): Promise<void> {
     console.log('[Game] Initializing 3D Magic Academy Vertical Slice...');
+    const musicPreparation = this.audioManager.prepareMusic().then(() => true, (error: unknown) => {
+      console.warn('[Game] Could not prepare Wukong music before the intro:', error);
+      return false;
+    });
 
     // 1. Load Player Model (GLB or Procedural Fallback)
     const playerData = await this.assetManager.loadPlayerModel();
@@ -368,7 +373,11 @@ export class Game {
     };
 
     // 8. Start Game Loop
-    this.mainMenu.playIntro();
+    if (await musicPreparation) {
+      void this.mainMenu.playIntro();
+    } else {
+      this.mainMenu.showLoadingError('No se pudo preparar la música. Comprueba la conexión e inténtalo de nuevo.', () => void this.retryIntroMusic());
+    }
     this.lastFrameTime = performance.now();
     requestAnimationFrame((t) => this.loop(t));
   }
@@ -408,7 +417,7 @@ export class Game {
 
   private beginGameplay(mode: StartMode): void {
     this.audioManager.resume();
-    this.audioManager.startBGM();
+    this.audioManager.startGameplayMusic();
     this.inputManager.resetInputs();
 
     if (mode === 'continue') {
@@ -429,6 +438,16 @@ export class Game {
     this.isPaused = false;
     document.getElementById('pause-screen')?.classList.add('hidden');
     this.hud.showGameplayHUD();
+  }
+
+  private async retryIntroMusic(): Promise<void> {
+    try {
+      await this.audioManager.prepareMusic();
+      await this.mainMenu.playIntro();
+    } catch (error) {
+      console.warn('[Game] Music retry failed:', error);
+      this.mainMenu.showLoadingError('La música todavía no está disponible. Inténtalo de nuevo.', () => void this.retryIntroMusic());
+    }
   }
 
   public togglePause(forceState?: boolean): void {
