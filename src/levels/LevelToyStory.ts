@@ -139,7 +139,7 @@ export class LevelToyStory {
     this.audioManager = audioManager;
   }
 
-  public init(): void {
+  public async init(): Promise<void> {
     this.buildToyStoryLevelGeometry();
     this.setupCheckpoints();
     this.setupInteractiveProps();
@@ -348,6 +348,118 @@ export class LevelToyStory {
     KeyPickupSequence.precompileShaders(this.sceneManager.renderer, scene, this.sceneManager.camera);
 
     this.checkpointManager.respawnPlayer(this.player);
+    await this.loadIntroEnvironmentAssets();
+  }
+
+  /** Adds the intro's pavilion, dirt texture and grass models as scenery only. */
+  private async loadIntroEnvironmentAssets(): Promise<void> {
+    const base = import.meta.env.BASE_URL + 'assets/environment/';
+    const loader = new GLTFLoader();
+    const textureLoader = new THREE.TextureLoader();
+    const [pavilionResult, grassResult, dirtResult] = await Promise.allSettled([
+      loader.loadAsync(`${base}chinese-pavilion.glb`),
+      loader.loadAsync(`${base}wukong-grass-clumps.glb`),
+      textureLoader.loadAsync(`${base}wukong-dirt-base.jpg`)
+    ]);
+
+    if (dirtResult.status === 'fulfilled') {
+      const terrain = this.sceneManager.scene.getObjectByName('world-terrain') as THREE.Mesh | null;
+      if (terrain && terrain.material instanceof THREE.MeshStandardMaterial) {
+        const dirt = dirtResult.value;
+        dirt.colorSpace = THREE.SRGBColorSpace;
+        dirt.wrapS = THREE.RepeatWrapping;
+        dirt.wrapT = THREE.RepeatWrapping;
+        dirt.repeat.set(24, 24);
+        dirt.anisotropy = Math.min(8, this.sceneManager.renderer.capabilities.getMaxAnisotropy());
+        terrain.material.map = dirt;
+        terrain.material.color.setHex(0xa9b879);
+        terrain.material.needsUpdate = true;
+      }
+    } else {
+      console.warn('[LevelToyStory] Could not load the intro ground texture.', dirtResult.reason);
+    }
+
+    if (pavilionResult.status === 'fulfilled') {
+      const pavilion = pavilionResult.value.scene;
+      pavilion.name = 'intro_chinese_pavilion';
+      pavilion.scale.setScalar(0.72);
+      const centerX = 20;
+      const centerZ = 24;
+      const slopeX = (this.getTerrainHeight(centerX + 1, centerZ) - this.getTerrainHeight(centerX - 1, centerZ)) / 2;
+      const slopeZ = (this.getTerrainHeight(centerX, centerZ + 1) - this.getTerrainHeight(centerX, centerZ - 1)) / 2;
+      pavilion.rotation.set(-Math.atan(slopeZ), 0, Math.atan(slopeX));
+      pavilion.updateMatrixWorld(true);
+
+      const bounds = new THREE.Box3().setFromObject(pavilion);
+      const center = bounds.getCenter(new THREE.Vector3());
+      pavilion.position.set(centerX - center.x, this.getTerrainHeight(centerX, centerZ) - bounds.min.y, centerZ - center.z);
+      pavilion.updateMatrixWorld(true);
+      pavilion.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.castShadow = false;
+          child.receiveShadow = true;
+        }
+      });
+      this.sceneManager.scene.add(pavilion);
+      this.levelColliders.push(pavilion);
+
+      const warmFill = new THREE.PointLight(0xffb56b, 4.5, 28, 2);
+      warmFill.position.set(centerX, this.getTerrainHeight(centerX, centerZ) + 5, centerZ);
+      warmFill.castShadow = false;
+      this.sceneManager.scene.add(warmFill);
+    } else {
+      console.warn('[LevelToyStory] Could not load the intro Chinese Pavilion.', pavilionResult.reason);
+    }
+
+    if (grassResult.status === 'fulfilled') {
+      this.addIntroGrassInstances(grassResult.value.scene, 20, 24);
+    } else {
+      console.warn('[LevelToyStory] Could not load the intro grass models.', grassResult.reason);
+    }
+  }
+
+  private addIntroGrassInstances(source: THREE.Group, centerX: number, centerZ: number): void {
+    const templates = new Map<string, THREE.Mesh>();
+    source.traverse((child) => {
+      if (!(child as THREE.Mesh).isMesh) return;
+      const mesh = child as THREE.Mesh;
+      templates.set(mesh.name.toLowerCase(), mesh);
+    });
+
+    const mobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const variants = [
+      { name: 'Grass_Short', count: mobile ? 10 : 30, height: 2.8, width: 2.8 },
+      { name: 'Grass_Lush', count: mobile ? 8 : 22, height: 3.2, width: 3.0 },
+      { name: 'Grass_Tall', count: mobile ? 4 : 12, height: 1.8, width: 1.8 }
+    ];
+    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+
+    for (const [variantIndex, variant] of variants.entries()) {
+      const template = templates.get(variant.name.toLowerCase());
+      if (!template) continue;
+      const instanced = new THREE.InstancedMesh(template.geometry, template.material, variant.count);
+      instanced.name = `intro_${variant.name.toLowerCase()}`;
+      instanced.castShadow = false;
+      instanced.receiveShadow = true;
+      instanced.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+
+      const dummy = new THREE.Object3D();
+      for (let i = 0; i < variant.count; i++) {
+        const angle = (i + variantIndex * 0.34) * goldenAngle;
+        const radius = 7.6 + ((i * 17 + variantIndex * 13) % 29) / 29 * 2.8;
+        const x = centerX + Math.cos(angle) * radius;
+        const z = centerZ + Math.sin(angle) * radius;
+        const scale = 0.8 + ((i * 11 + variantIndex * 7) % 17) / 17 * 0.45;
+        dummy.position.set(x, this.getTerrainHeight(x, z) + 0.025, z);
+        dummy.rotation.set(0, (i * 2.399 + variantIndex) % (Math.PI * 2), 0);
+        dummy.scale.set(variant.width * scale, variant.height * scale, variant.width * scale);
+        dummy.updateMatrix();
+        instanced.setMatrixAt(i, dummy.matrix);
+      }
+      instanced.instanceMatrix.needsUpdate = true;
+      instanced.computeBoundingSphere();
+      this.sceneManager.scene.add(instanced);
+    }
   }
 
   private buildToyStoryLevelGeometry(): void {
@@ -386,6 +498,7 @@ export class LevelToyStory {
     terrainGeo.computeVertexNormals();
 
     const worldFloor = new THREE.Mesh(terrainGeo, groundBaseMat);
+    worldFloor.name = 'world-terrain';
     worldFloor.position.set(0, 0, 0);
     worldFloor.receiveShadow = true;
     scene.add(worldFloor);

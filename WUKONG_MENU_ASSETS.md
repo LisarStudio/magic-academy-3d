@@ -40,3 +40,7 @@ Los clips FBX usan nombres Mixamo normalizados por el retargeter existente. Las 
 No había un archivo de logo aislado. El título se recreó como SVG dentro de la página: letras amarillas con contorno rojizo, nubes y báculo. La disposición y los colores siguen la referencia, aunque la tipografía y las formas son una aproximación dibujada en código, no el arte original exacto.
 
 Los ajustes reales disponibles son volumen de música, volumen de efectos y escala de resolución del renderer; se guardan en `localStorage`. Continuar se activa solo con una posición válida guardada. Los guardados nuevos usan versión 1 y los guardados anteriores sin versión siguen siendo legibles. No se muestra “Salir” en el navegador.
+
+## Recursos ambientales del nivel 1
+
+public/assets/environment/chinese-pavilion.glb conserva el modelo/materiales del pabellÃ³n y pesa 8,8 MB (geometrÃ­a reducida desde 636.842 a 138.791 vÃ©rtices; texturas a 1K). wukong-grass-clumps.glb contiene tres variantes instanciables y pesa 4,3 MB. wukong-dirt-base.jpg pesa 825 KB. En el nivel se agregan alrededor del pabellÃ³n y fuera de la ruta de inicio; la forma, altura y colisiÃ³n del terreno se conservan. El pabellÃ³n aporta una colisiÃ³n visual propia. Los originales Blender y las imÃ¡genes empacadas no se modificaron.

@@ -121,7 +121,7 @@ export class Game {
       this.audioManager
     );
 
-    this.level01.init();
+    await this.level01.init();
 
     // Focus camera on target AFTER the level is initialized and player is spawned at Checkpoint 0!
     this.cameraController.setTarget(this.player.mesh);
