@@ -89,7 +89,7 @@ export class AudioManager {
     const base = import.meta.env.BASE_URL;
     this.musicPreparation = Promise.all(
       Object.entries(this.musicPaths).filter(([key]) => key !== 'crabBoss').map(async ([key, path]) => {
-        const response = await fetch(`${base}${path}`, { cache: 'force-cache' });
+        const response = await this.fetchMusicAsset(`${base}${path}`);
         if (!response.ok) throw new Error(`Could not load music asset: ${path} (${response.status})`);
         const blob = await response.blob();
         this.musicUrls.set(key as keyof typeof this.musicPaths, URL.createObjectURL(blob));
@@ -261,6 +261,16 @@ export class AudioManager {
     this.bgmAudio.volume = this.musicVolume * this.masterVolume * this.musicGain;
   }
 
+  private async fetchMusicAsset(url: string): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(new Error(`Timed out loading music asset: ${url}`)), 30_000);
+    try {
+      return await fetch(url, { cache: 'force-cache', signal: controller.signal });
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
   private preflightTrack(url: string): Promise<void> {
     const probe = new Audio();
     probe.preload = 'auto';
@@ -276,7 +286,7 @@ export class AudioManager {
     if (this.musicUrls.has('crabBoss')) return Promise.resolve();
     if (this.bossMusicPreparation) return this.bossMusicPreparation;
     const base = import.meta.env.BASE_URL;
-    this.bossMusicPreparation = fetch(`${base}${this.musicPaths.crabBoss}`, { cache: 'force-cache' })
+    this.bossMusicPreparation = this.fetchMusicAsset(`${base}${this.musicPaths.crabBoss}`)
       .then(async (response) => {
         if (!response.ok) throw new Error(`Could not load crab music (${response.status}).`);
         const url = URL.createObjectURL(await response.blob());
