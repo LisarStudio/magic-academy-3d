@@ -670,7 +670,9 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
   pointer-events: none;
   background: linear-gradient(90deg, rgba(3, 12, 31, .12), transparent 66%),
     radial-gradient(ellipse at 13% 72%, rgba(5, 12, 28, .18), transparent 46%);
+  transition: opacity 320ms ease;
 }
+.cinematic-backdrop.is-ending::after { opacity: 0; }
 .start-screen-bg {
   z-index: 9000;
   background: transparent;

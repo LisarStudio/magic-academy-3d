@@ -401,16 +401,32 @@ export class MainMenu {
   private finishTransition(): void {
     if (!this.transitionStarted || this.state !== 'StartingGame') return;
     this.transitionStarted = false;
+    try {
+      this.callbacks.onTransitionComplete(this.startMode);
+    } catch (error) {
+      console.error('[MainMenu] Could not enter gameplay after the transition:', error);
+      this.transitionStarted = true;
+      this.recoverStartTransition('No se pudo iniciar el nivel. Reintenta para volver al juego.');
+      return;
+    }
+
     this.setState('Playing');
-    this.callbacks.onTransitionComplete(this.startMode);
-    // Game has entered gameplay and synchronously rendered a complete frame behind the video.
     document.getElementById('start-screen')!.classList.add('hidden');
     this.introVideo.pause();
     this.idleVideo.pause();
     this.introVideo.classList.remove('is-visible');
     this.idleVideo.classList.remove('is-visible');
+    const backdrop = document.getElementById('cinematic-backdrop');
+    // The fixed backdrop sits above the WebGL canvas. Make it transparent as the
+    // final video frame fades so the already-rendered gameplay appears beneath it.
+    backdrop?.classList.add('is-ending');
+    if (backdrop) backdrop.style.background = 'transparent';
     this.startVideo.classList.remove('is-visible');
-    void this.waitForOpacityTransition(this.startVideo).then(() => this.startVideo.pause());
+    void this.waitForOpacityTransition(this.startVideo).then(() => {
+      this.startVideo.pause();
+      backdrop?.classList.add('hidden');
+      backdrop?.classList.remove('is-ending');
+    });
   }
 
   private hasValidSave(): boolean {
