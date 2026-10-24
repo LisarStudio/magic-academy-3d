@@ -47,6 +47,7 @@ export class MainMenu {
   private startVideoFailed = false;
   private startVideoPreparation: Promise<void> | null = null;
   private introStartPending = false;
+  private introFallbackStarted = false;
 
   constructor(callbacks: MainMenuCallbacks) {
     this.callbacks = callbacks;
@@ -58,7 +59,7 @@ export class MainMenu {
     this.startVideo.src = `${base}assets/cinematics/wukong-start.mp4`;
     this.loadPreferences();
     this.bindEvents();
-    this.startIntroButton.addEventListener('click', () => void this.playIntro());
+    this.startIntroButton.addEventListener('click', () => void this.playIntro(true));
     this.refreshContinueButton();
     document.getElementById('project-version')!.textContent = `Versión ${__APP_VERSION__}`;
   }
@@ -85,36 +86,69 @@ export class MainMenu {
     return 'los recursos';
   }
 
-  public async playIntro(): Promise<void> {
+  public async playIntro(userInitiated = false): Promise<void> {
     if (this.introStartPending || this.state === 'Intro') return;
     this.introStartPending = true;
     try {
       this.setState('Loading');
-      const audioStarted = await this.callbacks.onStartIntroMusic();
-      if (!audioStarted) {
-        this.loadingPanel.classList.remove('hidden');
-        this.mainMenu.classList.add('hidden');
-        document.getElementById('loading-status')!.textContent = 'Todo está listo. Pulsa Comenzar para iniciar la aventura con música.';
-        document.getElementById('loading-percent')!.textContent = 'Listo';
-        document.getElementById('loading-progress')!.style.width = '100%';
-        document.getElementById('btn-retry-loading')!.classList.add('hidden');
-        this.startIntroButton.classList.remove('hidden');
+      const audioStart = this.callbacks.onStartIntroMusic();
+
+      // On a Comenzar tap, start audio and video before yielding the browser's
+      // user activation. Awaiting audio first can make the video play() reject.
+      if (userInitiated) {
+        const videoStart = this.startIntroVideo();
+        const [audioStarted] = await Promise.all([audioStart, videoStart.then(() => true)]);
+        if (!audioStarted) this.showIntroStartPrompt();
         return;
       }
-      this.startIntroButton.classList.add('hidden');
-      this.loadingPanel.classList.add('hidden');
-      this.mainMenu.classList.add('hidden');
-      this.introVideo.currentTime = 0;
-      this.introVideo.classList.add('is-visible');
-      this.setState('Intro');
-      this.introVideo.onended = () => void this.enterMenuIdle();
-      this.introVideo.onerror = () => this.showLoadingError('No se pudo cargar la cinemática de introducción.', () => void this.playIntro());
-      await this.introVideo.play();
+
+      const audioStarted = await audioStart;
+      if (!audioStarted) {
+        this.showIntroStartPrompt();
+        return;
+      }
+      await this.startIntroVideo();
     } catch {
-      this.showLoadingError('El navegador bloqueó el vídeo. Pulsa Reintentar para volver a intentarlo.', () => void this.playIntro());
+      // Intro playback is optional; continue into the menu instead of showing
+      // a dead-end loading error if a browser blocks or cannot decode the clip.
+      this.skipUnavailableIntro();
     } finally {
       this.introStartPending = false;
     }
+  }
+
+  private startIntroVideo(): Promise<void> {
+    this.introFallbackStarted = false;
+    this.startIntroButton.classList.add('hidden');
+    this.loadingPanel.classList.add('hidden');
+    this.mainMenu.classList.add('hidden');
+    this.introVideo.currentTime = 0;
+    this.introVideo.onended = () => void this.enterMenuIdle();
+    this.introVideo.onerror = () => this.skipUnavailableIntro();
+    this.introVideo.classList.add('is-visible');
+    this.setState('Intro');
+    return this.introVideo.play();
+  }
+
+  private showIntroStartPrompt(): void {
+    this.introVideo.pause();
+    this.introVideo.classList.remove('is-visible');
+    this.mainMenu.classList.add('hidden');
+    this.loadingPanel.classList.remove('hidden');
+    document.getElementById('loading-status')!.textContent = 'Todo está listo. Pulsa Comenzar para iniciar la aventura con música.';
+    document.getElementById('loading-percent')!.textContent = 'Listo';
+    document.getElementById('loading-progress')!.style.width = '100%';
+    document.getElementById('btn-retry-loading')!.classList.add('hidden');
+    this.startIntroButton.classList.remove('hidden');
+    this.setState('Loading');
+  }
+
+  private skipUnavailableIntro(): void {
+    if (this.state !== 'Intro' || this.introFallbackStarted) return;
+    this.introFallbackStarted = true;
+    this.introVideo.pause();
+    this.introVideo.classList.remove('is-visible');
+    void this.enterMenuIdle();
   }
 
   private async enterMenuIdle(): Promise<void> {
@@ -159,7 +193,7 @@ export class MainMenu {
 
   private bindEvents(): void {
     this.introVideo.addEventListener('error', () => {
-      if (this.state === 'Intro') this.showLoadingError('No se encontró el vídeo de introducción. Comprueba la conexión e inténtalo de nuevo.', () => void this.playIntro());
+      this.skipUnavailableIntro();
     });
     document.getElementById('btn-retry-loading')!.addEventListener('click', () => this.loadingRetry());
     this.newGameButton.addEventListener('click', () => this.requestStart('new'));

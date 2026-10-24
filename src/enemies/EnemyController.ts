@@ -46,6 +46,8 @@ export class EnemyController {
   private bossPhaseTimer = 0;
   private bossAttackCooldown = 0;
   private bossAttackHitApplied = false;
+  private bossDefenseCueTimer = 0;
+  private bossDefenseCueShown = false;
   private readonly bossAttackDirection = new THREE.Vector3();
   private readonly bossImpactPoint = new THREE.Vector3();
   private bossTelegraphRoot: THREE.Group | null = null;
@@ -670,7 +672,10 @@ export class EnemyController {
 
     // ── Update 3D Crossed-Swords Combat Icon (⚔️) ──
     if (this.combatSprite) {
-      if (this.isAlive() && distToPlayer < 8.0) {
+      if (this.id === 'crab_boss') this.bossDefenseCueTimer = Math.max(0, this.bossDefenseCueTimer - delta);
+      const bossCueActive = this.id !== 'crab_boss' || this.isBossVulnerable || this.bossDefenseCueTimer > 0;
+      const cueDistance = this.id === 'crab_boss' ? 16.0 : 8.0;
+      if (this.isAlive() && distToPlayer < cueDistance && bossCueActive) {
         this.combatSprite.visible = true;
         const pulse = 1.0 + Math.sin(this.proceduralTime * 3.5) * 0.12;
         const baseScale = this.id === 'crab_boss' ? 1.4 : 0.65;
@@ -823,6 +828,8 @@ export class EnemyController {
     this.bossPhaseTimer = 0;
     this.bossAttackCooldown = 0;
     this.bossAttackHitApplied = false;
+    this.bossDefenseCueTimer = 0;
+    this.bossDefenseCueShown = false;
     this.restoreBossClaws();
     this.hideBossTelegraph();
     this.onHealthChange?.(this.health, this.maxHealth);
@@ -834,6 +841,10 @@ export class EnemyController {
     this.bossAttackPhase = 'TELEGRAPH';
     this.bossPhaseTimer = 0.95;
     this.bossAttackHitApplied = false;
+    if (!this.bossDefenseCueShown) {
+      this.bossDefenseCueShown = true;
+      this.bossDefenseCueTimer = 1.8;
+    }
     this.bossAttackDirection.subVectors(playerPos, this.mesh.position);
     this.bossAttackDirection.y = 0;
     this.safeNormalize(this.bossAttackDirection);

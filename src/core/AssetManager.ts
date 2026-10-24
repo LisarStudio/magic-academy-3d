@@ -217,7 +217,7 @@ export class AssetManager {
       // Try loading player.glb first (custom character Lisar)
       try {
         console.log('[AssetManager] Loading the rigged Wukong 2.0 model via GLTFLoader...');
-        const gltf = await this.gltfLoader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/wukong_2.0_rigged.glb');
+        const gltf = await this.gltfLoader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/wukong_2.0_rigged.glb?v=20261024-cuerpo-skinweights');
         playerModel = gltf.scene;
         console.log('[AssetManager] ✅ Loaded rigged Wukong 2.0 successfully');
 

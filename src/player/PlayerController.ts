@@ -18,7 +18,7 @@ export class PlayerController {
   public velocity = new THREE.Vector3();
   public isGrounded = true;
   public moveSpeed = 5.2;
-  public runSpeed = 8.5;
+  public runSpeed = 9.5;
   public jumpForce = 8.0;
   public gravity = -20.0;
 

@@ -11,6 +11,8 @@ export class MobileTouchControls {
   private btnAction: HTMLButtonElement | null = null;
   private btnRun: HTMLButtonElement | null = null;
   private readonly heldButtons = new Set<HTMLButtonElement>();
+  private gameplayEnabled = false;
+
 
   // Joystick touch tracking
   private joystickTouchId: number | null = null;
@@ -108,12 +110,19 @@ export class MobileTouchControls {
   }
 
   public setGameplayEnabled(enabled: boolean): void {
+    if (this.gameplayEnabled === enabled) return;
+    this.gameplayEnabled = enabled;
+    this.container?.classList.toggle('gameplay-active', enabled);
     for (const button of [this.btnJump, this.btnAttack, this.btnAction, this.btnRun]) {
       if (button) button.disabled = !enabled;
     }
-    if (!enabled && this.btnRun) {
-      this.heldButtons.delete(this.btnRun);
-      this.btnRun.classList.remove('active');
+    if (!enabled) {
+      this.resetJoystick();
+      this.cameraTouchId = null;
+      this.heldButtons.clear();
+      for (const button of [this.btnJump, this.btnAttack, this.btnAction, this.btnRun]) {
+        button?.classList.remove('active', 'pressed');
+      }
       this.inputManager.touchIsRunning = false;
     }
   }

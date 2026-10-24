@@ -67,7 +67,7 @@ export class Game {
       onPreferences: ({ music, effects, quality }) => {
         this.audioManager.setMusicVolume(music);
         this.audioManager.setSFXVolume(effects);
-        const maxDpr = window.innerWidth <= 1024 ? 1.05 : 1.75;
+        const maxDpr = window.innerWidth <= 1024 ? 0.9 : 1.5;
         this.sceneManager.renderer.setPixelRatio(Math.min(window.devicePixelRatio * quality, maxDpr));
         this.sceneManager.renderer.setSize(window.innerWidth, window.innerHeight);
       },
@@ -472,9 +472,11 @@ export class Game {
   }
 
   private loop(currentTime: number): void {
-    const delta = Math.min(0.1, (currentTime - this.lastFrameTime) / 1000);
+    // Limit movement and collision updates after a slow mobile frame; a 100 ms
+    // step moves Wukong almost a meter at sprint speed and looks like teleporting.
+    const delta = Math.min(1 / 30, Math.max(0, (currentTime - this.lastFrameTime) / 1000));
     this.lastFrameTime = currentTime;
-    this.hud.mobileControls?.setGameplayEnabled(this.canUseGameplayActions());
+    this.hud.mobileControls?.setGameplayEnabled(this.menuState === 'Playing' && !this.isPaused);
 
     if (!this.isPaused) {
       this.update(delta);

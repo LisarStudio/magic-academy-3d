@@ -975,6 +975,7 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
 #lisar-mobile-touch-overlay {
   position: absolute;
   inset: 0;
+  display: none;
   pointer-events: none;
   z-index: 100;
   touch-action: none;
@@ -982,6 +983,7 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
+#lisar-mobile-touch-overlay.gameplay-active { display: block; }
 
 /* ── LEFT: 360° Virtual Analog Joystick ───────────────────── */
 .touch-joystick-zone {

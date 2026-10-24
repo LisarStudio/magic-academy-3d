@@ -506,12 +506,13 @@ export class LevelToyStory {
     // Continuous low grass carpet, split into instanced sectors so Three.js can
     // frustum-cull whole patches. The olive terrain material fills the distant LOD.
     (() => {
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      const isMobile = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0 ||
+        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       const sectorSize = 20;
-      const spacing = isMobile ? 0.58 : 0.42;
-      const bladeHeight = 0.44;
-      const bladeWidth = 0.14;
-      const segments = 3;
+      const spacing = isMobile ? 0.76 : 0.42;
+      const bladeHeight = isMobile ? 0.38 : 0.44;
+      const bladeWidth = isMobile ? 0.13 : 0.14;
+      const segments = isMobile ? 2 : 3;
       const positions: number[] = [];
       const uvs: number[] = [];
       const indices: number[] = [];
@@ -2687,7 +2688,12 @@ export class LevelToyStory {
     }
     this.grassCullElapsed -= delta;
     if (this.grassCullElapsed <= 0) {
-      const grassDistanceSq = 152 * 152;
+      // Detailed animated blades stay near the player on phones; the ground
+      // texture maintains coverage at a distance without shading the whole map.
+      const isMobile = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0 ||
+        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      const grassDistance = isMobile ? 88 : 152;
+      const grassDistanceSq = grassDistance * grassDistance;
       for (const sector of this.grassSectors) {
         const center = sector.userData.grassCenter as THREE.Vector2;
         const dx = playerPos.x - center.x;
