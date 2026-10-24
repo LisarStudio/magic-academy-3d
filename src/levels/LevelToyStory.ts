@@ -1806,21 +1806,27 @@ export class LevelToyStory {
     const scene = this.sceneManager.scene;
 
     // Relocate Staff Chest on top of the Altar inside the Secret Chamber of Templo 03 ("Templo del Báculo")
-    this.staffChest = new TreasureChest(new THREE.Vector3(55.0, 15.9, -75.0), Math.PI);
+    // The replacement temple is a visual GLB without gameplay collision or an
+    // interior stair route. Keep the staff reward on the ground at its entrance
+    // so the original reward remains reachable without jumping or noclipping.
+    const staffChestPosition = new THREE.Vector3(55.0, this.getTerrainHeight(55.0, -57.0) + 0.05, -57.0);
+    this.staffChest = new TreasureChest(staffChestPosition, Math.PI);
     scene.add(this.staffChest.mesh);
     this.chests.push(this.staffChest);
     this.spellSystem.registerChest(this.staffChest);
     this.levelColliders.push(this.staffChest.mesh);
 
     // ── Runic Fast-Travel Portal Network (PortalPair_01) ───────────────────────
-    // Portal A: Placed at the Temple 03 Staff Sanctuary Terrace Balcony (World: 62.5, 14.8, -75.0)
+    // Portal A sits beside the sanctuary path at ground level; the replaced
+    // visual-only temple no longer provides a traversable balcony or stairs.
+    const staffPortalY = this.getTerrainHeight(62.5, -75.0) + 0.05;
     const portalA = new RunicPortal({
       id: 'Portal_A_StaffTemple',
       pairId: 'PortalPair_01',
       displayName: 'Santuario del Báculo',
-      position: new THREE.Vector3(62.5, 14.8, -75.0),
+      position: new THREE.Vector3(62.5, staffPortalY, -75.0),
       rotationY: -Math.PI / 2,
-      exitPoint: new THREE.Vector3(59.8, 14.8, -75.0),
+      exitPoint: new THREE.Vector3(59.8, this.getTerrainHeight(59.8, -75.0) + 0.05, -75.0),
       exitYaw: -Math.PI / 2,
       unlockedByDefault: false,
     }, scene, this.levelColliders);
