@@ -258,6 +258,7 @@ export class PlayerController {
   }
 
   public isInvulnerable = false;
+  public onRespawn?: () => void;
 
   public takeDamage(amount: number, respawnPos?: THREE.Vector3): void {
     if (this.isInvulnerable || this.isControlsLocked || this.isMovementLocked) {
@@ -277,6 +278,7 @@ export class PlayerController {
       if (respawnPos) {
         this.mesh.position.copy(respawnPos);
       }
+      this.onRespawn?.();
     }
   }
 

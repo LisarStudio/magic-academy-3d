@@ -60,6 +60,23 @@ export class CameraController {
     this.camera.lookAt(this.currentLookAt);
   }
 
+  public resumeAfterCinematic(): void {
+    if (!this.target) return;
+    this.currentLookAt.copy(this.target.position);
+    this.currentLookAt.y += this.heightOffset;
+    CameraController.TEMP_DIR.subVectors(this.camera.position, this.currentLookAt);
+    const distance = Math.max(3.5, Math.min(9, CameraController.TEMP_DIR.length()));
+    if (CameraController.TEMP_DIR.lengthSq() < 0.0001) CameraController.TEMP_DIR.set(0, 0.25, 1);
+    CameraController.TEMP_DIR.normalize();
+    this.yaw = Math.atan2(CameraController.TEMP_DIR.x, CameraController.TEMP_DIR.z);
+    this.pitch = THREE.MathUtils.clamp(Math.asin(THREE.MathUtils.clamp(CameraController.TEMP_DIR.y, -1, 1)), this.minPitch, this.maxPitch);
+    this.distance = distance;
+    this.currentDistance = distance;
+    this.currentPosition.copy(this.camera.position);
+    this.idleTimer = 0;
+    this.isManual = false;
+  }
+
   public setCollisionObjects(objects: THREE.Object3D[]): void {
     // Only store major solid structural meshes (filter out small sub-children)
     this.collisionObjects = objects.filter(o => o.type === 'Mesh' && (o as THREE.Mesh).geometry);

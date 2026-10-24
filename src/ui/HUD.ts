@@ -29,6 +29,9 @@ export class HUD {
   private gekkoQuestBadgeEl: HTMLElement | null = null;
   private damageFlashEl: HTMLElement;
   private screenFadeEl: HTMLElement;
+  private bossHealthPanelEl: HTMLElement;
+  private bossHealthFillEl: HTMLElement;
+  private bossHealthValueEl: HTMLElement;
 
   private dialogueBubbleEl: HTMLElement;
   private dialogueSpeakerEl: HTMLElement;
@@ -93,6 +96,9 @@ export class HUD {
     this.slotSpell3El = document.getElementById('slot-spell-3')!;
     this.damageFlashEl = document.getElementById('damage-flash')!;
     this.screenFadeEl = document.getElementById('screen-fade')!;
+    this.bossHealthPanelEl = document.getElementById('boss-health-panel')!;
+    this.bossHealthFillEl = document.getElementById('boss-health-fill')!;
+    this.bossHealthValueEl = document.getElementById('boss-health-value')!;
 
     this.dialogueBubbleEl = document.getElementById('dialogue-bubble')!;
     this.dialogueSpeakerEl = document.getElementById('dialogue-speaker')!;
@@ -260,6 +266,22 @@ export class HUD {
     this.hudTopLeftEl.classList.remove('hidden');
     this.hudTopRightEl.classList.remove('hidden');
     this.spellHotbarEl.classList.remove('hidden');
+  }
+
+  public showBossHealth(health: number, maxHealth: number): void {
+    this.bossHealthPanelEl.classList.remove('hidden');
+    this.updateBossHealth(health, maxHealth);
+  }
+
+  public updateBossHealth(health: number, maxHealth: number): void {
+    const safeMax = Math.max(1, maxHealth);
+    const safeHealth = Math.max(0, Math.min(safeMax, health));
+    this.bossHealthFillEl.style.width = `${(safeHealth / safeMax) * 100}%`;
+    this.bossHealthValueEl.textContent = `${Math.ceil(safeHealth)} / ${safeMax}`;
+  }
+
+  public hideBossHealth(): void {
+    this.bossHealthPanelEl.classList.add('hidden');
   }
 
   // Cached values to avoid redundant DOM operations

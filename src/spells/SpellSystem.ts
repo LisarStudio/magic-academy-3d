@@ -354,7 +354,7 @@ export class SpellSystem {
       // 5. Collision with Enemies
       let enemyHit = false;
       for (const enemy of this.enemies) {
-        if (enemy.isAlive()) {
+        if (enemy.isAlive() && enemy.isBossVulnerable) {
           const enemyPos = enemy.getPosition();
           if (proj.mesh.position.distanceTo(enemyPos) < 1.2) {
             enemy.takeHit(proj.mesh.position, 2); // Staff spell deals DOUBLE DAMAGE (2) compared to Kick (1)

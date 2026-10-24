@@ -235,13 +235,9 @@ export class AssetManager {
           }
         });
 
-        // Pivot Correction: mixamorig:Hips has a massive -4.86m Z offset in player.glb's bind pose.
-        // We reset Z to 0 so the character centers perfectly on the physics capsule.
-        const hips = playerModel.getObjectByName('mixamorig:Hips');
-        if (hips) {
-          hips.position.z = 0;
-          console.log('[AssetManager] Corrected mixamorig:Hips initial Z position to 0');
-        }
+        // Keep the imported bind pose intact. Moving Hips without rebuilding the
+        // skin inverse-bind matrices shears the skinned meshes and stretches them
+        // into long triangles during the character animations.
 
         // Detect Armature scale to compensate for it in the animation retargeting translation scale
         const armature = playerModel.getObjectByName('Armature');

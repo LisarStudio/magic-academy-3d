@@ -40,12 +40,29 @@ export class EnemyController {
   private scene: THREE.Scene | null = null; // Set externally for VFX
 
   // Boss Battle variables
-  private bossChargeTimer = 0;
-  private bossLungeTimer = 0;
-  private bossLungeDir = new THREE.Vector3();
+  private bossPatternIndex = 0;
+  private bossPattern: 'CLAW' | 'CHARGE' | 'SLAM' = 'CLAW';
+  private bossAttackPhase: 'READY' | 'TELEGRAPH' | 'EXECUTE' | 'RECOVERY' = 'READY';
+  private bossPhaseTimer = 0;
+  private bossAttackCooldown = 0;
+  private bossAttackHitApplied = false;
+  private readonly bossAttackDirection = new THREE.Vector3();
+  private readonly bossImpactPoint = new THREE.Vector3();
+  private bossTelegraphRoot: THREE.Group | null = null;
+  private bossWarningFill: THREE.Mesh | null = null;
+  private bossWarningRing: THREE.Mesh | null = null;
+  private bossChargeLane: THREE.Group | null = null;
+  private bossClaws: THREE.Object3D[] = [];
+  private bossClawRestRotations = new Map<THREE.Object3D, THREE.Euler>();
+  private bossModelBaseY = 0;
 
   public onAttackPlayer?: (damage: number) => void;
   public onDeath?: (enemy: EnemyController) => void;
+  public onHealthChange?: (health: number, maxHealth: number) => void;
+
+  public get isBossVulnerable(): boolean {
+    return this.id !== 'crab_boss' || (this.state === 'STUNNED' && this.bossAttackPhase === 'RECOVERY');
+  }
 
   // Shared Master GLTF Template & Texture Pool
   private static masterTemplate: THREE.Object3D | null = null;
@@ -83,6 +100,31 @@ export class EnemyController {
 
   public setScene(scene: THREE.Scene): void {
     this.scene = scene;
+    if (this.id !== 'crab_boss' || this.bossTelegraphRoot) return;
+    this.bossTelegraphRoot = new THREE.Group();
+    this.bossTelegraphRoot.name = 'crab_boss_attack_warnings';
+    const fillMaterial = new THREE.MeshBasicMaterial({ color: 0xffa332, transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide });
+    const ringMaterial = new THREE.MeshBasicMaterial({ color: 0xffd369, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide });
+    this.bossWarningFill = new THREE.Mesh(new THREE.CircleGeometry(3.45, 48), fillMaterial);
+    this.bossWarningFill.rotation.x = -Math.PI / 2;
+    this.bossWarningRing = new THREE.Mesh(new THREE.RingGeometry(3.38, 3.55, 48), ringMaterial);
+    this.bossWarningRing.rotation.x = -Math.PI / 2;
+    this.bossWarningFill.visible = false;
+    this.bossWarningRing.visible = false;
+    this.bossTelegraphRoot.add(this.bossWarningFill, this.bossWarningRing);
+
+    this.bossChargeLane = new THREE.Group();
+    const laneMaterial = new THREE.MeshBasicMaterial({ color: 0xff5638, transparent: true, opacity: 0.42, depthWrite: false, side: THREE.DoubleSide });
+    const lane = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 8.5), laneMaterial);
+    lane.rotation.x = Math.PI / 2;
+    lane.position.y = 0.28;
+    const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.9, 1.2, 3), laneMaterial.clone());
+    arrow.rotation.x = Math.PI / 2;
+    arrow.position.set(0, 0.3, 4.6);
+    this.bossChargeLane.add(lane, arrow);
+    this.bossChargeLane.visible = false;
+    this.bossTelegraphRoot.add(this.bossChargeLane);
+    scene.add(this.bossTelegraphRoot);
   }
 
   public static async preloadMasterTemplate(): Promise<void> {
@@ -145,13 +187,20 @@ export class EnemyController {
 
       this.crabModel = model;
       this.mesh.add(model);
+      this.bossModelBaseY = model.position.y;
 
       this.legs = [];
       this.meshMaterials = [];
+      this.bossClaws = [];
+      this.bossClawRestRotations.clear();
       model.traverse((child) => {
         const n = child.name.toLowerCase();
         if (n.includes('leg') || n.includes('arm') || n.includes('claw') || n.includes('limb')) {
           this.legs.push(child);
+        }
+        if (n.includes('claw')) {
+          this.bossClaws.push(child);
+          this.bossClawRestRotations.set(child, child.rotation.clone());
         }
         if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).material) {
           const mat = (child as THREE.Mesh).material;
@@ -277,8 +326,10 @@ export class EnemyController {
     if (this.state === 'DYING' || this.state === 'DEAD') return;
 
     if (this.id === 'crab_boss') {
+      if (!this.isBossVulnerable) return;
       this.health = Math.max(0, this.health - damageAmount);
       this.hitFlashTimer = 0.35;
+      this.onHealthChange?.(this.health, this.maxHealth);
       console.log(`[Boss] Hit with damage ${damageAmount}! HP: ${this.health}/${this.maxHealth}`);
 
       if (fromPos) {
@@ -290,10 +341,6 @@ export class EnemyController {
 
       if (this.health <= 0) {
         this.triggerDeath();
-      } else {
-        // Enrage and prepare counter attack!
-        this.state = 'ATTACK';
-        this.bossChargeTimer = 0.4;
       }
       return;
     }
@@ -336,6 +383,7 @@ export class EnemyController {
     this.dyingTimer = this.dyingDuration;
     this.dyingScaleStart = this.mesh.scale.x;
     this.deathVfxSpawned = false;
+    this.hideBossTelegraph();
 
     // Disable AI immediately
     this.knockbackVelocity.set(0, 0, 0);
@@ -565,6 +613,9 @@ export class EnemyController {
     }
 
     const distToPlayer = Math.hypot(this.mesh.position.x - playerPos.x, this.mesh.position.z - playerPos.z);
+    if (this.id === 'crab_boss' && this.bossAttackCooldown > 0 && this.state !== 'ATTACK' && this.state !== 'STUNNED') {
+      this.bossAttackCooldown = Math.max(0, this.bossAttackCooldown - delta);
+    }
 
     // ── Ground Snapping (Slabs, Stairs, and Terrain with Normal Validation) ──
     const isSelfChild = (obj: THREE.Object3D): boolean => {
@@ -673,6 +724,18 @@ export class EnemyController {
         break;
 
       case 'STUNNED':
+        if (this.id === 'crab_boss') {
+          this.bossPhaseTimer -= delta;
+          this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, Math.PI * 0.72, delta * 4.5);
+          if (this.bossPhaseTimer <= 0) {
+            this.bossAttackPhase = 'READY';
+            this.bossAttackCooldown = 0.85;
+            this.mesh.rotation.z = 0;
+            this.restoreBossClaws();
+            this.state = 'CHASE';
+          }
+          break;
+        }
         this.stunTimer -= delta;
         this.mesh.rotation.z = Math.sin(this.proceduralTime * 4) * 0.25;
         for (let i = 0; i < this.legs.length; i++) {
@@ -695,7 +758,9 @@ export class EnemyController {
         break;
 
       case 'CHASE':
-        if (distToPlayer <= (this.id === 'crab_boss' ? 4.8 : this.attackRadius)) {
+        if (this.id === 'crab_boss' && distToPlayer <= 10 && this.bossAttackCooldown <= 0 && this.bossAttackPhase === 'READY') {
+          this.beginBossAttack(playerPos);
+        } else if (this.id !== 'crab_boss' && distToPlayer <= this.attackRadius) {
           this.state = 'ATTACK';
         } else if (distToPlayer > this.detectionRadius * 2) {
           this.state = 'PATROL';
@@ -706,31 +771,7 @@ export class EnemyController {
 
       case 'ATTACK':
         if (this.id === 'crab_boss') {
-          if (this.bossChargeTimer > 0) {
-            this.bossChargeTimer -= delta;
-            this.mesh.rotation.y += Math.sin(performance.now() * 0.05) * 0.1;
-            this.hitFlashTimer = 0.05;
-            if (this.bossChargeTimer <= 0) {
-              this.bossLungeTimer = 0.6;
-              this.bossLungeDir.subVectors(playerPos, this.mesh.position);
-              this.bossLungeDir.y = 0;
-              this.safeNormalize(this.bossLungeDir);
-              this.mesh.rotation.y = Math.atan2(this.bossLungeDir.x, this.bossLungeDir.z);
-            }
-          } else if (this.bossLungeTimer > 0) {
-            this.bossLungeTimer -= delta;
-            this.mesh.position.addScaledVector(this.bossLungeDir, 14.0 * delta);
-            if (distToPlayer < 3.2) {
-              this.onAttackPlayer?.(25);
-              this.bossLungeTimer = 0;
-            }
-            if (this.bossLungeTimer <= 0) {
-              this.state = 'STUNNED';
-              this.stunTimer = 3.0;
-            }
-          } else {
-            this.bossChargeTimer = 0.8;
-          }
+          this.updateBossAttack(delta, playerPos);
         } else {
           // Normal crabs: Keep tracking player, maintain clean combat margin (1.35m - 1.85m)
           const dir = new THREE.Vector3().subVectors(playerPos, this.mesh.position);
@@ -766,6 +807,141 @@ export class EnemyController {
     }
 
     this.animateLegs(delta);
+    if (this.id === 'crab_boss') this.animateBossTell();
+  }
+
+  public resetBossEncounter(): void {
+    if (this.id !== 'crab_boss' || !this.arenaCenter || this.state === 'DYING' || this.state === 'DEAD') return;
+    this.health = this.maxHealth;
+    this.isDead = false;
+    this.state = 'IDLE';
+    this.mesh.visible = true;
+    this.mesh.position.copy(this.arenaCenter);
+    this.mesh.rotation.set(0, 0, 0);
+    this.bossPatternIndex = 0;
+    this.bossAttackPhase = 'READY';
+    this.bossPhaseTimer = 0;
+    this.bossAttackCooldown = 0;
+    this.bossAttackHitApplied = false;
+    this.restoreBossClaws();
+    this.hideBossTelegraph();
+    this.onHealthChange?.(this.health, this.maxHealth);
+  }
+
+  private beginBossAttack(playerPos: THREE.Vector3): void {
+    this.bossPattern = (['CLAW', 'CHARGE', 'SLAM'] as const)[this.bossPatternIndex % 3];
+    this.bossPatternIndex++;
+    this.bossAttackPhase = 'TELEGRAPH';
+    this.bossPhaseTimer = 0.95;
+    this.bossAttackHitApplied = false;
+    this.bossAttackDirection.subVectors(playerPos, this.mesh.position);
+    this.bossAttackDirection.y = 0;
+    this.safeNormalize(this.bossAttackDirection);
+    this.mesh.rotation.y = Math.atan2(this.bossAttackDirection.x, this.bossAttackDirection.z);
+    if (this.bossPattern === 'SLAM') this.bossImpactPoint.copy(playerPos);
+    this.showBossTelegraph();
+  }
+
+  private updateBossAttack(delta: number, playerPos: THREE.Vector3): void {
+    if (this.bossAttackPhase === 'READY') {
+      this.bossAttackCooldown = Math.max(0, this.bossAttackCooldown - delta);
+      if (this.bossAttackCooldown <= 0) this.beginBossAttack(playerPos);
+      return;
+    }
+
+    this.bossPhaseTimer -= delta;
+    if (this.bossAttackPhase === 'TELEGRAPH') {
+      if (this.bossPattern === 'CLAW') this.raiseBossClaws(0.85);
+      if (this.bossPhaseTimer <= 0) {
+        this.bossAttackPhase = 'EXECUTE';
+        this.bossPhaseTimer = this.bossPattern === 'CHARGE' ? 0.58 : 0.36;
+        this.hideBossTelegraph();
+      }
+      return;
+    }
+
+    if (this.bossAttackPhase === 'EXECUTE') {
+      if (this.bossPattern === 'CHARGE') {
+        this.mesh.position.addScaledVector(this.bossAttackDirection, 9.5 * delta);
+        this.checkBossAttackHit(playerPos, 2.8, false);
+      } else if (this.bossPattern === 'CLAW') {
+        this.raiseBossClaws(-0.45);
+        this.checkBossAttackHit(playerPos, 3.7, true);
+      } else if (this.mesh.position.distanceTo(playerPos) <= 3.6 && this.bossImpactPoint.distanceTo(playerPos) <= 3.6) {
+        this.applyBossAttackHit();
+      }
+
+      if (this.bossPhaseTimer <= 0) {
+        this.bossAttackPhase = 'RECOVERY';
+        this.bossPhaseTimer = 2.55;
+        this.state = 'STUNNED';
+        this.mesh.rotation.z = Math.PI * 0.55;
+        this.restoreBossClaws();
+      }
+    }
+  }
+
+  private checkBossAttackHit(playerPos: THREE.Vector3, reach: number, frontal: boolean): void {
+    if (this.bossAttackHitApplied) return;
+    const deltaToPlayer = EnemyController.TEMP_DIR.subVectors(playerPos, this.mesh.position);
+    deltaToPlayer.y = 0;
+    if (deltaToPlayer.length() > reach) return;
+    if (frontal && deltaToPlayer.normalize().dot(this.bossAttackDirection) < 0.25) return;
+    this.applyBossAttackHit();
+  }
+
+  private applyBossAttackHit(): void {
+    if (this.bossAttackHitApplied) return;
+    this.bossAttackHitApplied = true;
+    this.onAttackPlayer?.(this.bossPattern === 'SLAM' ? 14 : 12);
+  }
+
+  private showBossTelegraph(): void {
+    if (!this.bossWarningFill || !this.bossWarningRing || !this.bossChargeLane) return;
+    const useLane = this.bossPattern === 'CHARGE';
+    this.bossWarningFill.visible = !useLane;
+    this.bossWarningRing.visible = !useLane;
+    this.bossChargeLane.visible = useLane;
+    if (useLane) {
+      this.bossChargeLane.position.copy(this.mesh.position).addScaledVector(this.bossAttackDirection, 4.1);
+      this.bossChargeLane.position.y = 0;
+      this.bossChargeLane.rotation.y = Math.atan2(this.bossAttackDirection.x, this.bossAttackDirection.z);
+      return;
+    }
+    const center = this.bossPattern === 'SLAM'
+      ? this.bossImpactPoint
+      : this.mesh.position.clone().addScaledVector(this.bossAttackDirection, 2.2);
+    this.bossWarningFill.position.set(center.x, 0.28, center.z);
+    this.bossWarningRing.position.set(center.x, 0.29, center.z);
+    const color = this.bossPattern === 'SLAM' ? 0xff4d3c : 0xffbe45;
+    (this.bossWarningFill.material as THREE.MeshBasicMaterial).color.setHex(color);
+    (this.bossWarningRing.material as THREE.MeshBasicMaterial).color.setHex(color);
+  }
+
+  private hideBossTelegraph(): void {
+    if (this.bossWarningFill) this.bossWarningFill.visible = false;
+    if (this.bossWarningRing) this.bossWarningRing.visible = false;
+    if (this.bossChargeLane) this.bossChargeLane.visible = false;
+  }
+
+  private raiseBossClaws(amount: number): void {
+    for (const claw of this.bossClaws) {
+      const rest = this.bossClawRestRotations.get(claw);
+      if (rest) claw.rotation.x = rest.x + amount;
+    }
+  }
+
+  private restoreBossClaws(): void {
+    for (const claw of this.bossClaws) {
+      const rest = this.bossClawRestRotations.get(claw);
+      if (rest) claw.rotation.copy(rest);
+    }
+  }
+
+  private animateBossTell(): void {
+    if (!this.crabModel || this.state === 'DYING' || this.state === 'DEAD') return;
+    const lift = this.bossAttackPhase === 'TELEGRAPH' && this.bossPattern === 'CLAW' ? 0.18 : 0;
+    this.crabModel.position.y = this.bossModelBaseY + lift;
   }
 
   private animateLegs(_delta: number): void {

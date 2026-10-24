@@ -193,7 +193,7 @@ export class Game {
 
           // 1. Physical Melee Hit Test against Enemies (within 3.0m in front cone)
           this.level01.enemies.forEach(enemy => {
-            if (enemy.isAlive()) {
+            if (enemy.isAlive() && enemy.isBossVulnerable) {
               const enemyPos = enemy.getPosition();
               const dist = playerPos.distanceTo(enemyPos);
               const maxHitDist = enemy.id === 'crab_boss' ? 5.2 : 3.0;
@@ -306,7 +306,7 @@ export class Game {
             const forwardDir = new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.mesh.quaternion);
 
             this.level01.enemies.forEach(enemy => {
-              if (enemy.isAlive()) {
+              if (enemy.isAlive() && enemy.isBossVulnerable) {
                 const enemyPos = enemy.getPosition();
                 const dist = playerPos.distanceTo(enemyPos);
                 const maxHitDist = enemy.id === 'crab_boss' ? 5.2 : 2.6;
@@ -549,7 +549,8 @@ export class Game {
       stateFlags: {
         staffFound: this.level01.stateFlags.staffFound,
         gekkoTalked: this.level01.stateFlags.gekkoTalked,
-        bossCinematicPlayed: this.level01.stateFlags.bossCinematicPlayed
+        bossCinematicPlayed: this.level01.stateFlags.bossCinematicPlayed,
+        bossDefeated: this.level01.stateFlags.bossDefeated
       },
       timestamp: Date.now()
     };
@@ -602,6 +603,11 @@ export class Game {
       if (data.stateFlags && typeof data.stateFlags === 'object') {
         Object.assign(this.level01.stateFlags, data.stateFlags);
       }
+      // Older saves only recorded that the intro cinematic had played. Allow
+      // that encounter to be attempted again unless its victory was saved.
+      this.level01.stateFlags.bossDefeated = data.stateFlags?.bossDefeated === true;
+      this.level01.stateFlags.bossCinematicPlayed = this.level01.stateFlags.bossDefeated;
+      this.level01.restoreBossDefeated();
       this.level01.stateFlags.introCompleted = true;
       this.subtitleSystem.show('Cargado', '¡Partida cargada exitosamente!');
       console.log('[SaveSystem] Game loaded:', data);

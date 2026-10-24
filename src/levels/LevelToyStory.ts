@@ -108,12 +108,14 @@ export class LevelToyStory {
 
   // Boss reference
   private bossEnemy!: EnemyController;
+  private bossEncounterActive = false;
 
   public stateFlags = {
     introCompleted: false,
     staffFound: false,
     gekkoTalked: false,
     bossCinematicPlayed: false,
+    bossDefeated: false,
     levelCompleted: false
   };
 
@@ -137,6 +139,7 @@ export class LevelToyStory {
     this.collectibleSystem = collectibleSystem;
     this.subtitleSystem = subtitleSystem;
     this.audioManager = audioManager;
+    this.player.onRespawn = () => queueMicrotask(() => this.handleBossPlayerRespawn());
   }
 
   public async init(): Promise<void> {
@@ -2238,11 +2241,15 @@ export class LevelToyStory {
 
       // Increase Boss health/damage stats
       if (e.id === 'crab_boss') {
-        (e as any).health = 5;
-        (e as any).maxHealth = 5;
-        (e as any).attackDmg = 25;
+        e.health = 9;
+        e.maxHealth = 9;
+        (e as any).attackDmg = 14;
         e.arenaCenter = new THREE.Vector3(45, 0.2, -40);
-        e.arenaRadius = 15.0;
+        e.arenaRadius = 21.0;
+        e.onHealthChange = (health, maxHealth) => {
+          const hud = (window as any).gameInstance?.hud;
+          hud?.updateBossHealth(health, maxHealth);
+        };
       }
 
       e.onAttackPlayer = (dmg) => {
@@ -2262,6 +2269,11 @@ export class LevelToyStory {
           console.log('[BOSS] HP: 0 -> Entering DYING state. Defeat sequence started.');
           if (this.isCinematicPlaying) return;
           this.isCinematicPlaying = true;
+          this.bossEncounterActive = false;
+          this.stateFlags.bossDefeated = true;
+          void this.audioManager.stopBossMusic();
+          const hud = (window as any).gameInstance?.hud;
+          hud?.hideBossHealth();
 
           // Pause other enemies
           this.enemies.forEach(other => {
@@ -2296,6 +2308,11 @@ export class LevelToyStory {
               console.log('[BOSS] Death sequence completed — gameplay resumed');
               this.awardKey('key2_boss');
               if (cinematicCamera) cinematicCamera.abort();
+              const cameraController = (window as any).gameInstance?.cameraController;
+              if (cameraController) {
+                cameraController.target = this.player.mesh;
+                cameraController.resumeAfterCinematic();
+              }
               this.enemies.forEach(other => other.isPaused = false);
               this.isCinematicPlaying = false;
             }
@@ -2423,15 +2440,6 @@ export class LevelToyStory {
       }
     });
     this.triggerZones.push(tGekko);
-
-    // Boss arena entrance trigger zone
-    const tBoss = new TriggerZone('trig_boss_arena', new THREE.Vector3(26.0, -1, -47.0), new THREE.Vector3(34.0, 6, -33.0), () => {
-      if (!this.stateFlags.bossCinematicPlayed) {
-        this.stateFlags.bossCinematicPlayed = true;
-        this.runBossCinematic();
-      }
-    });
-    this.triggerZones.push(tBoss);
 
     // Exit portal trigger at the back
     const tExit = new TriggerZone('trig_exit', new THREE.Vector3(-5, -1, -54), new THREE.Vector3(5, 5, -50), () => {
@@ -2810,6 +2818,18 @@ export class LevelToyStory {
 
     // Check triggers
     this.triggerZones.forEach(t => t.check(playerPos, delta));
+
+    if (!this.stateFlags.bossDefeated && !this.bossEncounterActive && !this.isCinematicPlaying && !this.player.isControlsLocked) {
+      const entryDistance = Math.hypot(playerPos.x - 34, playerPos.z + 40);
+      if (entryDistance <= 10) {
+        this.stateFlags.bossCinematicPlayed = true;
+        void this.runBossCinematic();
+      }
+    }
+    if (this.bossEncounterActive && this.bossEnemy?.arenaCenter) {
+      const arenaDistance = Math.hypot(playerPos.x - this.bossEnemy.arenaCenter.x, playerPos.z - this.bossEnemy.arenaCenter.z);
+      if (arenaDistance > this.bossEnemy.arenaRadius + 1.5) this.exitBossEncounter();
+    }
     
     // Update doors
     this.doors.forEach(d => d.update(delta));
@@ -3036,86 +3056,119 @@ export class LevelToyStory {
     }
   }
 
+  public restoreBossDefeated(): void {
+    if (!this.stateFlags.bossDefeated || !this.bossEnemy) return;
+    this.bossEncounterActive = false;
+    this.stateFlags.bossCinematicPlayed = true;
+    this.bossEnemy.dispose();
+    (window as any).gameInstance?.hud?.hideBossHealth();
+  }
+
+  private handleBossPlayerRespawn(): void {
+    if (!this.bossEncounterActive || this.stateFlags.bossDefeated) return;
+    this.bossEncounterActive = false;
+    this.isCinematicPlaying = false;
+    this.stateFlags.bossCinematicPlayed = false;
+    this.player.isControlsLocked = false;
+    this.player.isMovementLocked = false;
+    this.player.isAttacking = false;
+    this.bossEnemy.isPaused = false;
+    this.bossEnemy.resetBossEncounter();
+    this.enemies.forEach(enemy => { if (enemy.id !== 'crab_boss') enemy.isPaused = false; });
+    (window as any).gameInstance?.hud?.hideBossHealth();
+    void this.audioManager.stopBossMusic();
+  }
+
+  private exitBossEncounter(): void {
+    if (!this.bossEncounterActive || this.stateFlags.bossDefeated) return;
+    this.bossEncounterActive = false;
+    this.stateFlags.bossCinematicPlayed = false;
+    this.bossEnemy.isPaused = false;
+    this.bossEnemy.resetBossEncounter();
+    this.enemies.forEach(enemy => { if (enemy.id !== 'crab_boss') enemy.isPaused = false; });
+    (window as any).gameInstance?.hud?.hideBossHealth();
+    void this.audioManager.stopBossMusic();
+  }
+
   private async runBossCinematic(): Promise<void> {
-    const cinematicCamera = (window as any).gameInstance?.cinematicCamera;
-    const hud = (window as any).gameInstance?.hud;
+    if (this.bossEncounterActive || this.stateFlags.bossDefeated) return;
+    const game = (window as any).gameInstance;
+    const cinematicCamera = game?.cinematicCamera;
+    const cameraController = game?.cameraController;
+    const hud = game?.hud;
+    if (!cinematicCamera || !cameraController || !hud) return;
 
-    if (!cinematicCamera || !hud) return;
+    this.bossEncounterActive = true;
+    this.isCinematicPlaying = true;
+    this.player.isControlsLocked = true;
+    this.player.isMovementLocked = true;
+    this.player.isAttacking = false;
+    this.player.forceIdle();
+    this.enemies.forEach(enemy => { enemy.isPaused = true; });
+    this.bossEnemy.isPaused = true;
+    this.bossEnemy.mesh.position.copy(this.bossEnemy.arenaCenter!);
+    this.bossEnemy.mesh.rotation.set(0, 0, 0);
+    hud.showBossHealth(this.bossEnemy.health, this.bossEnemy.maxHealth);
+    this.subtitleSystem.hide();
+    void this.audioManager.startBossMusic();
 
-    try {
-      // Pause enemy AI!
-      this.enemies.forEach(e => e.isPaused = true);
-      await hud.fadeScreenOut(500);
+    const playerPos = this.player.mesh.position;
+    const bossPos = this.bossEnemy.mesh.position;
+    const fromBoss = new THREE.Vector3(playerPos.x - bossPos.x, 0, playerPos.z - bossPos.z);
+    if (fromBoss.lengthSq() < 0.01) fromBoss.set(0, 0, 1);
+    fromBoss.normalize();
+    this.player.mesh.rotation.y = Math.atan2(bossPos.x - playerPos.x, bossPos.z - playerPos.z);
 
-      this.player.isControlsLocked = true;
-      this.player.isMovementLocked = true;
+    const camera = cameraController.camera as THREE.PerspectiveCamera;
+    const startPos = camera.position.clone();
+    const startForward = camera.getWorldDirection(new THREE.Vector3());
+    const startLookAt = startPos.clone().addScaledVector(startForward, 7);
+    const side = new THREE.Vector3(-fromBoss.z, 0, fromBoss.x);
+    const endPos = bossPos.clone().addScaledVector(fromBoss, 7).addScaledVector(side, 2.2);
+    endPos.y += 3.1;
+    const endLookAt = bossPos.clone().add(new THREE.Vector3(0, 1.2, 0));
+    const cameraMove = cinematicCamera.moveCamera(startPos, endPos, startLookAt, endLookAt, 1.35);
 
-      // Position Player facing East, inside the arena boundaries
-      this.player.mesh.position.set(35, 0.1, -40);
-      this.player.mesh.rotation.set(0, Math.PI / 2, 0); 
-      this.player.forceIdle();
-
-      // Position Boss facing West, inside the arena
-      this.bossEnemy.mesh.position.set(48, 0.1, -40);
-      this.bossEnemy.mesh.rotation.set(0, -Math.PI / 2, 0); 
-      
-      this.bossEnemy.isPaused = false; 
-      this.bossEnemy.state = 'IDLE';
-
-      // Camera view inside the arena, avoiding boundary walls
-      const endPos = new THREE.Vector3(41.5, 2.5, -46.0); 
-      const endLookAt = new THREE.Vector3(41.5, 1.2, -40.0); 
-      cinematicCamera.moveCamera(endPos, endPos, endLookAt, endLookAt, 999.0);
-
-      this.subtitleSystem.hide();
-      await hud.fadeScreenIn(500);
-
-      let cinematicSkipped = false;
-
-      const finishCinematic = async () => {
-        if (cinematicSkipped) return;
-        cinematicSkipped = true;
-        window.removeEventListener('keydown', skipHandler);
-        hud.hideDialogue();
-
-        await hud.fadeScreenOut(500);
-
-        cinematicCamera.abort();
-        this.player.isControlsLocked = false;
-        this.player.isMovementLocked = false;
-
-        // Resume enemy AI
-        this.enemies.forEach(e => e.isPaused = false);
-
-        await hud.fadeScreenIn(500);
-      };
-
-      const skipHandler = (e: KeyboardEvent) => {
-        if (e.code === 'Space' || e.code === 'Enter' || e.code === 'Escape') {
-          finishCinematic();
-        }
-      };
-      window.addEventListener('keydown', skipHandler);
-
-      hud.showTypewriterDialogue(
-        'Jefe Cangrejo',
-        '¡Cuidado! Este cangrejo gigante acorazado es inmune a tus ataques normales. ¡Espera a que intente embestirte, esquívalo, y golpéalo por detrás mientras esté aturdido!',
-        () => {
-          if (cinematicSkipped) return;
-          setTimeout(() => {
-            if (cinematicSkipped) return;
-            finishCinematic();
-          }, 7000);
-        }
-      );
-    } catch (err) {
-      console.error('[Boss Cinematic] Error during cinematic, performing emergency cleanup:', err);
-      // Emergency cleanup — always restore gameplay
+    let cinematicFinished = false;
+    let autoFinishTimer = 0;
+    const finishCinematic = () => {
+      if (cinematicFinished) return;
+      cinematicFinished = true;
+      window.clearTimeout(autoFinishTimer);
+      window.removeEventListener('keydown', skipHandler);
+      hud.hideDialogue();
       cinematicCamera.abort();
+      cameraController.target = this.player.mesh;
+      cameraController.resumeAfterCinematic();
       this.player.isControlsLocked = false;
       this.player.isMovementLocked = false;
-      this.enemies.forEach(e => e.isPaused = false);
-      hud.hideDialogue();
+      this.enemies.forEach(enemy => { enemy.isPaused = false; });
+      this.bossEnemy.state = 'CHASE';
+      this.bossEnemy.isPaused = false;
+      this.bossEncounterActive = true;
+      this.isCinematicPlaying = false;
+      hud.showBossHealth(this.bossEnemy.health, this.bossEnemy.maxHealth);
+    };
+    const skipHandler = (event: KeyboardEvent) => {
+      if (event.code === 'Space' || event.code === 'Enter' || event.code === 'Escape') {
+        event.preventDefault();
+        finishCinematic();
+      }
+    };
+    window.addEventListener('keydown', skipHandler);
+    hud.showTypewriterDialogue(
+      'Cangrejo',
+      '¡Esquiva las marcas del suelo! Cuando se canse, acércate y golpéalo.',
+      () => {
+        if (!cinematicFinished) autoFinishTimer = window.setTimeout(finishCinematic, 1300);
+      }
+    );
+
+    try {
+      await cameraMove;
+    } catch (error) {
+      console.warn('[Boss Cinematic] Camera move ended early:', error);
+      finishCinematic();
     }
   }
 

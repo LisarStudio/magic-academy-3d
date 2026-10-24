@@ -3,13 +3,19 @@ export class AudioManager {
   private readonly bgmAudio = new Audio();
   private readonly musicPaths = {
     intro: 'assets/music/wukong-intro-theme.mp3',
-    gameplayB: 'assets/music/wukong-game-lisar-studio.mp3'
+    gameplayB: 'assets/music/wukong-game-lisar-studio.mp3',
+    crabBoss: 'assets/music/crab-boss-theme.mp3'
   } as const;
   private readonly musicUrls = new Map<keyof typeof this.musicPaths, string>();
   private musicPreparation: Promise<void> | null = null;
+  private bossMusicPreparation: Promise<void> | null = null;
   private musicPrepared = false;
-  private musicMode: 'intro' | 'gameplay' | null = null;
+  private musicMode: 'intro' | 'gameplay' | 'boss' | null = null;
   private currentMusicTrack: keyof typeof this.musicPaths | null = null;
+  private returnTrack: 'intro' | 'gameplayB' = 'intro';
+  private returnTrackTime = 0;
+  private musicGain = 1;
+  private musicFadeId = 0;
 
   // Volume channels
   public masterVolume = 1.0;
@@ -82,7 +88,7 @@ export class AudioManager {
 
     const base = import.meta.env.BASE_URL;
     this.musicPreparation = Promise.all(
-      Object.entries(this.musicPaths).map(async ([key, path]) => {
+      Object.entries(this.musicPaths).filter(([key]) => key !== 'crabBoss').map(async ([key, path]) => {
         const response = await fetch(`${base}${path}`, { cache: 'force-cache' });
         if (!response.ok) throw new Error(`Could not load music asset: ${path} (${response.status})`);
         const blob = await response.blob();
@@ -105,10 +111,19 @@ export class AudioManager {
         this.bgmAudio.addEventListener('canplay', onCanPlay, { once: true });
         this.bgmAudio.addEventListener('error', onError, { once: true });
       });
+      await Promise.all((['gameplayB'] as const).map((track) => {
+        const url = this.musicUrls.get(track);
+        return url ? this.preflightTrack(url) : Promise.reject(new Error(`Missing prepared music: ${track}`));
+      }));
       // Source selection above is done only before playback or when a gameplay track ends.
       // The intro starts at its first prepared sample; state changes never call this path.
       this.bgmAudio.currentTime = 0;
       this.musicPrepared = true;
+      // This large, encounter-only theme must not hold the intro screen open.
+      // Download/decode it in the background while the player starts the level.
+      void this.prepareBossMusicAsset().catch((error: unknown) => {
+        console.warn('[AudioManager] Crab theme is not ready yet; it will retry when needed.', error);
+      });
     }).catch((error: unknown) => {
       for (const url of this.musicUrls.values()) URL.revokeObjectURL(url);
       this.musicUrls.clear();
@@ -138,7 +153,13 @@ export class AudioManager {
 
   public startGameplayMusic(): void {
     if (!this.musicPrepared) return;
+    void this.prepareBossMusicAsset().catch((error: unknown) => {
+      console.warn('[AudioManager] Background crab theme preparation failed.', error);
+    });
+    if (this.musicMode === 'gameplay' && !this.bgmAudio.paused) return;
     this.musicMode = 'gameplay';
+    this.musicGain = 1;
+    this.applyMusicVolume();
     this.bgmAudio.loop = false;
     const nextTrack = this.pickGameplayTrack();
     if (nextTrack !== this.currentMusicTrack) this.setMusicSource(nextTrack);
@@ -149,15 +170,147 @@ export class AudioManager {
 
   private playNextGameplayTrack(): void {
     if (this.musicMode !== 'gameplay') return;
-    const nextTrack = this.pickGameplayTrack();
+    const nextTrack = this.pickGameplayTrack(this.currentMusicTrack === 'intro' ? 'intro' : 'gameplayB');
     if (nextTrack !== this.currentMusicTrack) this.setMusicSource(nextTrack);
     this.bgmAudio.loop = false;
     this.bgmAudio.play().catch(error => console.warn('[AudioManager] Gameplay playlist could not continue:', error));
   }
 
-  private pickGameplayTrack(): 'intro' | 'gameplayB' {
-    const choices: Array<'intro' | 'gameplayB'> = ['intro', 'gameplayB'];
+  private pickGameplayTrack(exclude?: 'intro' | 'gameplayB'): 'intro' | 'gameplayB' {
+    const choices: Array<'intro' | 'gameplayB'> = exclude ? (exclude === 'intro' ? ['gameplayB'] : ['intro']) : ['intro', 'gameplayB'];
     return choices[Math.floor(Math.random() * choices.length)];
+  }
+
+  public async startBossMusic(): Promise<void> {
+    if (!this.musicPrepared || this.musicMode === 'boss') return;
+    if (this.musicMode === 'gameplay' && (this.currentMusicTrack === 'intro' || this.currentMusicTrack === 'gameplayB')) {
+      this.returnTrack = this.currentMusicTrack;
+      this.returnTrackTime = this.bgmAudio.currentTime;
+    }
+    this.musicMode = 'boss';
+    try {
+      await this.prepareBossMusicAsset();
+    } catch (error) {
+      if (this.musicMode === 'boss') this.musicMode = 'gameplay';
+      console.warn('[AudioManager] Crab theme could not be prepared.', error);
+      return;
+    }
+    if (this.musicMode !== 'boss') return;
+    await this.fadeMusicTo(0, 520);
+    if (this.musicMode !== 'boss') return;
+    this.setMusicSource('crabBoss');
+    this.bgmAudio.loop = true;
+    this.musicGain = 0;
+    this.applyMusicVolume();
+    try {
+      await this.bgmAudio.play();
+      if (this.musicMode === 'boss') await this.fadeMusicTo(1, 650);
+    } catch (error) {
+      console.warn('[AudioManager] Crab music playback failed:', error);
+      this.musicMode = 'gameplay';
+      this.restoreGameplayMusic();
+    }
+  }
+
+  public async stopBossMusic(): Promise<void> {
+    if (this.musicMode !== 'boss') return;
+    this.musicMode = 'gameplay';
+    await this.fadeMusicTo(0, 520);
+    if (this.musicMode !== 'gameplay') return;
+    this.restoreGameplayMusic();
+  }
+
+  private restoreGameplayMusic(): void {
+    this.setMusicSource(this.returnTrack);
+    this.bgmAudio.loop = false;
+    void this.waitForMediaReady(this.bgmAudio).then(async () => {
+      if (this.musicMode !== 'gameplay') return;
+      if (Number.isFinite(this.bgmAudio.duration)) {
+        this.bgmAudio.currentTime = Math.min(this.returnTrackTime, Math.max(0, this.bgmAudio.duration - 0.05));
+      }
+      this.musicGain = 0;
+      this.applyMusicVolume();
+      try {
+        await this.bgmAudio.play();
+        if (this.musicMode === 'gameplay') await this.fadeMusicTo(1, 650);
+      } catch (error) {
+        console.warn('[AudioManager] Could not resume gameplay music:', error);
+      }
+    });
+  }
+
+  private async fadeMusicTo(target: number, durationMs: number): Promise<void> {
+    const id = ++this.musicFadeId;
+    const from = this.musicGain;
+    const startedAt = performance.now();
+    await new Promise<void>((resolve) => {
+      const step = (now: number) => {
+        if (id !== this.musicFadeId) { resolve(); return; }
+        const t = Math.min(1, (now - startedAt) / durationMs);
+        const eased = t * t * (3 - 2 * t);
+        this.musicGain = from + (target - from) * eased;
+        this.applyMusicVolume();
+        if (t >= 1) resolve();
+        else requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
+  private applyMusicVolume(): void {
+    this.bgmAudio.volume = this.musicVolume * this.masterVolume * this.musicGain;
+  }
+
+  private preflightTrack(url: string): Promise<void> {
+    const probe = new Audio();
+    probe.preload = 'auto';
+    probe.src = url;
+    return this.waitForMediaReady(probe).finally(() => {
+      probe.pause();
+      probe.removeAttribute('src');
+      probe.load();
+    });
+  }
+
+  private prepareBossMusicAsset(): Promise<void> {
+    if (this.musicUrls.has('crabBoss')) return Promise.resolve();
+    if (this.bossMusicPreparation) return this.bossMusicPreparation;
+    const base = import.meta.env.BASE_URL;
+    this.bossMusicPreparation = fetch(`${base}${this.musicPaths.crabBoss}`, { cache: 'force-cache' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Could not load crab music (${response.status}).`);
+        const url = URL.createObjectURL(await response.blob());
+        this.musicUrls.set('crabBoss', url);
+        await this.preflightTrack(url);
+      })
+      .catch((error: unknown) => {
+        const url = this.musicUrls.get('crabBoss');
+        if (url) URL.revokeObjectURL(url);
+        this.musicUrls.delete('crabBoss');
+        throw error;
+      })
+      .finally(() => { this.bossMusicPreparation = null; });
+    return this.bossMusicPreparation;
+  }
+
+  private waitForMediaReady(audio: HTMLAudioElement): Promise<void> {
+    if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => {
+        cleanup();
+        reject(new Error('Timed out waiting for audio to decode.'));
+      }, 30_000);
+      const cleanup = () => {
+        window.clearTimeout(timeoutId);
+        audio.removeEventListener('canplay', onReady);
+        audio.removeEventListener('error', onError);
+      };
+      const onReady = () => { cleanup(); resolve(); };
+      const onError = () => { cleanup(); reject(new Error('Audio could not be decoded.')); };
+      audio.addEventListener('canplay', onReady, { once: true });
+      audio.addEventListener('error', onError, { once: true });
+      audio.load();
+    });
   }
 
   private setMusicSource(track: keyof typeof this.musicPaths): void {
@@ -166,13 +319,13 @@ export class AudioManager {
     this.bgmAudio.pause();
     this.bgmAudio.src = url;
     this.bgmAudio.load();
-    this.bgmAudio.volume = this.musicVolume * this.masterVolume;
+    this.applyMusicVolume();
     this.currentMusicTrack = track;
   }
 
   public setMusicVolume(volume: number): void {
     this.musicVolume = Math.max(0, Math.min(1.0, volume));
-    this.bgmAudio.volume = this.musicVolume * this.masterVolume;
+    this.applyMusicVolume();
   }
 
   public setSFXVolume(volume: number): void {
