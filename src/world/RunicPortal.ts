@@ -318,10 +318,7 @@ export class PortalManager {
     if (!nearestPortal.isUnlocked) {
       hud.showInteractionPrompt(`Activar ${nearestPortal.displayName} [E]`);
 
-      const ePressed = inputManager.keys['KeyE'];
-      const isTouch = hud.isTouchDevice() && minDistance < 1.8;
-
-      if (ePressed || isTouch) {
+      if (inputManager.consumeInteractPress()) {
         hud.hideInteractionPrompt();
         const linked = nearestPortal.linkedPortal;
 

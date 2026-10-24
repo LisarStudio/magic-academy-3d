@@ -539,7 +539,9 @@ export class Level01 {
       (coins) => {
         const hud = (window as any).gameInstance?.hud;
         if (hud) hud.setCoinCount(coins);
-      }
+      },
+      undefined,
+      () => this.inputManager.consumeInteractPress()
     );
 
     // ── Chest Interaction — Staff Pickup ──────────────────────────────────────
@@ -551,7 +553,7 @@ export class Level01 {
       const hud = (window as any).gameInstance?.hud;
       hud?.showInteractionPrompt('Abrir Cofre');
 
-      if (this.inputManager.keys['KeyE'] && !this.staffChest.isUnlocked) {
+      if (this.inputManager.consumeInteractPress() && !this.staffChest.isUnlocked) {
         // Set flags immediately to prevent double-trigger
         this.stateFlags.staffFound = true;
         this.staffChest.isUnlocked = true;

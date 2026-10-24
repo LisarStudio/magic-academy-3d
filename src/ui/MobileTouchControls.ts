@@ -6,10 +6,11 @@ export class MobileTouchControls {
   private joystickBase: HTMLElement | null = null;
   private joystickStick: HTMLElement | null = null;
 
-  private btnJump: HTMLElement | null = null;
-  private btnAttack: HTMLElement | null = null;
-  private btnAction: HTMLElement | null = null;
-  private btnRun: HTMLElement | null = null;
+  private btnJump: HTMLButtonElement | null = null;
+  private btnAttack: HTMLButtonElement | null = null;
+  private btnAction: HTMLButtonElement | null = null;
+  private btnRun: HTMLButtonElement | null = null;
+  private readonly heldButtons = new Set<HTMLButtonElement>();
 
   // Joystick touch tracking
   private joystickTouchId: number | null = null;
@@ -71,25 +72,25 @@ export class MobileTouchControls {
       <!-- RIGHT: Ergonomic Action Buttons Diamond/Arc -->
       <div id="touch-action-zone" class="touch-action-zone">
         <!-- JUMP BUTTON (Top) -->
-        <button id="touch-btn-jump" class="touch-btn touch-btn-jump" aria-label="Saltar">
+        <button type="button" id="touch-btn-jump" class="touch-btn touch-btn-jump" aria-label="Saltar">
           <span class="btn-icon">▲</span>
           <span class="btn-subtext">SALTO</span>
         </button>
 
         <!-- ATTACK BUTTON (Left/Center) -->
-        <button id="touch-btn-attack" class="touch-btn touch-btn-attack" aria-label="Atacar">
+        <button type="button" id="touch-btn-attack" class="touch-btn touch-btn-attack" aria-label="Golpe">
           <span class="btn-icon">⚡</span>
-          <span class="btn-subtext">ATAQUE</span>
+          <span class="btn-subtext">GOLPE</span>
         </button>
 
         <!-- ACTION / INTERACT BUTTON (Right/Center) -->
-        <button id="touch-btn-action" class="touch-btn touch-btn-action" aria-label="Acción">
+        <button type="button" id="touch-btn-action" class="touch-btn touch-btn-action" aria-label="Acción">
           <span class="btn-icon">✋</span>
           <span class="btn-subtext">ACCIÓN</span>
         </button>
 
         <!-- RUN BUTTON (Bottom) -->
-        <button id="touch-btn-run" class="touch-btn touch-btn-run" aria-label="Correr">
+        <button type="button" id="touch-btn-run" class="touch-btn touch-btn-run" aria-label="Correr">
           <span class="btn-icon">🏃</span>
           <span class="btn-subtext">CORRER</span>
         </button>
@@ -100,10 +101,21 @@ export class MobileTouchControls {
 
     this.joystickBase = document.getElementById('touch-joystick-base');
     this.joystickStick = document.getElementById('touch-joystick-stick');
-    this.btnJump = document.getElementById('touch-btn-jump');
-    this.btnAttack = document.getElementById('touch-btn-attack');
-    this.btnAction = document.getElementById('touch-btn-action');
-    this.btnRun = document.getElementById('touch-btn-run');
+    this.btnJump = document.getElementById('touch-btn-jump') as HTMLButtonElement | null;
+    this.btnAttack = document.getElementById('touch-btn-attack') as HTMLButtonElement | null;
+    this.btnAction = document.getElementById('touch-btn-action') as HTMLButtonElement | null;
+    this.btnRun = document.getElementById('touch-btn-run') as HTMLButtonElement | null;
+  }
+
+  public setGameplayEnabled(enabled: boolean): void {
+    for (const button of [this.btnJump, this.btnAttack, this.btnAction, this.btnRun]) {
+      if (button) button.disabled = !enabled;
+    }
+    if (!enabled && this.btnRun) {
+      this.heldButtons.delete(this.btnRun);
+      this.btnRun.classList.remove('active');
+      this.inputManager.touchIsRunning = false;
+    }
   }
 
   public setActionHighlight(active: boolean): void {

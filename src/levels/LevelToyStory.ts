@@ -385,7 +385,9 @@ export class LevelToyStory {
     if (pavilionResult.status === 'fulfilled') {
       const pavilion = pavilionResult.value.scene;
       pavilion.name = 'intro_chinese_pavilion';
-      pavilion.scale.setScalar(0.72);
+      // Keep the pavilion in the same visual scale as Wukong and adjacent
+      // palace modules. The intro itself is a separate video and stays untouched.
+      pavilion.scale.setScalar(0.9);
       const centerX = 20;
       const centerZ = 24;
       const slopeX = (this.getTerrainHeight(centerX + 1, centerZ) - this.getTerrainHeight(centerX - 1, centerZ)) / 2;
@@ -992,6 +994,7 @@ export class LevelToyStory {
       const stepH = 0.15 + s * 0.1;
       const stepZ = -23.5 - s * 0.8;
       const step = new THREE.Mesh(new THREE.BoxGeometry(stepW, stepH, 1.0), stoneMat);
+      step.name = `front_stair_step_${s}`;
       step.position.set(0, stepH / 2, stepZ);
       step.castShadow = true;
       step.receiveShadow = true;
@@ -1076,6 +1079,7 @@ export class LevelToyStory {
       const stepY = 0.4 + t * stairRise;
       const stepZ = -28.0 - t * stairLength;
       const step = new THREE.Mesh(new THREE.BoxGeometry(6.8, 0.35, 1.15), stoneMat);
+      step.name = `main_stair_step_${i}`;
       step.position.set(10.2, stepY, stepZ);
       step.castShadow = true;
       step.receiveShadow = true;
@@ -1084,10 +1088,12 @@ export class LevelToyStory {
 
     // 3. Smooth Ramp Collider (100% fluid ascent/descent, zero gaps)
     const stairSmoothRamp = new THREE.Mesh(
-      new THREE.BoxGeometry(7.4, 0.45, stairRampDist + 0.8),
+      new THREE.BoxGeometry(7.4, 0.16, stairRampDist),
       new THREE.MeshBasicMaterial({ visible: false })
     );
-    stairSmoothRamp.position.set(10.2, 2.9, castleCenterZ + 4.0);
+    stairSmoothRamp.name = 'main_stair_ramp_collider';
+    // Align the collider's top face with the 0.4m and 5.2m landings.
+    stairSmoothRamp.position.set(10.2, 2.72, castleCenterZ + 4.0);
     stairSmoothRamp.rotation.x = stairAngle;
     scene.add(stairSmoothRamp);
     this.levelColliders.push(stairSmoothRamp);
@@ -1121,7 +1127,7 @@ export class LevelToyStory {
 
     const upperRampBase = new THREE.Mesh(new THREE.BoxGeometry(upperRampDist + 0.8, 2.5, 6.0), stoneMat);
     upperRampBase.position.set(2.0, 6.4, castleCenterZ - 11.0);
-    upperRampBase.rotation.z = upperAngle;
+    upperRampBase.rotation.z = -upperAngle;
     scene.add(upperRampBase);
     this.levelColliders.push(upperRampBase);
 
@@ -1130,6 +1136,7 @@ export class LevelToyStory {
       const stepX = 8.0 - t * upperLength;
       const stepY = 5.2 + t * upperRise;
       const step = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.35, 5.5), stoneMat);
+      step.name = `upper_stair_step_${i}`;
       step.position.set(stepX, stepY, castleCenterZ - 11.0);
       step.castShadow = true;
       step.receiveShadow = true;
@@ -1137,11 +1144,14 @@ export class LevelToyStory {
     }
 
     const upperRampCollider = new THREE.Mesh(
-      new THREE.BoxGeometry(upperRampDist + 0.8, 0.45, 6.2),
+      new THREE.BoxGeometry(upperLength, 0.16, 6.2),
       new THREE.MeshBasicMaterial({ visible: false })
     );
-    upperRampCollider.position.set(2.0, 7.7, castleCenterZ - 11.0);
-    upperRampCollider.rotation.z = upperAngle;
+    upperRampCollider.name = 'upper_stair_ramp_collider';
+    // The ascent runs from x=8 at y=5.2 to x=-4 at y=10; the former
+    // positive rotation reversed that slope and left the lower landing raised.
+    upperRampCollider.position.set(2.0, 7.52, castleCenterZ - 11.0);
+    upperRampCollider.rotation.z = -upperAngle;
     scene.add(upperRampCollider);
     this.levelColliders.push(upperRampCollider);
 
@@ -1272,7 +1282,7 @@ export class LevelToyStory {
     this.levelColliders.push(this.lavaVaultHatch);
 
     // 2. Secret Subterranean Stairs descending from y = 0.2 to y = -5.8
-    const stairsSteps = 14;
+    const stairsSteps = 16;
     const stairLen = 8.0;
     const stairDrop = 6.0;
     const subStairAngle = Math.atan(stairDrop / stairLen);
@@ -1280,11 +1290,13 @@ export class LevelToyStory {
 
     // Continuous Subterranean Smooth Ramp Collider (prevents falling into void)
     const subRampCollider = new THREE.Mesh(
-      new THREE.BoxGeometry(4.2, 0.4, subStairDist + 0.5),
+      new THREE.BoxGeometry(4.2, 0.16, subStairDist),
       new THREE.MeshBasicMaterial({ visible: false })
     );
-    subRampCollider.position.set(-9.0, -2.8, castleCenterZ + 4.0);
-    subRampCollider.rotation.x = subStairAngle;
+    subRampCollider.name = 'subterranean_stair_ramp_collider';
+    // Descending toward the back of the palace means z decreases while y falls.
+    subRampCollider.position.set(-9.0, -2.93, castleCenterZ + 4.0);
+    subRampCollider.rotation.x = -subStairAngle;
     scene.add(subRampCollider);
     this.levelColliders.push(subRampCollider);
 
@@ -1293,6 +1305,7 @@ export class LevelToyStory {
       const stepY = 0.1 - t * stairDrop;
       const stepZ = (castleCenterZ + 8.0) - t * stairLen;
       const step = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.35, 1.0), stoneMat);
+      step.name = `subterranean_stair_step_${i}`;
       step.position.set(-9.0, stepY, stepZ);
       step.castShadow = true;
       step.receiveShadow = true;
@@ -1499,6 +1512,7 @@ export class LevelToyStory {
       for (let s = 0; s < 4; s++) {
         const stepWidth = 4.2 - s * 0.3;
         const step = new THREE.Mesh(new THREE.BoxGeometry(stepWidth, 0.4, 1.2), stoneMat);
+        step.name = `mountain_pagoda_stair_step_${s}`;
         step.position.set(0, s * 0.35 + 0.2, 8.5 + (3 - s) * 1.0);
         pag.add(step);
         this.levelColliders.push(step);
@@ -2255,7 +2269,7 @@ export class LevelToyStory {
       e.onAttackPlayer = (dmg) => {
         if (!this.combatTutorialShown) {
           this.combatTutorialShown = true;
-          this.subtitleSystem.show('¡ALERTA DE COMBATE!', '⚔️ ¡Enemigo atacando! Presiona [Click Izquierdo] para atacar con tu Báculo o [Ctrl] para Patear.', 5000);
+          this.showCombatControlsHint();
         }
         const cp = this.checkpointManager.getActiveCheckpointPosition();
         this.player.takeDamage(dmg, cp);
@@ -2799,6 +2813,8 @@ export class LevelToyStory {
   }
 
   public update(delta: number, playerPos: THREE.Vector3): void {
+    const interactionHud = (window as any).gameInstance?.hud;
+    interactionHud?.beginInteractionFrame();
     // Tick Dynamic Day/Night Cycle
     if (this.dayNightCycle) {
       this.dayNightCycle.update(delta, playerPos);
@@ -2818,6 +2834,20 @@ export class LevelToyStory {
 
     // Check triggers
     this.triggerZones.forEach(t => t.check(playerPos, delta));
+
+    // Claim high-priority contextual presses before nearby coins or keys can consume them.
+    const chestInRange = !this.stateFlags.staffFound && !this.staffChest.isUnlocked &&
+      this.staffChest.mesh.position.distanceTo(playerPos) < 2.2 &&
+      !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying;
+    const openStaffChest = chestInRange && this.inputManager.consumeInteractPress();
+    const gekkoPosForAction = this.gekkoNPC?.mesh?.position;
+    const gekkoDistanceForAction = gekkoPosForAction
+      ? Math.hypot(playerPos.x - gekkoPosForAction.x, playerPos.z - gekkoPosForAction.z)
+      : Infinity;
+    const gekkoNeedsAction = gekkoDistanceForAction < 5.5 && !this.isCinematicPlaying &&
+      !this.player.isControlsLocked && !this.player.isMovementLocked &&
+      ((this.gekkoMissionState === 'MISSION_ACTIVE' && this.collectibleSystem.coinCount < 50) || this.gekkoMissionState === 'REWARD_GIVEN');
+    const interactWithGekko = gekkoNeedsAction && this.inputManager.consumeInteractPress();
 
     if (!this.stateFlags.bossDefeated && !this.bossEncounterActive && !this.isCinematicPlaying && !this.player.isControlsLocked) {
       const entryDistance = Math.hypot(playerPos.x - 34, playerPos.z + 40);
@@ -2867,7 +2897,7 @@ export class LevelToyStory {
         const hud = (window as any).gameInstance?.hud;
         hud?.showInteractionPrompt(`Presiona [E] para tomar ${keyData.name}`);
 
-        if (this.inputManager.keys['KeyE'] || (hud?.isTouchDevice?.() && distToKey < 1.3)) {
+        if (this.inputManager.consumeInteractPress()) {
           hud?.hideInteractionPrompt();
           // Remove key mesh from scene and array immediately
           this.sceneManager.scene.remove(kMesh);
@@ -2886,7 +2916,7 @@ export class LevelToyStory {
         e.update(delta, playerPos, this.levelColliders);
         if (!this.combatTutorialShown && e.isAlive() && e.mesh.position.distanceTo(playerPos) < 5.5) {
           this.combatTutorialShown = true;
-          this.subtitleSystem.show('¡ENEMIGO CANGREJO DETECTADO!', '⚔️ Presiona [Click Izquierdo] para atacar con tu Báculo o [Ctrl] para Patear.', 5000);
+          this.showCombatControlsHint();
         }
       }
     });
@@ -2907,7 +2937,7 @@ export class LevelToyStory {
         }
       },
       undefined,
-      this.inputManager.keys
+      () => this.inputManager.consumeInteractPress()
     );
 
     // ── Gekko Proximity Detection & Automatic Cinematic Triggering ──
@@ -2928,15 +2958,15 @@ export class LevelToyStory {
           this.runGekkoSecondCinematic();
         } else {
           const hud = (window as any).gameInstance?.hud;
-          hud?.showInteractionPrompt(`Hablar con Gekko (${currentCoins}/50 Monedas)`);
-          if (this.inputManager.keys['KeyE']) {
+          hud?.showInteractionPrompt(`Hablar con Gekko (${currentCoins}/50 Monedas) [E]`);
+          if (interactWithGekko) {
             this.subtitleSystem.show('Gekko', `Aún no tienes las 50 monedas Lisar (tienes ${currentCoins}/50). ¡Búscalas por todo el reino!`);
           }
         }
       } else if (this.gekkoMissionState === 'REWARD_GIVEN') {
         const hud = (window as any).gameInstance?.hud;
-        hud?.showInteractionPrompt('Hablar con Gekko');
-        if (this.inputManager.keys['KeyE']) {
+        hud?.showInteractionPrompt('Hablar con Gekko [E]');
+        if (interactWithGekko) {
           this.subtitleSystem.show('Gekko', '¡Gracias por ayudarme con las 50 Lisar Coins! Usa esa llave para abrir el portón principal.');
         }
       }
@@ -2949,7 +2979,7 @@ export class LevelToyStory {
         const hud = (window as any).gameInstance?.hud;
         if (!this.isLavaVaultOpen) {
           hud?.showInteractionPrompt('Activar Palanca del Dragón [E]');
-          if (this.inputManager.keys['KeyE'] || (hud?.isTouchDevice?.() && distToSwitch < 1.4)) {
+          if (this.inputManager.consumeInteractPress()) {
             this.isLavaVaultOpen = true;
             this.dragonLeverStick.rotation.x = -Math.PI / 4;
             this.lavaVaultHatch.position.y = -20; // Open hatch down
@@ -2996,8 +3026,9 @@ export class LevelToyStory {
       const distToEnergy = item.position.distanceTo(playerPos);
       if (distToEnergy < 2.0 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
         hud?.showInteractionPrompt('Tomar Durazno Celestial [E]');
+        const interactPressed = this.inputManager.consumeInteractPress();
 
-        if (this.inputManager.keys['KeyE'] || distToEnergy < 1.6 || (hud?.isTouchDevice?.() && distToEnergy < 1.8)) {
+        if (distToEnergy < 1.6 || interactPressed) {
           hud?.hideInteractionPrompt();
           this.collectibleSystem.spawnSparks(item.position);
           this.sceneManager.scene.remove(item);
@@ -3011,11 +3042,11 @@ export class LevelToyStory {
     }
 
     // ── Chest Interaction — Staff Pickup ──────────────────────────────────────
-    if (!this.stateFlags.staffFound && this.staffChest.mesh.position.distanceTo(playerPos) < 2.2) {
+    if (!this.stateFlags.staffFound && this.staffChest.mesh.position.distanceTo(playerPos) < 2.2 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
       const hud = (window as any).gameInstance?.hud;
       hud?.showInteractionPrompt('Presiona [E] para abrir cofre');
 
-      if (this.inputManager.keys['KeyE'] && !this.staffChest.isUnlocked) {
+      if (openStaffChest && !this.staffChest.isUnlocked) {
         this.stateFlags.staffFound = true;
         this.staffChest.isUnlocked = true;
         hud?.hideInteractionPrompt();
@@ -3036,7 +3067,7 @@ export class LevelToyStory {
           },
           onComplete: () => {
             console.log('[LevelToyStory] Staff cinematic complete — gameplay resumes.');
-            this.subtitleSystem.show('Báculo Mágico', '¡Has obtenido el Báculo Sagrado! Báculo guardado a la espalda. Ataca con Click Izquierdo.');
+            this.subtitleSystem.show('Báculo Mágico', hud?.isTouchDevice?.() ? '¡Has obtenido el Báculo Sagrado! Está guardado a la espalda. Pulsa Golpe para atacar.' : '¡Has obtenido el Báculo Sagrado! Báculo guardado a la espalda. Ataca con Click Izquierdo.');
             // Resume enemy AI!
             this.enemies.forEach(e => e.isPaused = false);
           },
@@ -3051,9 +3082,8 @@ export class LevelToyStory {
           this.enemies.forEach(e => e.isPaused = false);
         });
       }
-    } else {
-      (window as any).gameInstance?.hud?.hideInteractionPrompt();
     }
+    interactionHud?.endInteractionFrame();
   }
 
   public restoreBossDefeated(): void {
@@ -3062,6 +3092,14 @@ export class LevelToyStory {
     this.stateFlags.bossCinematicPlayed = true;
     this.bossEnemy.dispose();
     (window as any).gameInstance?.hud?.hideBossHealth();
+  }
+
+  private showCombatControlsHint(): void {
+    const hud = (window as any).gameInstance?.hud;
+    const hint = hud?.isTouchDevice?.()
+      ? 'Pulsa Golpe para atacar con el báculo o dar una patada.'
+      : 'Presiona [Click Izquierdo] para atacar con tu Báculo o [Ctrl] para Patear.';
+    this.subtitleSystem.show('¡ALERTA DE COMBATE!', `⚔️ ${hint}`, 5000);
   }
 
   private handleBossPlayerRespawn(): void {

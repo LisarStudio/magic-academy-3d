@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { SceneManager } from './SceneManager';
 import { InputManager } from './InputManager';
-import { MobileInputManager } from './MobileInputManager';
 import { AudioManager } from './AudioManager';
 import { AssetManager } from './AssetManager';
 import { PlayerController } from '../player/PlayerController';
@@ -22,8 +21,6 @@ import { MainMenu, type MenuState, type StartMode } from '../ui/MainMenu';
 export class Game {
   private sceneManager: SceneManager;
   private inputManager: InputManager;
-  // @ts-ignore
-  private mobileInputManager: MobileInputManager;
   private audioManager: AudioManager;
   private assetManager: AssetManager;
   private mainMenu: MainMenu;
@@ -50,7 +47,6 @@ export class Game {
   constructor(canvas: HTMLCanvasElement) {
     this.sceneManager = new SceneManager(canvas);
     this.inputManager = new InputManager(canvas);
-    this.mobileInputManager = new MobileInputManager(this.inputManager);
     this.audioManager = new AudioManager();
     this.assetManager = new AssetManager();
     this.hud = new HUD();
@@ -98,6 +94,8 @@ export class Game {
     this.player = new PlayerController(playerData.model as THREE.Group, this.animationController);
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
+    this.inputManager.canInteract = () => this.canUseGameplayActions();
+    this.inputManager.canAttack = () => this.canUseGameplayActions();
 
     // 3. Setup Cameras
     this.cameraController = new CameraController(this.sceneManager.camera);
@@ -144,7 +142,6 @@ export class Game {
 
     // 6. Bind Player & HUD Status Callbacks
     this.player.onHealthChange = (hp, maxHp) => this.hud.setHealth(hp, maxHp);
-    this.hud.setupMobileControls(this.inputManager);
     this.hud.mobileControls = new MobileTouchControls(this.inputManager);
     this.hud.equipmentViewer = new EquipmentViewer(this.player);
 
@@ -163,7 +160,7 @@ export class Game {
 
     // 7. Bind Input Actions
     this.inputManager.onLeftClick = () => {
-      if (this.player.isControlsLocked || this.player.isAttacking) return;
+      if (!this.canUseGameplayActions()) return;
 
       if (!this.player.isArmed()) {
         // Unarmed: Execute martial arts kick attack
@@ -241,7 +238,7 @@ export class Game {
 
     this.inputManager.onKick = () => {
       console.log('[Game] onKick callback triggered. HasStaff:', this.player.hasStaff, 'isControlsLocked:', this.player.isControlsLocked, 'isAttacking:', this.player.isAttacking);
-      if (!this.player.isControlsLocked && !this.player.isAttacking) {
+      if (this.canUseGameplayActions()) {
         this.player.isAttacking = true;
         this.player.isMovementLocked = true;
         this.player.isControlsLocked = true;
@@ -477,6 +474,7 @@ export class Game {
   private loop(currentTime: number): void {
     const delta = Math.min(0.1, (currentTime - this.lastFrameTime) / 1000);
     this.lastFrameTime = currentTime;
+    this.hud.mobileControls?.setGameplayEnabled(this.canUseGameplayActions());
 
     if (!this.isPaused) {
       this.update(delta);
@@ -496,6 +494,7 @@ export class Game {
 
   private update(delta: number): void {
     if (this.menuState !== 'Playing') return;
+    this.inputManager.beginFrame();
     // Update Game Components
     if (this.cinematicCamera.isActive()) {
       this.cinematicCamera.update(delta);
@@ -528,6 +527,11 @@ export class Game {
     );
 
     // Render is handled in loop()
+  }
+
+  private canUseGameplayActions(): boolean {
+    return this.menuState === 'Playing' && !this.isPaused && !!this.player &&
+      !this.player.isControlsLocked && !this.player.isMovementLocked && !this.player.isAttacking;
   }
 
   public saveGame(): void {

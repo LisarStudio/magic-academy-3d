@@ -55,6 +55,7 @@ export class HUD {
   private objectiveFadeTimer: any = null;
   private objectiveMiniIconEl: HTMLElement | null = null;
   private lastObjectiveText: string = '';
+  private interactionPromptRequested = false;
 
   public isDebugMode = false;
 
@@ -209,42 +210,6 @@ export class HUD {
       };
       this.btnMobilePauseEl.addEventListener('click', toggle);
       this.btnMobilePauseEl.addEventListener('touchstart', toggle);
-    }
-  }
-
-  public setupMobileControls(inputManager: any): void {
-    const btnKick = document.getElementById('btn-mobile-kick');
-    const btnJump = document.getElementById('btn-mobile-jump');
-    const btnAttack = document.getElementById('btn-mobile-attack');
-
-    if (btnKick) {
-      const handleKick = (e: Event) => {
-        e.preventDefault();
-        e.stopPropagation();
-        inputManager.triggerKick();
-      };
-      btnKick.addEventListener('touchstart', handleKick, { passive: false });
-      btnKick.addEventListener('click', handleKick);
-    }
-
-    if (btnJump) {
-      const handleJump = (e: Event) => {
-        e.preventDefault();
-        e.stopPropagation();
-        inputManager.triggerJump();
-      };
-      btnJump.addEventListener('touchstart', handleJump, { passive: false });
-      btnJump.addEventListener('click', handleJump);
-    }
-
-    if (btnAttack) {
-      const handleAttack = (e: Event) => {
-        e.preventDefault();
-        e.stopPropagation();
-        inputManager.triggerMagicSpell();
-      };
-      btnAttack.addEventListener('touchstart', handleAttack, { passive: false });
-      btnAttack.addEventListener('click', handleAttack);
     }
   }
 
@@ -454,16 +419,33 @@ export class HUD {
   }
 
   public showInteractionPrompt(label: string): void {
+    this.interactionPromptRequested = true;
     if (this.isTouchDevice()) {
-      label = label.replace(/\[ENTER\]|ENTER/gi, '[TOCA LA PANTALLA]');
-      label = label.replace(/PRESIONA/gi, 'TOCA');
+      const isActionPrompt = /\[E\]/i.test(label) || /^(Abrir|Hablar|Recoger|Tomar|Activar)\b/i.test(label);
+      if (/\[E\]/i.test(label)) {
+        label = label.replace(/\[E\]/gi, '').replace(/^\s*Presiona\s*/i, '').replace(/^\s*para\s+/i, '');
+        label = `Pulsa Acción para ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+      } else if (/^(Abrir|Hablar|Recoger|Tomar|Activar)\b/i.test(label)) {
+        label = `Pulsa Acción para ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+      }
+      this.setMobileActionHighlight(isActionPrompt);
     }
     this.interactionLabelEl.textContent = label;
     this.interactionPromptEl.classList.remove('hidden');
   }
 
   public hideInteractionPrompt(): void {
+    this.interactionPromptRequested = false;
     this.interactionPromptEl.classList.add('hidden');
+    this.setMobileActionHighlight(false);
+  }
+
+  public beginInteractionFrame(): void {
+    this.interactionPromptRequested = false;
+  }
+
+  public endInteractionFrame(): void {
+    if (!this.interactionPromptRequested) this.hideInteractionPrompt();
   }
 
   public toggleDebug(): void {

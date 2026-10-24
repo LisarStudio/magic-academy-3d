@@ -258,7 +258,7 @@ export class CollectibleSystem {
     onCollectCard: (count: number) => void,
     onCollectCoin?: (totalCoins: number) => void,
     onCollectPotion?: (type: 'POTION_HP' | 'POTION_MP' | 'CHOCOLATE_FROG') => void,
-    inputKeys?: Record<string, boolean>
+    consumeInteract?: () => boolean
   ): void {
     // 1. Update Spark Particle Pool in-place (Zero Allocation)
     let activeSparks = false;
@@ -309,11 +309,10 @@ export class CollectibleSystem {
       hud?.showInteractionPrompt(`Recoger ${itemLabel}`);
 
       // Collect instantly on contact/walkover (minDistance < 1.6) OR pressing E key
-      const ePressed = inputKeys ? !!inputKeys['KeyE'] : false;
-      const isTouch = hud?.isTouchDevice?.() || false;
       const isWalkover = minDistance < 1.6;
+      const interactPressed = consumeInteract?.() ?? false;
 
-      if (isWalkover || ePressed || isTouch) {
+      if (isWalkover || interactPressed) {
         nearestItem.isCollected = true;
         this.scene.remove(nearestItem.mesh);
         hud?.hideInteractionPrompt();

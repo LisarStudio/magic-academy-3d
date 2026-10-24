@@ -13,8 +13,13 @@ export class InputManager {
   public onSelectSpell: ((spellIndex: number) => void) | null = null;
   public onPointerLockChange: ((isLocked: boolean) => void) | null = null;
   public onPauseToggle: (() => void) | null = null;
+  public canInteract: (() => boolean) | null = null;
+  public canAttack: (() => boolean) | null = null;
 
   private ctrlDown = false;
+  private interactionQueued = false;
+  private interactionFramePressed = false;
+  private interactionConsumed = false;
   private canvas: HTMLCanvasElement;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -24,6 +29,9 @@ export class InputManager {
 
   public resetInputs(): void {
     this.keys = {};
+    this.interactionQueued = false;
+    this.interactionFramePressed = false;
+    this.interactionConsumed = false;
     this.touchAnalogX = 0;
     this.touchAnalogZ = 0;
     this.touchIsRunning = false;
@@ -66,8 +74,8 @@ export class InputManager {
         }
       }
 
-      if (e.code === 'KeyE') {
-        if (this.onInteract) this.onInteract();
+      if (e.code === 'KeyE' && !e.repeat) {
+        this.queueInteractPress();
       }
 
       if (e.code === 'Space' || e.code === 'Escape') {
@@ -140,14 +148,17 @@ export class InputManager {
   public touchIsRunning = false;
 
   public triggerKick(): void {
+    if (this.canAttack && !this.canAttack()) return;
     if (this.onKick) this.onKick();
   }
 
   public triggerMagicSpell(): void {
+    if (this.canAttack && !this.canAttack()) return;
     if (this.onLeftClick) this.onLeftClick();
   }
 
   public triggerAttack(): void {
+    if (this.canAttack && !this.canAttack()) return;
     if (this.onLeftClick) {
       this.onLeftClick();
     } else if (this.onKick) {
@@ -160,7 +171,28 @@ export class InputManager {
   }
 
   public triggerInteract(): void {
-    if (this.onInteract) this.onInteract();
+    this.queueInteractPress();
+  }
+
+  /** Capture one interaction edge for the next game update, shared by E and touch. */
+  private queueInteractPress(): void {
+    if (this.canInteract && !this.canInteract()) return;
+    this.interactionQueued = true;
+    this.onInteract?.();
+  }
+
+  /** Move pending input into a one-frame pulse before updating nearby interactables. */
+  public beginFrame(): void {
+    this.interactionFramePressed = this.interactionQueued;
+    this.interactionQueued = false;
+    this.interactionConsumed = false;
+  }
+
+  /** Only the first nearby interactable in the update order can consume a press. */
+  public consumeInteractPress(): boolean {
+    if (!this.interactionFramePressed || this.interactionConsumed) return false;
+    this.interactionConsumed = true;
+    return true;
   }
 
   // Key getters (combined Keyboard + Touch Analog)

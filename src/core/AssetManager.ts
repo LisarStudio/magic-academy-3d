@@ -304,6 +304,11 @@ export class AssetManager {
         if ((child as THREE.Mesh).isMesh) {
           child.castShadow = true;
           child.receiveShadow = true;
+
+          // Skin deformation can move hair and other attached parts beyond the
+          // bind-pose bounds. Keep the small hero model visible through turns,
+          // crouches and close camera angles instead of culling those meshes.
+          child.frustumCulled = false;
           
           const mesh = child as THREE.Mesh;
           const material = mesh.material;
