@@ -87,6 +87,23 @@ export class AudioManager {
     this.voiceVolume = this.sfxVolume;
   }
 
+  public playMenuSelect(): void {
+    if (this.sfxVolume <= 0.001) return;
+    const ctx = this.initCtx();
+    const now = ctx.currentTime;
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(620, now);
+    oscillator.frequency.exponentialRampToValueAtTime(880, now + 0.055);
+    gain.gain.setValueAtTime(0.045 * this.sfxVolume * this.masterVolume, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start(now);
+    oscillator.stop(now + 0.1);
+  }
+
   public stopBGM(): void {
     if (this.bgmAudio) {
       this.bgmAudio.pause();

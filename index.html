@@ -6,24 +6,23 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>LISAR — Reino Místico del Rey Mono</title>
+    <title>La leyenda de Wukong — Lisar Studio</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/src/style.css" />
-    <script type="importmap">
-      {
-        "imports": {
-          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-          "three/examples/jsm/loaders/GLTFLoader.js": "https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js"
-        }
-      }
-    </script>
   </head>
   <body>
     <div id="app">
       <!-- 3D Canvas -->
       <canvas id="game-canvas"></canvas>
+
+      <!-- Las cinemáticas ya incluyen el templo y a Wukong. -->
+      <div id="cinematic-backdrop" class="cinematic-backdrop" aria-hidden="true">
+        <video id="intro-video" class="cinematic-video" muted playsinline preload="auto"></video>
+        <video id="idle-video" class="cinematic-video" muted playsinline preload="auto" loop></video>
+        <video id="start-video" class="cinematic-video" muted playsinline preload="none"></video>
+      </div>
 
       <!-- UI Overlay -->
       <div id="ui-overlay">
@@ -201,7 +200,7 @@
 
             <div class="modal-actions">
               <button id="btn-replay" class="btn-magic">REPETIR NIVEL</button>
-              <button id="btn-continue" class="btn-magic primary">CONTINUAR</button>
+              <button id="btn-victory-continue" class="btn-magic primary">CONTINUAR</button>
             </div>
           </div>
         </div>
@@ -270,15 +269,76 @@
         </div>
 
         <!-- Pointer Lock / Start Screen -->
-        <div id="start-screen" class="modal-screen start-screen-bg">
-          <div class="start-content-center">
-            <h1 class="game-title">LISAR</h1>
-            <p class="game-subtitle">REINO MÍSTICO DEL REY MONO</p>
-
-            <button id="btn-start" class="btn-jugar-epic">JUGAR</button>
-            <div class="start-hint">Presiona JUGAR para iniciar la aventura mágica</div>
+        <section id="start-screen" class="modal-screen start-screen-bg" aria-label="Menú principal de La leyenda de Wukong">
+          <div id="loading-panel" class="loading-panel" role="status" aria-live="polite">
+            <div class="loading-mark">☁</div>
+            <h1>Preparando la aventura</h1>
+            <p id="loading-status">Cargando a Wukong y el templo…</p>
+            <div class="loading-track"><div id="loading-progress" class="loading-progress"></div></div>
+            <p id="loading-percent" class="loading-percent">Cargando…</p>
+            <button id="btn-retry-loading" class="menu-button hidden" type="button">Reintentar</button>
           </div>
-        </div>
+
+          <div id="main-menu" class="main-menu hidden">
+            <div class="menu-panel">
+              <svg class="wukong-logo" viewBox="0 0 670 310" role="img" aria-labelledby="logo-title">
+                <title id="logo-title">La leyenda de Wukong</title>
+                <defs><linearGradient id="logo-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff16a"/><stop offset=".55" stop-color="#ffc62e"/><stop offset="1" stop-color="#ff9419"/></linearGradient></defs>
+                <g class="logo-clouds" fill="#ffe27b" stroke="#a6421e" stroke-width="5" stroke-linejoin="round">
+                  <path d="M25 103c-21-3-25-24-7-34 3-23 31-27 42-9 14-17 40-7 39 13 21 9 14 34-9 35H25z"/>
+                  <path d="M568 103c-21-3-25-24-7-34 3-23 31-27 42-9 14-17 40-7 39 13 21 9 14 34-9 35h-65z"/>
+                </g>
+                <text x="336" y="100" text-anchor="middle" class="logo-top">LA LEYENDA</text>
+                <text x="336" y="146" text-anchor="middle" class="logo-de">DE</text>
+                <text x="336" y="231" text-anchor="middle" class="logo-main">WUKONG</text>
+                <g class="logo-staff" stroke-linecap="round">
+                  <path d="M112 267h448" stroke="#54200e" stroke-width="22"/><path d="M112 260h448" stroke="#f4aa22" stroke-width="13"/>
+                  <path d="M104 250v22m18-22v22m407-22v22m18-22v22" stroke="#b73824" stroke-width="9"/>
+                </g>
+              </svg>
+
+              <nav class="menu-actions" aria-label="Opciones principales">
+                <button id="btn-continue" class="menu-button menu-button-primary" type="button" disabled>
+                  <span class="menu-icon" aria-hidden="true">▶</span><span>Continuar</span>
+                </button>
+                <button id="btn-new-game" class="menu-button" type="button">
+                  <span class="menu-icon" aria-hidden="true">★</span><span>Nueva partida</span>
+                </button>
+                <button id="btn-options" class="menu-button" type="button">
+                  <span class="menu-icon" aria-hidden="true">⚙</span><span>Opciones</span>
+                </button>
+                <button id="btn-credits" class="menu-button" type="button">
+                  <span class="menu-icon" aria-hidden="true">▤</span><span>Créditos</span>
+                </button>
+              </nav>
+            </div>
+            <footer class="menu-footer"><span class="studio-name">☁ LISAR STUDIO ☁</span><span id="project-version">Versión 0.0.0</span></footer>
+            <p class="menu-hint"><kbd>↑</kbd><kbd>↓</kbd> Seleccionar <kbd>Enter</kbd> Confirmar</p>
+          </div>
+
+          <div id="menu-dialog" class="menu-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+            <div class="dialog-card">
+              <button id="btn-dialog-close" class="dialog-close" type="button" aria-label="Volver al menú">×</button>
+              <h2 id="dialog-title">Opciones</h2>
+              <div id="options-content" class="dialog-content">
+                <label class="setting-row" for="music-volume"><span>Música</span><input id="music-volume" type="range" min="0" max="1" step="0.05"></label>
+                <label class="setting-row" for="sfx-volume"><span>Efectos</span><input id="sfx-volume" type="range" min="0" max="1" step="0.05"></label>
+                <label class="setting-row" for="render-quality"><span>Calidad gráfica</span><select id="render-quality"><option value="0.65">Ahorro</option><option value="0.85">Equilibrada</option><option value="1">Alta</option></select></label>
+                <p class="settings-note">Los cambios de sonido y calidad se guardan en este dispositivo.</p>
+              </div>
+              <div id="credits-content" class="dialog-content hidden">
+                <p class="credits-studio">Lisar Studio</p>
+                <p>La leyenda de Wukong</p>
+                <p>Una aventura de Magic Academy 3D.</p>
+              </div>
+              <div id="confirm-content" class="dialog-content hidden">
+                <p>Ya existe una partida guardada. ¿Quieres empezar desde cero y reemplazarla?</p>
+                <div class="dialog-actions"><button id="btn-cancel-new" class="dialog-button" type="button">Volver</button><button id="btn-confirm-new" class="dialog-button dialog-button-danger" type="button">Empezar de nuevo</button></div>
+              </div>
+              <p id="dialog-error" class="dialog-error hidden" role="alert"></p>
+            </div>
+          </div>
+        </section>
 
       </div>
     </div>

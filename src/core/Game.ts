@@ -17,6 +17,7 @@ import { SubtitleSystem } from '../ui/SubtitleSystem';
 import { LevelToyStory } from '../levels/LevelToyStory';
 import { EquipmentViewer } from '../ui/EquipmentViewer';
 import { MobileTouchControls } from '../ui/MobileTouchControls';
+import { MainMenu, type MenuState, type StartMode } from '../ui/MainMenu';
 
 export class Game {
   private sceneManager: SceneManager;
@@ -25,6 +26,8 @@ export class Game {
   private mobileInputManager: MobileInputManager;
   private audioManager: AudioManager;
   private assetManager: AssetManager;
+  private mainMenu: MainMenu;
+  private menuState: MenuState = 'Loading';
   private hud: HUD;
   private subtitleSystem: SubtitleSystem;
 
@@ -53,6 +56,25 @@ export class Game {
     this.hud = new HUD();
     this.subtitleSystem = new SubtitleSystem();
 
+    this.mainMenu = new MainMenu({
+      onStateChange: (state) => { this.menuState = state; },
+      onBeginTransition: () => {
+        this.audioManager.resume();
+        this.inputManager.resetInputs();
+        if (!this.hud.isTouchDevice()) this.inputManager.requestPointerLock();
+      },
+      onTransitionComplete: (mode) => this.beginGameplay(mode),
+      onPreferences: ({ music, effects, quality }) => {
+        this.audioManager.setMusicVolume(music);
+        this.audioManager.setSFXVolume(effects);
+        const maxDpr = window.innerWidth <= 1024 ? 1.05 : 1.75;
+        this.sceneManager.renderer.setPixelRatio(Math.min(window.devicePixelRatio * quality, maxDpr));
+        this.sceneManager.renderer.setSize(window.innerWidth, window.innerHeight);
+      },
+      onSelect: () => this.audioManager.playMenuSelect()
+    });
+    this.assetManager.onProgress = (loaded, total, url) => this.mainMenu.setLoadingProgress(loaded, total, url);
+
     this.initUIListeners();
   }
 
@@ -66,6 +88,8 @@ export class Game {
     // 2. Setup AnimationController & PlayerController
     this.animationController = new AnimationController(playerData.model, playerData.clips);
     this.player = new PlayerController(playerData.model as THREE.Group, this.animationController);
+    this.player.isControlsLocked = true;
+    this.player.isMovementLocked = true;
 
     // 3. Setup Cameras
     this.cameraController = new CameraController(this.sceneManager.camera);
@@ -328,7 +352,7 @@ export class Game {
       if (isLocked) {
         this.audioManager.resume();
       }
-      if (!this.level01?.stateFlags?.introCompleted) return; // Don't pause during start screen
+      if (this.menuState !== 'Playing') return;
       if (this.level01?.stateFlags?.levelCompleted) return; // Don't pause if dead/won
       
       this.isPaused = !isLocked;
@@ -341,39 +365,18 @@ export class Game {
     };
 
     // 8. Start Game Loop
+    this.mainMenu.playIntro();
     this.lastFrameTime = performance.now();
     requestAnimationFrame((t) => this.loop(t));
   }
 
   private initUIListeners(): void {
-    const btnStart = document.getElementById('btn-start');
-    const startScreen = document.getElementById('start-screen');
     const btnReplay = document.getElementById('btn-replay');
-    const btnContinue = document.getElementById('btn-continue');
+    const btnContinue = document.getElementById('btn-victory-continue');
     const btnResume = document.getElementById('btn-resume');
-    this.inputManager.onPauseToggle = () => this.togglePause();
-
-    const onStartGame = (e?: Event) => {
-      if (e) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      startScreen?.classList.add('hidden');
-      this.audioManager.resume();
-      if (!this.hud.isTouchDevice()) {
-        this.inputManager.requestPointerLock();
-      }
-      this.audioManager.startBGM();
-      this.inputManager.resetInputs();
-
-      // Launch scenic world presentation cinematic down to Wukong
-      if (this.level01) {
-        this.level01.runGameIntroSequence();
-      }
+    this.inputManager.onPauseToggle = () => {
+      if (this.menuState === 'Playing') this.togglePause();
     };
-
-    btnStart?.addEventListener('click', onStartGame);
-    btnStart?.addEventListener('touchstart', onStartGame, { passive: false });
 
     btnReplay?.addEventListener('click', () => {
       window.location.reload();
@@ -400,6 +403,31 @@ export class Game {
     }, { passive: false });
   }
 
+  private beginGameplay(mode: StartMode): void {
+    this.audioManager.resume();
+    this.audioManager.startBGM();
+    this.inputManager.resetInputs();
+
+    if (mode === 'continue') {
+      this.loadGame();
+    } else {
+      this.player.mesh.position.set(0, 0.2, 10);
+      this.player.mesh.rotation.set(0, Math.PI, 0);
+      this.player.velocity.set(0, 0, 0);
+    }
+
+    this.level01.stateFlags.introCompleted = true;
+    this.player.isAttacking = false;
+    this.player.isMovementLocked = false;
+    this.player.isControlsLocked = false;
+    this.player.forceIdle();
+    this.cameraController.setTarget(this.player.mesh);
+    this.cameraController.snapBehindTarget();
+    this.isPaused = false;
+    document.getElementById('pause-screen')?.classList.add('hidden');
+    this.hud.showGameplayHUD();
+  }
+
   public togglePause(forceState?: boolean): void {
     const nextState = forceState !== undefined ? forceState : !this.isPaused;
     this.isPaused = nextState;
@@ -417,6 +445,11 @@ export class Game {
         this.inputManager.requestPointerLock();
       }
     }
+  }
+
+  public showStartupError(error: unknown): void {
+    console.error('[Game] Startup failed:', error);
+    this.mainMenu.showLoadingError('No se pudo preparar la aventura. Comprueba los recursos y vuelve a intentarlo.');
   }
 
   private loop(currentTime: number): void {
@@ -440,6 +473,7 @@ export class Game {
   }
 
   private update(delta: number): void {
+    if (this.menuState !== 'Playing') return;
     // Update Game Components
     if (this.cinematicCamera.isActive()) {
       this.cinematicCamera.update(delta);
@@ -476,6 +510,8 @@ export class Game {
 
   public saveGame(): void {
     const saveData = {
+      version: 1,
+      levelId: 'magic-academy-3d',
       playerPos: { x: this.player.mesh.position.x, y: this.player.mesh.position.y, z: this.player.mesh.position.z },
       playerRotY: this.player.mesh.rotation.y,
       health: this.player.health,
@@ -485,6 +521,14 @@ export class Game {
       hasStaff: this.player.hasStaff,
       coinsCount: this.collectibleSystem.coinCount,
       gekkoMissionState: this.level01.gekkoMissionState,
+      checkpointId: this.checkpointManager.getCurrentCheckpointId(),
+      collectedKeys: this.level01.collectedKeys,
+      totalKeysCount: this.level01.totalKeysCount,
+      stateFlags: {
+        staffFound: this.level01.stateFlags.staffFound,
+        gekkoTalked: this.level01.stateFlags.gekkoTalked,
+        bossCinematicPlayed: this.level01.stateFlags.bossCinematicPlayed
+      },
       timestamp: Date.now()
     };
     localStorage.setItem('lisar_savegame', JSON.stringify(saveData));
@@ -500,6 +544,7 @@ export class Game {
     }
     try {
       const data = JSON.parse(raw);
+      if (data.version !== undefined && data.version !== 1) throw new Error('Versión de partida no compatible.');
       if (data.playerPos) {
         this.player.mesh.position.set(data.playerPos.x, data.playerPos.y, data.playerPos.z);
       }
@@ -526,6 +571,16 @@ export class Game {
       if (data.gekkoMissionState) {
         this.level01.gekkoMissionState = data.gekkoMissionState;
       }
+      if (typeof data.checkpointId === 'number') this.checkpointManager.setActiveCheckpoint(data.checkpointId);
+      if (data.collectedKeys && typeof data.collectedKeys === 'object') {
+        Object.assign(this.level01.collectedKeys, data.collectedKeys);
+        this.level01.totalKeysCount = Number(data.totalKeysCount) || 0;
+        this.hud.setKeyCount(this.level01.totalKeysCount);
+      }
+      if (data.stateFlags && typeof data.stateFlags === 'object') {
+        Object.assign(this.level01.stateFlags, data.stateFlags);
+      }
+      this.level01.stateFlags.introCompleted = true;
       this.subtitleSystem.show('Cargado', '¡Partida cargada exitosamente!');
       console.log('[SaveSystem] Game loaded:', data);
     } catch (e) {

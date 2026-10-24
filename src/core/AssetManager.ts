@@ -9,8 +9,14 @@ export interface LoadedPlayerData {
 }
 
 export class AssetManager {
-  private fbxLoader = new FBXLoader();
-  private gltfLoader = new GLTFLoader();
+  private loadingManager = new THREE.LoadingManager();
+  private fbxLoader = new FBXLoader(this.loadingManager);
+  private gltfLoader = new GLTFLoader(this.loadingManager);
+  public onProgress?: (loaded: number, total: number, url: string) => void;
+
+  constructor() {
+    this.loadingManager.onProgress = (url, loaded, total) => this.onProgress?.(loaded, total, url);
+  }
 
   /**
    * Load an FBX file, extract the first animation clip, retarget it to
@@ -210,10 +216,10 @@ export class AssetManager {
 
       // Try loading player.glb first (custom character Lisar)
       try {
-        console.log('[AssetManager] Loading player.glb via GLTFLoader...');
-        const gltf = await this.gltfLoader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/player.glb?v=7');
+        console.log('[AssetManager] Loading the rigged Wukong 2.0 model via GLTFLoader...');
+        const gltf = await this.gltfLoader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/wukong_2.0_rigged.glb');
         playerModel = gltf.scene;
-        console.log('[AssetManager] ✅ Loaded player.glb successfully');
+        console.log('[AssetManager] ✅ Loaded rigged Wukong 2.0 successfully');
 
         // Look for embedded staff mesh "Vaculo" and remove it permanently
         playerModel.traverse((child) => {
@@ -249,15 +255,15 @@ export class AssetManager {
         translationScaleFactor = 0.01 / armScale;
         console.log(`[AssetManager] GLTF detected. Armature scale = ${armScale.toFixed(4)}. Base scale factor = ${translationScaleFactor.toFixed(5)}`);
       } catch (err) {
-        console.warn('[AssetManager] player.glb failed to load, falling back to FBX', err);
+        console.warn('[AssetManager] Wukong 2.0 model failed to load, falling back to FBX', err);
       }
 
       // Fallback to FBX if GLTF failed
       if (!playerModel) {
         try {
-          playerModel = await this.fbxLoader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/Idle_nowood.fbx?v=7');
+          playerModel = await this.fbxLoader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle.fbx');
         } catch {
-          console.warn('[AssetManager] Idle_nowood.fbx failed, trying Wukong_NoWood.fbx');
+          console.warn('[AssetManager] Wukong idle FBX failed, trying the project Wukong fallback');
           playerModel = await this.fbxLoader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/Wukong_NoWood.fbx');
         }
       }
@@ -362,6 +368,7 @@ export class AssetManager {
         runUnarmed,
         jumpUnarmed,
         wukongDoubleJump,
+        wukongFall,
         takeItem,
         wukongKick,
         wukongHardLanding,
@@ -370,17 +377,19 @@ export class AssetManager {
         jumpArmed,
         castSpellData
       ] = await Promise.all([
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle_nowood.fbx?v=7', 'Idle_Unarmed', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Running_nowood.fbx?v=7', 'Run_Unarmed', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Jumping_nowood.fbx?v=7', 'Jump_Unarmed', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle.fbx', 'Idle_Unarmed', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Running.fbx', 'Run_Unarmed', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Jumping.fbx', 'Jump_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong_no_wood_double_jumpFront Flip.fbx?v=7', 'Wukong_NoWood_DoubleJump', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_falling_air.fbx', 'Fall_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Taking_item_nowood.fbx?v=7', 'TakeItem', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Wukong_no_wood_kik.fbx?v=7', 'Wukong_NoWood_Kick', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong_no_woodHard Landing.fbx?v=7', 'Wukong_NoWood_HardLanding', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle.fbx?v=7', 'Idle_Armed', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Run.fbx?v=7', 'Run_Armed', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Jump.fbx?v=7', 'Jump_Armed', playerModel, translationScaleFactor),
-        this.loadAndRetargetGltfClip(import.meta.env.BASE_URL + 'assets/characters/atack_wood.glb', 'atack_wood', playerModel)
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_kick.fbx', 'Wukong_NoWood_Kick', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Falling To Landing.fbx', 'Wukong_NoWood_HardLanding', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle.fbx', 'Idle_Armed', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Running.fbx', 'Run_Armed', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Jumping.fbx', 'Jump_Armed', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_atack_baculo.fbx', 'atack_wood', playerModel, translationScaleFactor)
+          .then(async (clip) => clip || (await this.loadAndRetargetGltfClip(import.meta.env.BASE_URL + 'assets/characters/atack_wood.glb', 'atack_wood', playerModel!))?.clip || null)
       ]);
 
       const clips: THREE.AnimationClip[] = [];
@@ -388,6 +397,12 @@ export class AssetManager {
       if (runUnarmed) clips.push(runUnarmed);
       if (jumpUnarmed) clips.push(jumpUnarmed);
       if (wukongDoubleJump) clips.push(wukongDoubleJump);
+      if (wukongFall) {
+        clips.push(wukongFall);
+        const armedFallClip = wukongFall.clone();
+        armedFallClip.name = 'Fall_Armed';
+        clips.push(armedFallClip);
+      }
       if (takeItem) clips.push(takeItem);
       if (wukongKick) clips.push(wukongKick);
       if (wukongHardLanding) clips.push(wukongHardLanding);
@@ -396,9 +411,9 @@ export class AssetManager {
       if (jumpArmed) clips.push(jumpArmed);
 
       if (castSpellData) {
-        clips.push(castSpellData.clip);
-        // Also register alias 'CastSpell' for backward compatibility
-        const aliasClip = castSpellData.clip.clone();
+        clips.push(castSpellData);
+        // Keep the game-facing CastSpell name while the source action remains atack_wood.
+        const aliasClip = castSpellData.clone();
         aliasClip.name = 'CastSpell';
         clips.push(aliasClip);
       }

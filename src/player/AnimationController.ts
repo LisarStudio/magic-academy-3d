@@ -87,6 +87,7 @@ export class AnimationController {
     if (state === 'Idle') return 'Idle' + suffix;
     if (state === 'Run' || state === 'Walk') return 'Run' + suffix;
     if (state === 'Jump') return 'Jump' + suffix;
+    if (state === 'Fall') return 'Fall' + suffix;
 
     // Fallback: try exact state name, then Idle
     return 'Idle' + suffix;
@@ -123,7 +124,7 @@ export class AnimationController {
     let hasCast = false;
     const clipDuration = action.getClip().duration;
     // Release spell at 30% of atack_wood.glb animation — during the forward swing of the attack, not after
-    const castTimeThreshold = clipDuration * 0.30;
+    const castTimeThreshold = clipDuration * 0.42;
 
     const checkMarker = () => {
       if (!hasCast && action.time >= castTimeThreshold) {
@@ -185,7 +186,7 @@ export class AnimationController {
     let hasImpacted = false;
     let isFinished = false;
     const clipDuration = action.getClip().duration;
-    const impactTimeThreshold = clipDuration * 0.50; // Visual impact at ~50% of kick animation
+    const impactTimeThreshold = clipDuration * 0.42; // New kick's leg extension reaches contact at about frame 20/49.
 
     const checkMarker = () => {
       if (!hasImpacted && action.time >= impactTimeThreshold) {

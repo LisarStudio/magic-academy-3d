@@ -610,7 +610,9 @@ export class PlayerController {
     this.visualModel.position.y = THREE.MathUtils.lerp(this.visualModel.position.y, targetVisualY, delta * 12.0);
 
     // 5. Select Animation State — always use Run for any movement (Walk = Run at lower speed)
-    if (this.isGrounded && !this.isAttacking) {
+    if (!this.isGrounded && !this.isAttacking && this.velocity.y < -1.0) {
+      this.animationController.playState('Fall', 0.18);
+    } else if (this.isGrounded && !this.isAttacking) {
       if (isMoving) {
         this.animationController.playState('Run');
       } else {

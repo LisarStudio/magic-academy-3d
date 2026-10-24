@@ -1,0 +1,360 @@
+export type MenuState = 'Loading' | 'Intro' | 'MenuIdle' | 'StartingGame' | 'Playing';
+export type StartMode = 'new' | 'continue';
+
+export interface MenuPreferences {
+  music: number;
+  effects: number;
+  quality: number;
+}
+
+interface MainMenuCallbacks {
+  onStateChange: (state: MenuState) => void;
+  onBeginTransition: (mode: StartMode) => void;
+  onTransitionComplete: (mode: StartMode) => void;
+  onPreferences: (preferences: MenuPreferences) => void;
+  onSelect: () => void;
+}
+
+const SAVE_KEY = 'lisar_savegame';
+const PREFERENCES_KEY = 'lisar_menu_preferences_v1';
+
+export class MainMenu {
+  private readonly callbacks: MainMenuCallbacks;
+  private readonly introVideo = document.getElementById('intro-video') as HTMLVideoElement;
+  private readonly idleVideo = document.getElementById('idle-video') as HTMLVideoElement;
+  private readonly startVideo = document.getElementById('start-video') as HTMLVideoElement;
+  private readonly loadingPanel = document.getElementById('loading-panel')!;
+  private readonly mainMenu = document.getElementById('main-menu')!;
+  private readonly dialog = document.getElementById('menu-dialog')!;
+  private readonly dialogTitle = document.getElementById('dialog-title')!;
+  private readonly optionsContent = document.getElementById('options-content')!;
+  private readonly creditsContent = document.getElementById('credits-content')!;
+  private readonly confirmContent = document.getElementById('confirm-content')!;
+  private readonly dialogError = document.getElementById('dialog-error')!;
+  private readonly continueButton = document.getElementById('btn-continue') as HTMLButtonElement;
+  private readonly menuButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.menu-actions button'));
+  private state: MenuState = 'Loading';
+  private startMode: StartMode = 'new';
+  private preferences: MenuPreferences = { music: 0.5, effects: 0.8, quality: 0.85 };
+  private errorRetry: (() => void) | null = null;
+  private loadingRetry: () => void = () => window.location.reload();
+  private transitionStarted = false;
+
+  constructor(callbacks: MainMenuCallbacks) {
+    this.callbacks = callbacks;
+    const base = import.meta.env.BASE_URL;
+    this.introVideo.src = `${base}assets/cinematics/wukong-intro.mp4`;
+    this.idleVideo.src = `${base}assets/cinematics/wukong-menu-idle.mp4`;
+    this.idleVideo.loop = true;
+    this.loadPreferences();
+    this.bindEvents();
+    this.refreshContinueButton();
+    document.getElementById('project-version')!.textContent = `Versión ${__APP_VERSION__}`;
+  }
+
+  private setState(state: MenuState): void {
+    this.state = state;
+    this.callbacks.onStateChange(state);
+  }
+
+  public setLoadingProgress(loaded: number, total: number, asset?: string): void {
+    const bar = document.getElementById('loading-progress')!;
+    const percent = document.getElementById('loading-percent')!;
+    const status = document.getElementById('loading-status')!;
+    const ratio = total > 0 ? Math.max(0, Math.min(1, loaded / total)) : 0;
+    bar.style.width = `${Math.round(ratio * 100)}%`;
+    percent.textContent = total > 0 ? `${Math.round(ratio * 100)}%` : 'Cargando…';
+    if (asset) status.textContent = `Cargando ${this.friendlyAssetName(asset)}…`;
+  }
+
+  private friendlyAssetName(url: string): string {
+    const name = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'recursos');
+    if (/wukong|player/i.test(name)) return 'a Wukong';
+    if (/fbx|idle|run|jump/i.test(name)) return 'las animaciones';
+    return 'los recursos';
+  }
+
+  public async playIntro(): Promise<void> {
+    this.loadingPanel.classList.add('hidden');
+    this.mainMenu.classList.add('hidden');
+    this.introVideo.currentTime = 0;
+    this.introVideo.classList.add('is-visible');
+    this.setState('Intro');
+    this.introVideo.onended = () => void this.enterMenuIdle();
+    this.introVideo.onerror = () => this.showLoadingError('No se pudo cargar la cinemática de introducción.', () => void this.playIntro());
+    try {
+      await this.introVideo.play();
+    } catch {
+      this.showLoadingError('El navegador bloqueó el vídeo. Pulsa Reintentar para volver a intentarlo.', () => void this.playIntro());
+    }
+  }
+
+  private async enterMenuIdle(): Promise<void> {
+    if (this.state !== 'Intro') return;
+    this.idleVideo.currentTime = 0;
+    try {
+      await this.idleVideo.play();
+      this.idleVideo.classList.add('is-visible');
+      this.introVideo.classList.remove('is-visible');
+      this.mainMenu.classList.remove('hidden');
+      this.refreshContinueButton();
+      this.setState('MenuIdle');
+      window.setTimeout(() => {
+        if (this.state === 'MenuIdle') {
+          this.introVideo.pause();
+          this.introVideo.currentTime = 0;
+        }
+      }, 800);
+    } catch {
+      // Keep the final intro frame behind the menu if the idle preview cannot play.
+      this.mainMenu.classList.remove('hidden');
+      this.refreshContinueButton();
+      this.setState('MenuIdle');
+    }
+  }
+
+  public showLoadingError(message: string, retry: () => void = () => window.location.reload()): void {
+    this.loadingRetry = retry;
+    this.loadingPanel.classList.remove('hidden');
+    this.mainMenu.classList.add('hidden');
+    this.introVideo.classList.remove('is-visible');
+    this.idleVideo.classList.remove('is-visible');
+    document.getElementById('loading-status')!.textContent = message;
+    document.getElementById('loading-percent')!.textContent = 'No se pudo completar la carga';
+    document.getElementById('loading-progress')!.style.width = '0';
+    document.getElementById('btn-retry-loading')!.classList.remove('hidden');
+    this.setState('Loading');
+  }
+
+  private bindEvents(): void {
+    this.introVideo.addEventListener('error', () => {
+      if (this.state === 'Intro') this.showLoadingError('No se encontró el vídeo de introducción. Comprueba la conexión e inténtalo de nuevo.', () => void this.playIntro());
+    });
+    document.getElementById('btn-retry-loading')!.addEventListener('click', () => this.loadingRetry());
+    document.getElementById('btn-new-game')!.addEventListener('click', () => this.requestStart('new'));
+    this.continueButton.addEventListener('click', () => this.requestStart('continue'));
+    document.getElementById('btn-options')!.addEventListener('click', () => this.openDialog('options'));
+    document.getElementById('btn-credits')!.addEventListener('click', () => this.openDialog('credits'));
+    document.getElementById('btn-dialog-close')!.addEventListener('click', () => this.closeDialog());
+    document.getElementById('btn-cancel-new')!.addEventListener('click', () => this.closeDialog());
+    document.getElementById('btn-confirm-new')!.addEventListener('click', () => {
+      this.closeDialog();
+      try { localStorage.removeItem(SAVE_KEY); } catch { /* Storage may be disabled. */ }
+      this.refreshContinueButton();
+      this.beginTransition('new');
+    });
+
+    const retryButton = document.createElement('button');
+    retryButton.id = 'btn-dialog-retry';
+    retryButton.className = 'dialog-button hidden';
+    retryButton.type = 'button';
+    retryButton.textContent = 'Reintentar';
+    this.dialogError.insertAdjacentElement('afterend', retryButton);
+    retryButton.addEventListener('click', () => {
+      const retry = this.errorRetry;
+      this.closeDialog();
+      retry?.();
+    });
+
+    document.getElementById('music-volume')!.addEventListener('input', (event) => {
+      this.preferences.music = Number((event.target as HTMLInputElement).value);
+      this.persistPreferences();
+    });
+    document.getElementById('sfx-volume')!.addEventListener('input', (event) => {
+      this.preferences.effects = Number((event.target as HTMLInputElement).value);
+      this.persistPreferences();
+    });
+    document.getElementById('render-quality')!.addEventListener('change', (event) => {
+      this.preferences.quality = Number((event.target as HTMLSelectElement).value);
+      this.persistPreferences();
+    });
+
+    this.menuButtons.forEach((button) => {
+      button.addEventListener('pointerenter', () => this.callbacks.onSelect());
+      button.addEventListener('focus', () => this.callbacks.onSelect());
+    });
+
+    window.addEventListener('keydown', (event) => {
+      if (this.state !== 'MenuIdle') {
+        if (event.code === 'Escape' && !this.dialog.classList.contains('hidden')) this.closeDialog();
+        return;
+      }
+      if (!this.dialog.classList.contains('hidden')) {
+        if (event.code === 'Escape') { event.preventDefault(); this.closeDialog(); }
+        return;
+      }
+      if (event.code === 'ArrowDown' || event.code === 'ArrowUp') {
+        event.preventDefault();
+        const enabled = this.menuButtons.filter((button) => !button.disabled);
+        const current = enabled.indexOf(document.activeElement as HTMLButtonElement);
+        const step = event.code === 'ArrowDown' ? 1 : -1;
+        enabled[(current + step + enabled.length) % enabled.length]?.focus();
+      }
+      if (event.code === 'Enter' && !this.menuButtons.includes(document.activeElement as HTMLButtonElement)) {
+        event.preventDefault();
+        this.menuButtons.find((button) => !button.disabled)?.click();
+      }
+    });
+
+    this.startVideo.addEventListener('ended', () => this.finishTransition());
+    this.startVideo.addEventListener('error', () => {
+      if (this.state === 'StartingGame') {
+        this.transitionStarted = false;
+        this.startVideo.classList.remove('is-visible');
+        this.mainMenu.classList.remove('is-leaving');
+        void this.idleVideo.play();
+        this.setState('MenuIdle');
+        this.showDialogError('No se pudo reproducir la transición. Reintenta para volver a cargar el vídeo.', () => this.beginTransition(this.startMode));
+      }
+    });
+  }
+
+  private requestStart(mode: StartMode): void {
+    if (this.state !== 'MenuIdle' || this.transitionStarted) return;
+    if (mode === 'continue') {
+      if (!this.hasValidSave()) { this.refreshContinueButton(); return; }
+      this.beginTransition('continue');
+      return;
+    }
+    if (this.hasValidSave()) {
+      this.openDialog('confirm');
+      return;
+    }
+    this.beginTransition('new');
+  }
+
+  private beginTransition(mode: StartMode): void {
+    if (this.transitionStarted) return;
+    this.transitionStarted = true;
+    this.startMode = mode;
+    this.setState('StartingGame');
+    this.callbacks.onBeginTransition(mode);
+    this.idleVideo.pause();
+    this.mainMenu.classList.add('is-leaving');
+    this.startVideo.src = `${import.meta.env.BASE_URL}assets/cinematics/wukong-start.mp4`;
+    this.startVideo.currentTime = 0;
+    this.startVideo.classList.add('is-visible');
+    this.startVideo.load();
+    this.startVideo.play().catch(() => {
+      this.transitionStarted = false;
+      this.startVideo.classList.remove('is-visible');
+      this.mainMenu.classList.remove('is-leaving');
+      void this.idleVideo.play();
+      this.setState('MenuIdle');
+      this.showDialogError('El vídeo de inicio todavía no está disponible. Reintenta la reproducción.', () => this.beginTransition(mode));
+    });
+  }
+
+  private finishTransition(): void {
+    if (!this.transitionStarted || this.state !== 'StartingGame') return;
+    this.transitionStarted = false;
+    const fade = document.getElementById('screen-fade') as HTMLDivElement | null;
+    if (fade) {
+      fade.classList.remove('hidden');
+      fade.style.transition = 'none';
+      fade.style.opacity = '1';
+    }
+    this.startVideo.classList.remove('is-visible');
+    this.idleVideo.classList.remove('is-visible');
+    this.introVideo.classList.remove('is-visible');
+    this.mainMenu.classList.remove('is-leaving');
+    this.introVideo.pause();
+    this.idleVideo.pause();
+    document.getElementById('start-screen')!.classList.add('hidden');
+    this.setState('Playing');
+    this.callbacks.onTransitionComplete(this.startMode);
+    if (fade) {
+      window.requestAnimationFrame(() => {
+        fade.style.transition = 'opacity 450ms ease';
+        fade.style.opacity = '0';
+      });
+      window.setTimeout(() => {
+        fade.classList.add('hidden');
+        fade.style.removeProperty('opacity');
+        fade.style.removeProperty('transition');
+      }, 500);
+    }
+  }
+
+  private hasValidSave(): boolean {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) return false;
+      const data = JSON.parse(raw) as { version?: number; playerPos?: { x?: number; y?: number; z?: number }; timestamp?: number };
+      const pos = data.playerPos;
+      return (data.version === undefined || data.version === 1) &&
+        !!pos && [pos.x, pos.y, pos.z].every((value) => typeof value === 'number' && Number.isFinite(value)) &&
+        Math.abs(pos.x!) < 10000 && Math.abs(pos.y!) < 10000 && Math.abs(pos.z!) < 10000;
+    } catch {
+      return false;
+    }
+  }
+
+  private refreshContinueButton(): void {
+    const canContinue = this.hasValidSave();
+    this.continueButton.disabled = !canContinue;
+    this.continueButton.classList.toggle('menu-button-primary', canContinue);
+    document.getElementById('btn-new-game')?.classList.toggle('menu-button-primary', !canContinue);
+  }
+
+  private openDialog(view: 'options' | 'credits' | 'confirm'): void {
+    this.callbacks.onSelect();
+    this.optionsContent.classList.toggle('hidden', view !== 'options');
+    this.creditsContent.classList.toggle('hidden', view !== 'credits');
+    this.confirmContent.classList.toggle('hidden', view !== 'confirm');
+    this.dialogTitle.textContent = view === 'options' ? 'Opciones' : view === 'credits' ? 'Créditos' : 'Nueva partida';
+    this.dialogError.classList.add('hidden');
+    document.getElementById('btn-dialog-retry')?.classList.add('hidden');
+    this.dialog.classList.remove('hidden');
+    if (view === 'options') this.syncPreferenceControls();
+    (this.dialog.querySelector('button:not(.hidden)') as HTMLButtonElement | null)?.focus();
+  }
+
+  private closeDialog(): void {
+    this.dialog.classList.add('hidden');
+    this.dialogError.classList.add('hidden');
+    document.getElementById('btn-dialog-retry')?.classList.add('hidden');
+    document.getElementById('btn-new-game')?.focus();
+  }
+
+  private showDialogError(message: string, retry: () => void): void {
+    this.openDialog('options');
+    this.optionsContent.classList.add('hidden');
+    this.dialogTitle.textContent = 'No se pudo iniciar';
+    this.dialogError.textContent = message;
+    this.dialogError.classList.remove('hidden');
+    document.getElementById('btn-dialog-retry')?.classList.remove('hidden');
+    this.errorRetry = retry;
+  }
+
+  private loadPreferences(): void {
+    try {
+      const stored = localStorage.getItem(PREFERENCES_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Partial<MenuPreferences>;
+        this.preferences = {
+          music: this.clamp(parsed.music, 0.5),
+          effects: this.clamp(parsed.effects, 0.8),
+          quality: [0.65, 0.85, 1].includes(Number(parsed.quality)) ? Number(parsed.quality) : 0.85
+        };
+      }
+    } catch { /* Use safe defaults when local storage is unavailable. */ }
+    this.callbacks.onPreferences(this.preferences);
+    this.syncPreferenceControls();
+  }
+
+  private clamp(value: unknown, fallback: number): number {
+    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback;
+  }
+
+  private syncPreferenceControls(): void {
+    (document.getElementById('music-volume') as HTMLInputElement).value = String(this.preferences.music);
+    (document.getElementById('sfx-volume') as HTMLInputElement).value = String(this.preferences.effects);
+    (document.getElementById('render-quality') as HTMLSelectElement).value = String(this.preferences.quality);
+  }
+
+  private persistPreferences(): void {
+    this.callbacks.onPreferences(this.preferences);
+    try { localStorage.setItem(PREFERENCES_KEY, JSON.stringify(this.preferences)); } catch { /* Preferences still apply for this session. */ }
+  }
+}

@@ -6,6 +6,6 @@ window.addEventListener('DOMContentLoaded', () => {
   if (canvas) {
     const game = new Game(canvas);
     (window as any).gameInstance = game;
-    game.start();
+    game.start().catch((error) => game.showStartupError(error));
   }
 });
