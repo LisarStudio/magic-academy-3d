@@ -68,6 +68,7 @@ export class LevelToyStory {
   private lavaVaultHatch!: THREE.Mesh;
   private grassUniforms: any = null;
   private grassSectors: THREE.InstancedMesh[] = [];
+  private grassLodSectors: THREE.InstancedMesh[] = [];
   private grassCullElapsed = 0;
   private cloudsUniforms: any = null;
   private lampMoths: LampMothSystem | null = null;
@@ -371,11 +372,13 @@ export class LevelToyStory {
   private async loadIntroEnvironmentAssets(): Promise<void> {
     const base = import.meta.env.BASE_URL + 'assets/environment/';
     const loader = new GLTFLoader();
-    const [pavilionResult, templeResult, lionResult, lampResult] = await Promise.allSettled([
+    const [pavilionResult, templeResult, lionResult, lampResult, grassResult, grassLodResult] = await Promise.allSettled([
       loader.loadAsync(`${base}chinese-pavilion.glb`),
       loader.loadAsync(`${base}wukong-chinese-temple.glb`),
       loader.loadAsync(`${base}wukong-porcelain-lion.glb`),
       loader.loadAsync(`${base}wukong-red-lamp.glb`),
+      loader.loadAsync(`${base}wukong-grass-clumps.glb`),
+      loader.loadAsync(`${base}wukong-grass-clumps-lod.glb`),
     ]);
 
     const terrain = this.sceneManager.scene.getObjectByName('world-terrain') as THREE.Mesh | null;
@@ -391,6 +394,12 @@ export class LevelToyStory {
     }
 
     const scene = this.sceneManager.scene;
+    if (grassResult.status === 'fulfilled' && grassLodResult.status === 'fulfilled') {
+      this.buildOriginalGrass(grassResult.value.scene, grassLodResult.value.scene);
+    } else {
+      console.error('[Grass] Could not load the original Grass It! meshes and their derived distance LOD; no substitute grass was generated.',
+        grassResult.status === 'rejected' ? grassResult.reason : grassLodResult.status === 'rejected' ? grassLodResult.reason : 'unknown load error');
+    }
     const placeAsset = (source: THREE.Object3D, name: string, targetWidth: number, x: number, z: number, rotationY = 0): THREE.Object3D => {
       const asset = source.clone(true);
       asset.name = name;
@@ -564,6 +573,190 @@ export class LevelToyStory {
     return texture;
   }
 
+  /**
+   * Instances the exact Grass It! source meshes exported from
+   * la_leyenda_de_wukong_Camarasuave.blend. The original GLB remains untouched;
+   * GPU wind bends its real blades at the tips while the roots stay planted.
+   */
+  private buildOriginalGrass(sourceRoot: THREE.Object3D, lodRoot: THREE.Object3D): void {
+    const sourceNames = ['Grass_Short', 'Grass_Lush', 'Grass_Tall'] as const;
+    const weights = [0.43, 0.43, 0.14];
+    const scaleRanges: Array<[number, number]> = [[0.9, 1.08], [0.78, 1.28], [0.72, 1.18]];
+    this.grassUniforms = {
+      uTime: { value: 0 },
+      uPlayerPos: { value: new THREE.Vector3(999, 999, 999) },
+    };
+    sourceRoot.updateMatrixWorld(true);
+    lodRoot.updateMatrixWorld(true);
+
+    const templates = sourceNames.map((name) => {
+      const source = sourceRoot.getObjectByName(name) as THREE.Mesh | null;
+      if (!source?.isMesh) throw new Error(`Original grass GLB is missing mesh ${name}`);
+      const geometry = source.geometry.clone().applyMatrix4(source.matrixWorld);
+      geometry.computeBoundingBox();
+      const bounds = geometry.boundingBox!;
+      const height = Math.max(0.05, bounds.max.y - bounds.min.y);
+      const centerX = (bounds.min.x + bounds.max.x) * 0.5;
+      const centerZ = (bounds.min.z + bounds.max.z) * 0.5;
+      geometry.translate(-centerX, -bounds.min.y, -centerZ);
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+
+      const lodSource = lodRoot.getObjectByName(`${name}_LOD`) as THREE.Mesh | null;
+      if (!lodSource?.isMesh) throw new Error(`Derived grass LOD is missing mesh ${name}_LOD`);
+      const lodGeometry = lodSource.geometry.clone().applyMatrix4(lodSource.matrixWorld);
+      lodGeometry.computeBoundingBox();
+      const lodBounds = lodGeometry.boundingBox!;
+      lodGeometry.translate(
+        -(lodBounds.min.x + lodBounds.max.x) * 0.5,
+        -lodBounds.min.y,
+        -(lodBounds.min.z + lodBounds.max.z) * 0.5
+      );
+      lodGeometry.computeBoundingBox();
+      const fullSize = geometry.boundingBox!.getSize(new THREE.Vector3());
+      const lodSize = lodGeometry.boundingBox!.getSize(new THREE.Vector3());
+      lodGeometry.scale(fullSize.x / Math.max(lodSize.x, 0.001), fullSize.y / Math.max(lodSize.y, 0.001), fullSize.z / Math.max(lodSize.z, 0.001));
+      lodGeometry.computeBoundingBox();
+      lodGeometry.computeBoundingSphere();
+
+      const sourceMaterials = Array.isArray(source.material) ? source.material : [source.material];
+      const materials = sourceMaterials.map((original) => {
+        const material = original.clone() as THREE.MeshStandardMaterial;
+        const previousCompile = material.onBeforeCompile.bind(material);
+        const previousCacheKey = material.customProgramCacheKey.bind(material);
+        material.customProgramCacheKey = () => `wukong-grassit-wind-v2-${height.toFixed(3)}-${previousCacheKey()}`;
+        material.onBeforeCompile = (shader, renderer) => {
+          previousCompile(shader, renderer);
+          shader.uniforms.uTime = this.grassUniforms.uTime;
+          shader.uniforms.uPlayerPos = this.grassUniforms.uPlayerPos;
+          shader.vertexShader = `uniform float uTime;\nuniform vec3 uPlayerPos;\n${shader.vertexShader}`;
+          shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `
+            #include <begin_vertex>
+            #ifdef USE_INSTANCING
+              vec3 grassWorld = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
+            #else
+              vec3 grassWorld = vec3(0.0);
+            #endif
+            float grassTip = clamp(position.y / ${height.toFixed(4)}, 0.0, 1.0);
+            float grassWave = sin(uTime * 1.15 + grassWorld.x * 0.12 + grassWorld.z * 0.09) * 0.075
+              + sin(uTime * 0.63 - grassWorld.x * 0.07 + grassWorld.z * 0.11) * 0.035;
+            transformed.x += grassWave * grassTip * grassTip;
+            vec2 fromPlayer = grassWorld.xz - uPlayerPos.xz;
+            float playerDistance = length(fromPlayer);
+            if (playerDistance < 1.25 && playerDistance > 0.001) {
+              transformed.xz += normalize(fromPlayer) * (1.25 - playerDistance) * 0.24 * grassTip;
+            }
+          `);
+        };
+        material.needsUpdate = true;
+        return material;
+      });
+      return {
+        name,
+        geometry,
+        lodGeometry,
+        material: materials.length === 1 ? materials[0] : materials,
+        minScale: scaleRanges[sourceNames.indexOf(name)][0],
+        maxScale: scaleRanges[sourceNames.indexOf(name)][1],
+      };
+    });
+
+    let seed = 709391;
+    const random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+    const dummy = new THREE.Object3D();
+    const up = new THREE.Vector3(0, 1, 0);
+    const normal = new THREE.Vector3();
+    const slopeRotation = new THREE.Quaternion();
+    const yawRotation = new THREE.Quaternion();
+    const segmentDistance = (x: number, z: number, ax: number, az: number, bx: number, bz: number) => {
+      const dx = bx - ax, dz = bz - az;
+      const t = THREE.MathUtils.clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+      return Math.hypot(x - (ax + dx * t), z - (az + dz * t));
+    };
+    const roads = [
+      [[-12, -35], [-22, -45], [-35, -58], [-48, -68], [-55, -75]],
+      [[12, -35], [22, -45], [35, -58], [48, -68], [55, -75]],
+    ];
+    const excluded = (x: number, z: number): boolean => {
+      if (Math.abs(x) < 18.5 && Math.abs(z + 40) < 18.5) return true;
+      if (Math.hypot(x - 45, z + 40) < 16.2) return true;
+      if (Math.hypot(x + 55, z + 75) < 11.2 || Math.hypot(x - 55, z + 75) < 19.2) return true;
+      if (Math.hypot(x - 20, z - 24) < 7.5) return true;
+      if (Math.hypot(x + 30, z - 10) < 9 || Math.hypot(x + 45, z + 40) < 9) return true;
+      if (Math.abs(x) < 4.2 && z > -27 && z < 17) return true;
+      if (Math.abs(z + 75) < 2.8 && Math.abs(x) < 56) return true;
+      for (const road of roads) for (let i = 0; i < road.length - 1; i++) {
+        if (segmentDistance(x, z, road[i][0], road[i][1], road[i + 1][0], road[i + 1][1]) < 3.15) return true;
+      }
+      return false;
+    };
+
+    const isMobile = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0 ||
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const sectorSize = 32;
+    const spacing = isMobile ? 1.18 : 0.92;
+    const sectorsPerAxis = Math.ceil(160 / sectorSize);
+    let placedTotal = 0;
+    for (let sx = 0; sx < sectorsPerAxis; sx++) {
+      for (let sz = 0; sz < sectorsPerAxis; sz++) {
+        const x0 = -80 + sx * sectorSize;
+        const z0 = -120 + sz * sectorSize;
+        const matrices = templates.map(() => [] as THREE.Matrix4[]);
+        const steps = Math.ceil(sectorSize / spacing);
+        for (let gx = 0; gx < steps; gx++) for (let gz = 0; gz < steps; gz++) {
+          const x = x0 + (gx + 0.12 + random() * 0.76) * spacing;
+          const z = z0 + (gz + 0.12 + random() * 0.76) * spacing;
+          if (x > 80 || z > 40 || excluded(x, z)) continue;
+          const roll = random();
+          const variant = roll < weights[0] ? 0 : roll < weights[0] + weights[1] ? 1 : 2;
+          const groundY = this.getTerrainHeight(x, z);
+          const slopeX = (this.getTerrainHeight(x + 0.18, z) - this.getTerrainHeight(x - 0.18, z)) / 0.36;
+          const slopeZ = (this.getTerrainHeight(x, z + 0.18) - this.getTerrainHeight(x, z - 0.18)) / 0.36;
+          normal.set(-slopeX, 1, -slopeZ).normalize();
+          slopeRotation.setFromUnitVectors(up, normal);
+          yawRotation.setFromAxisAngle(normal, random() * Math.PI * 2);
+          const template = templates[variant];
+          const scale = THREE.MathUtils.lerp(template.minScale, template.maxScale, random());
+          dummy.position.set(x, groundY + 0.008, z);
+          dummy.quaternion.copy(slopeRotation).multiply(yawRotation);
+          dummy.scale.setScalar(scale);
+          dummy.updateMatrix();
+          matrices[variant].push(dummy.matrix.clone());
+        }
+
+        matrices.forEach((instances, variant) => {
+          if (!instances.length) return;
+          const template = templates[variant];
+          const sector = new THREE.InstancedMesh(template.geometry, template.material, instances.length);
+          const lodSector = new THREE.InstancedMesh(template.lodGeometry, template.material, instances.length);
+          sector.name = `grassit-${template.name.toLowerCase()}-sector-${sx}-${sz}`;
+          lodSector.name = `${sector.name}-lod`;
+          const center = new THREE.Vector2(x0 + sectorSize * 0.5, z0 + sectorSize * 0.5);
+          sector.userData.grassCenter = center;
+          sector.userData.grassLod = lodSector;
+          lodSector.userData.grassCenter = center;
+          sector.castShadow = false;
+          sector.receiveShadow = false;
+          lodSector.castShadow = false;
+          lodSector.receiveShadow = false;
+          lodSector.visible = false;
+          sector.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+          lodSector.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+          instances.forEach((matrix, index) => sector.setMatrixAt(index, matrix));
+          instances.forEach((matrix, index) => lodSector.setMatrixAt(index, matrix));
+          sector.instanceMatrix.needsUpdate = true;
+          lodSector.instanceMatrix.needsUpdate = true;
+          this.sceneManager.scene.add(sector);
+          this.sceneManager.scene.add(lodSector);
+          this.grassSectors.push(sector);
+          this.grassLodSectors.push(lodSector);
+          placedTotal += instances.length;
+        });
+      }
+    }
+    console.info(`[Grass] ${placedTotal} original Grass It! clumps from ${sourceNames.join(', ')} in ${sectorSize}m sectors (${isMobile ? 'mobile' : 'desktop'} spacing ${spacing}m)`);
+  }
+
   private buildToyStoryLevelGeometry(): void {
     const scene = this.sceneManager.scene;
 
@@ -595,173 +788,8 @@ export class LevelToyStory {
     this.levelColliders.push(worldFloor);
 
     // ═══════════════════════════════════════════════════════════════════════════════
-    // ▓▓▓  AAA GRASS SYSTEM  ▓▓▓  GPU Instanced • Wind Shader • 80k Blades
-    // ═══════════════════════════════════════════════════════════════════════════════
-    // Each "instance" = 3 intersecting tapered blades (cross-clump).
-    // 6 vertical segments per blade → smooth S-curve wind bending.
-    // Wind: 4 independent layers (base drift, FBM noise, gust wave, player push).
-    // Roots are pinned. Only tips sway. Exactly like Nintendo/Breath of the Wild.
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // Grass It! mesh variants are instanced from the original exported GLB after async asset loading.
 
-    // Continuous low grass carpet, split into instanced sectors so Three.js can
-    // frustum-cull whole patches. The olive terrain material fills the distant LOD.
-    (() => {
-      const isMobile = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0 ||
-        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      const sectorSize = 20;
-      const spacing = isMobile ? 0.76 : 0.42;
-      const bladeHeight = isMobile ? 0.38 : 0.44;
-      const bladeWidth = isMobile ? 0.13 : 0.14;
-      const segments = isMobile ? 2 : 3;
-      const positions: number[] = [];
-      const uvs: number[] = [];
-      const indices: number[] = [];
-      for (const yaw of [0, Math.PI / 3, -Math.PI / 3]) {
-        const offset = positions.length / 3;
-        const sin = Math.sin(yaw), cos = Math.cos(yaw);
-        for (let row = 0; row <= segments; row++) {
-          const t = row / segments;
-          const halfWidth = bladeWidth * (1 - t * 0.92);
-          const y = bladeHeight * t;
-          positions.push(-halfWidth * cos, y, halfWidth * sin, halfWidth * cos, y, -halfWidth * sin);
-          uvs.push(0, t, 1, t);
-          if (row < segments) {
-            const a = offset + row * 2;
-            indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
-          }
-        }
-      }
-      const grassGeometry = new THREE.BufferGeometry();
-      grassGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      grassGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-      grassGeometry.setIndex(indices);
-      grassGeometry.computeVertexNormals();
-      grassGeometry.computeBoundingSphere();
-
-      const grassMat = new THREE.MeshStandardMaterial({
-        color: 0x9eaa48, roughness: 0.92, side: THREE.DoubleSide,
-      });
-      grassMat.customProgramCacheKey = () => 'wukong_continuous_grass_v1';
-      grassMat.onBeforeCompile = (shader) => {
-        shader.uniforms.uTime = { value: 0 };
-        shader.uniforms.uPlayerPos = { value: new THREE.Vector3(999, 999, 999) };
-        this.grassUniforms = shader.uniforms;
-        shader.vertexShader = `uniform float uTime;\nuniform vec3 uPlayerPos;\nvarying float vGrassTip;\n${shader.vertexShader}`;
-        shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `
-          #include <begin_vertex>
-          #ifdef USE_INSTANCING
-            vec3 wpos = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
-          #else
-            vec3 wpos = vec3(0.0);
-          #endif
-          float tip = clamp(position.y / ${bladeHeight.toFixed(2)}, 0.0, 1.0);
-          vGrassTip = tip;
-          float sway = (sin(uTime * 1.15 + wpos.x * 0.12 + wpos.z * 0.09) * 0.075
-            + sin(uTime * 0.63 - wpos.x * 0.07 + wpos.z * 0.11) * 0.035) * tip * tip;
-          transformed.x += sway;
-          vec2 toPlayer = wpos.xz - uPlayerPos.xz;
-          float distanceToPlayer = length(toPlayer);
-          if (distanceToPlayer < 1.25 && distanceToPlayer > 0.001) {
-            transformed.xz += normalize(toPlayer) * (1.25 - distanceToPlayer) * 0.24 * tip;
-          }
-        `);
-        shader.fragmentShader = `varying float vGrassTip;\n${shader.fragmentShader}`.replace('#include <color_fragment>', `
-          #include <color_fragment>
-          float tipWarm = smoothstep(0.58, 1.0, vGrassTip);
-          diffuseColor.rgb *= mix(0.96, 1.08, vGrassTip);
-          diffuseColor.rgb += vec3(tipWarm * 0.07, tipWarm * 0.055, tipWarm * 0.004);
-        `);
-      };
-
-      let seed = 412731;
-      const random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
-      const dummy = new THREE.Object3D();
-      const up = new THREE.Vector3(0, 1, 0);
-      const normal = new THREE.Vector3();
-      const slopeRotation = new THREE.Quaternion();
-      const yawRotation = new THREE.Quaternion();
-      const segmentDistance = (x: number, z: number, ax: number, az: number, bx: number, bz: number) => {
-        const dx = bx - ax, dz = bz - az;
-        const t = THREE.MathUtils.clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
-        return Math.hypot(x - (ax + dx * t), z - (az + dz * t));
-      };
-      const roads = [
-        [[-12, -35], [-22, -45], [-35, -58], [-48, -68], [-55, -75]],
-        [[12, -35], [22, -45], [35, -58], [48, -68], [55, -75]],
-      ];
-      const excluded = (x: number, z: number): boolean => {
-        // Buildings, plazas, stairs/temple aprons, arena and intentional paths.
-        if (Math.abs(x) < 18.5 && Math.abs(z + 40) < 18.5) return true;
-        if (Math.hypot(x - 45, z + 40) < 16.2) return true;
-        if (Math.hypot(x + 55, z + 75) < 11.2 || Math.hypot(x - 55, z + 75) < 19.2) return true;
-        if (Math.hypot(x - 20, z - 24) < 7.5) return true;
-        if (Math.hypot(x + 30, z - 10) < 9 || Math.hypot(x + 45, z + 40) < 9) return true;
-        if (Math.abs(x) < 4.2 && z > -27 && z < 17) return true;
-        if (Math.abs(z + 75) < 2.8 && Math.abs(x) < 56) return true;
-        for (const road of roads) {
-          for (let i = 0; i < road.length - 1; i++) {
-            if (segmentDistance(x, z, road[i][0], road[i][1], road[i + 1][0], road[i + 1][1]) < 3.15) return true;
-          }
-        }
-        return false;
-      };
-
-      let placedTotal = 0;
-      for (let sectorX = 0; sectorX < 8; sectorX++) {
-        for (let sectorZ = 0; sectorZ < 8; sectorZ++) {
-          const x0 = -80 + sectorX * sectorSize;
-          const z0 = -120 + sectorZ * sectorSize;
-          const matrices: THREE.Matrix4[] = [];
-          const colors: THREE.Color[] = [];
-          const steps = Math.ceil(sectorSize / spacing);
-          for (let gx = 0; gx < steps; gx++) {
-            for (let gz = 0; gz < steps; gz++) {
-              const x = x0 + (gx + 0.16 + random() * 0.68) * spacing;
-              const z = z0 + (gz + 0.16 + random() * 0.68) * spacing;
-              if (x > 80 || z > 40 || excluded(x, z)) continue;
-
-              const groundY = this.getTerrainHeight(x, z);
-              const slopeX = (this.getTerrainHeight(x + 0.18, z) - this.getTerrainHeight(x - 0.18, z)) / 0.36;
-              const slopeZ = (this.getTerrainHeight(x, z + 0.18) - this.getTerrainHeight(x, z - 0.18)) / 0.36;
-              normal.set(-slopeX, 1, -slopeZ).normalize();
-              slopeRotation.setFromUnitVectors(up, normal);
-              yawRotation.setFromAxisAngle(normal, random() * Math.PI * 2);
-              const heightScale = 0.72 + random() * 0.56;
-              const widthScale = 0.78 + random() * 0.42;
-              dummy.position.set(x, groundY + 0.012, z);
-              dummy.quaternion.copy(slopeRotation).multiply(yawRotation);
-              dummy.scale.set(widthScale, heightScale, widthScale);
-              dummy.updateMatrix();
-              matrices.push(dummy.matrix.clone());
-
-              const hue = 0.20 + random() * 0.11;
-              const saturation = 0.36 + random() * 0.22;
-              const lightness = 0.32 + random() * 0.16;
-              colors.push(new THREE.Color().setHSL(hue, saturation, lightness));
-            }
-          }
-          if (!matrices.length) continue;
-          const sector = new THREE.InstancedMesh(grassGeometry, grassMat, matrices.length);
-          sector.name = `grass-sector-${sectorX}-${sectorZ}`;
-          sector.userData.grassCenter = new THREE.Vector2(x0 + sectorSize * 0.5, z0 + sectorSize * 0.5);
-          sector.castShadow = false;
-          sector.receiveShadow = false;
-          sector.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-          matrices.forEach((matrix, index) => {
-            sector.setMatrixAt(index, matrix);
-            sector.setColorAt(index, colors[index]);
-          });
-          sector.instanceMatrix.needsUpdate = true;
-          if (sector.instanceColor) sector.instanceColor.needsUpdate = true;
-          scene.add(sector);
-          this.grassSectors.push(sector);
-          placedTotal += matrices.length;
-        }
-      }
-      console.info(`[Grass] ${placedTotal} low grass tufts in 20m culling sectors (${isMobile ? 'mobile' : 'desktop'} spacing ${spacing}m)`);
-    })();
-
-    // ═══════════════════════════════════════════════════════════════════════════════
     // ▓▓▓  HIGH-PERFORMANCE INSTANCED 3D GLTF FOLIAGE & NATURE MANAGER  ▓▓▓
     // Combines 350+ individual meshes into 3 single InstancedMesh draw calls!
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -2118,17 +2146,26 @@ export class LevelToyStory {
     }
     this.grassCullElapsed -= delta;
     if (this.grassCullElapsed <= 0) {
-      // Detailed animated blades stay near the player on phones; the ground
-      // texture maintains coverage at a distance without shading the whole map.
+      // Keep original source clumps at close range and switch to derived,
+      // topology-reduced copies in the middle distance. The ground material
+      // carries coverage beyond the vegetation range.
       const isMobile = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0 ||
         /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      const grassDistance = isMobile ? 88 : 152;
-      const grassDistanceSq = grassDistance * grassDistance;
-      for (const sector of this.grassSectors) {
+      const detailedDistance = isMobile ? 48 : 68;
+      const lodDistance = isMobile ? 104 : 148;
+      for (let i = 0; i < this.grassSectors.length; i++) {
+        const sector = this.grassSectors[i];
+        const lodSector = this.grassLodSectors[i];
         const center = sector.userData.grassCenter as THREE.Vector2;
         const dx = playerPos.x - center.x;
         const dz = playerPos.z - center.y;
-        sector.visible = dx * dx + dz * dz <= grassDistanceSq;
+        // Distance to the nearest point of the 32m sector avoids the visible
+        // circular cutoff caused by testing only each sector's center.
+        const edgeX = Math.max(Math.abs(dx) - 16, 0);
+        const edgeZ = Math.max(Math.abs(dz) - 16, 0);
+        const distanceSq = edgeX * edgeX + edgeZ * edgeZ;
+        sector.visible = distanceSq <= detailedDistance * detailedDistance;
+        lodSector.visible = !sector.visible && distanceSq <= lodDistance * lodDistance;
       }
       this.grassCullElapsed = 0.35;
     }
