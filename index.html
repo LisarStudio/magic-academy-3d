@@ -326,10 +326,41 @@
                 <label class="setting-row" for="render-quality"><span>Calidad gráfica</span><select id="render-quality"><option value="0.65">Ahorro</option><option value="0.85">Equilibrada</option><option value="1">Alta</option></select></label>
                 <p class="settings-note">Los cambios de sonido y calidad se guardan en este dispositivo.</p>
               </div>
-              <div id="credits-content" class="dialog-content hidden">
-                <p class="credits-studio">Lisar Studio</p>
-                <p>La leyenda de Wukong</p>
-                <p>Una aventura de Magic Academy 3D.</p>
+              <div id="credits-content" class="dialog-content credits-content hidden">
+                <section class="credits-block credits-heading">
+                  <h3>LA LEYENDA DE WUKONG</h3>
+                  <p>Un juego de Lisar Studio</p>
+                </section>
+                <section class="credits-block">
+                  <h3>INSPIRACIÓN LITERARIA Y CULTURAL</h3>
+                  <p>Inspirado en Sun Wukong, el Rey Mono, figura de la tradición literaria china y protagonista de la novela clásica «Viaje al Oeste», tradicionalmente atribuida a Wu Cheng’en.</p>
+                  <p>Este juego presenta una interpretación creativa propia de sus personajes y universo, con respeto por su origen cultural.</p>
+                </section>
+                <section class="credits-block">
+                  <h3>EQUIPO</h3>
+                  <dl class="credits-team">
+                    <div><dt>Modelador jefe</dt><dd>Erik Marin</dd></div>
+                    <div><dt>Rigging y animación</dt><dd>Peter Pareja</dd></div>
+                    <div><dt>Programación y pruebas</dt><dd>Peter Pareja</dd></div>
+                    <div><dt>Música</dt><dd>Suggestive Line</dd></div>
+                    <div><dt>Integración web</dt><dd>Lisar Studio</dd></div>
+                    <div><dt>Arte conceptual y escenarios</dt><dd>Peter Pareja</dd></div>
+                    <div><dt>Concepto de personajes</dt><dd>Lisar Studio</dd></div>
+                  </dl>
+                </section>
+                <section class="credits-block">
+                  <h3>AGRADECIMIENTOS</h3>
+                  <p>Gracias por acompañarnos en esta aventura.</p>
+                </section>
+                <section class="credits-block credits-third-party">
+                  <h3>RECURSOS DE TERCEROS</h3>
+                  <p><a href="https://threejs.org/" target="_blank" rel="noreferrer">Three.js</a> — three.js authors, licencia MIT; aviso en <a href="./THIRD_PARTY_NOTICES.md" target="_blank" rel="noreferrer">Recursos de terceros</a>.</p>
+                  <p>Animaciones de <a href="https://www.mixamo.com/" target="_blank" rel="noreferrer">Mixamo</a> (Adobe), integradas con el personaje de Wukong; <a href="https://helpx.adobe.com/es/creative-cloud/faq/mixamo-faq.html" target="_blank" rel="noreferrer">información de uso de Adobe</a>.</p>
+                  <p>Tipografías Cinzel, Cinzel Decorative y Quicksand, distribuidas por <a href="https://fonts.google.com/" target="_blank" rel="noreferrer">Google Fonts</a> bajo SIL Open Font License 1.1.</p>
+                </section>
+              </div>
+              <div class="dialog-actions credits-actions hidden">
+                <button id="btn-credits-back" class="dialog-button" type="button">Volver</button>
               </div>
               <div id="confirm-content" class="dialog-content hidden">
                 <p>Ya existe una partida guardada. ¿Quieres empezar desde cero y reemplazarla?</p>

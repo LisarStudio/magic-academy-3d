@@ -63,7 +63,10 @@ export class Game {
         this.inputManager.resetInputs();
         if (!this.hud.isTouchDevice()) this.inputManager.requestPointerLock();
       },
-      onTransitionComplete: (mode) => this.beginGameplay(mode),
+      onTransitionComplete: (mode) => {
+        this.beginGameplay(mode);
+        this.sceneManager.render();
+      },
       onPreferences: ({ music, effects, quality }) => {
         this.audioManager.setMusicVolume(music);
         this.audioManager.setSFXVolume(effects);

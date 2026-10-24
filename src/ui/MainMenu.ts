@@ -29,9 +29,11 @@ export class MainMenu {
   private readonly dialogTitle = document.getElementById('dialog-title')!;
   private readonly optionsContent = document.getElementById('options-content')!;
   private readonly creditsContent = document.getElementById('credits-content')!;
+  private readonly creditsActions = document.querySelector('.credits-actions')!;
   private readonly confirmContent = document.getElementById('confirm-content')!;
   private readonly dialogError = document.getElementById('dialog-error')!;
   private readonly continueButton = document.getElementById('btn-continue') as HTMLButtonElement;
+  private readonly newGameButton = document.getElementById('btn-new-game') as HTMLButtonElement;
   private readonly menuButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.menu-actions button'));
   private state: MenuState = 'Loading';
   private startMode: StartMode = 'new';
@@ -39,6 +41,9 @@ export class MainMenu {
   private errorRetry: (() => void) | null = null;
   private loadingRetry: () => void = () => window.location.reload();
   private transitionStarted = false;
+  private startVideoReady = false;
+  private startVideoFailed = false;
+  private startVideoPreparation: Promise<void> | null = null;
 
   constructor(callbacks: MainMenuCallbacks) {
     this.callbacks = callbacks;
@@ -46,6 +51,8 @@ export class MainMenu {
     this.introVideo.src = `${base}assets/cinematics/wukong-intro.mp4`;
     this.idleVideo.src = `${base}assets/cinematics/wukong-menu-idle.mp4`;
     this.idleVideo.loop = true;
+    this.startVideo.preload = 'auto';
+    this.startVideo.src = `${base}assets/cinematics/wukong-start.mp4`;
     this.loadPreferences();
     this.bindEvents();
     this.refreshContinueButton();
@@ -99,6 +106,7 @@ export class MainMenu {
       this.mainMenu.classList.remove('hidden');
       this.refreshContinueButton();
       this.setState('MenuIdle');
+      void this.prepareStartVideo().catch(() => undefined);
       window.setTimeout(() => {
         if (this.state === 'MenuIdle') {
           this.introVideo.pause();
@@ -110,6 +118,7 @@ export class MainMenu {
       this.mainMenu.classList.remove('hidden');
       this.refreshContinueButton();
       this.setState('MenuIdle');
+      void this.prepareStartVideo().catch(() => undefined);
     }
   }
 
@@ -131,11 +140,12 @@ export class MainMenu {
       if (this.state === 'Intro') this.showLoadingError('No se encontró el vídeo de introducción. Comprueba la conexión e inténtalo de nuevo.', () => void this.playIntro());
     });
     document.getElementById('btn-retry-loading')!.addEventListener('click', () => this.loadingRetry());
-    document.getElementById('btn-new-game')!.addEventListener('click', () => this.requestStart('new'));
+    this.newGameButton.addEventListener('click', () => this.requestStart('new'));
     this.continueButton.addEventListener('click', () => this.requestStart('continue'));
     document.getElementById('btn-options')!.addEventListener('click', () => this.openDialog('options'));
     document.getElementById('btn-credits')!.addEventListener('click', () => this.openDialog('credits'));
     document.getElementById('btn-dialog-close')!.addEventListener('click', () => this.closeDialog());
+    document.getElementById('btn-credits-back')!.addEventListener('click', () => this.closeDialog());
     document.getElementById('btn-cancel-new')!.addEventListener('click', () => this.closeDialog());
     document.getElementById('btn-confirm-new')!.addEventListener('click', () => {
       this.closeDialog();
@@ -199,12 +209,10 @@ export class MainMenu {
     this.startVideo.addEventListener('ended', () => this.finishTransition());
     this.startVideo.addEventListener('error', () => {
       if (this.state === 'StartingGame') {
-        this.transitionStarted = false;
-        this.startVideo.classList.remove('is-visible');
-        this.mainMenu.classList.remove('is-leaving');
-        void this.idleVideo.play();
-        this.setState('MenuIdle');
-        this.showDialogError('No se pudo reproducir la transición. Reintenta para volver a cargar el vídeo.', () => this.beginTransition(this.startMode));
+        this.recoverStartTransition('No se pudo reproducir la transición. Reintenta para volver a cargar el vídeo.');
+      } else {
+        this.startVideoFailed = true;
+        this.refreshContinueButton();
       }
     });
   }
@@ -223,57 +231,164 @@ export class MainMenu {
     this.beginTransition('new');
   }
 
-  private beginTransition(mode: StartMode): void {
+  private async prepareStartVideo(): Promise<void> {
+    if (this.startVideoReady) return;
+    if (this.startVideoPreparation) return this.startVideoPreparation;
+
+    this.startVideoFailed = false;
+    this.refreshContinueButton();
+    this.startVideoPreparation = new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        this.startVideo.removeEventListener('loadeddata', onLoadedData);
+        this.startVideo.removeEventListener('error', onError);
+      };
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const framePresented = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        this.startVideo.pause();
+        this.startVideo.currentTime = 0;
+        this.startVideoReady = true;
+        this.startVideoFailed = false;
+        this.refreshContinueButton();
+        resolve();
+      };
+      const onError = () => fail(new Error('Start video could not be loaded.'));
+      const onLoadedData = () => {
+        if (this.startVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+        if (!this.requestVideoFrameCallback(this.startVideo, framePresented)) {
+          requestAnimationFrame(() => framePresented());
+        }
+        this.startVideo.play().catch((error: unknown) => fail(error instanceof Error ? error : new Error('Start video playback was blocked.')));
+      };
+
+      this.startVideo.addEventListener('loadeddata', onLoadedData);
+      this.startVideo.addEventListener('error', onError);
+      if (this.startVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) onLoadedData();
+      else this.startVideo.load();
+    }).catch((error: unknown) => {
+      this.startVideoFailed = true;
+      this.startVideo.pause();
+      this.startVideo.currentTime = 0;
+      this.refreshContinueButton();
+      throw error;
+    }).finally(() => {
+      this.startVideoPreparation = null;
+    });
+
+    return this.startVideoPreparation;
+  }
+
+  private async beginTransition(mode: StartMode): Promise<void> {
     if (this.transitionStarted) return;
     this.transitionStarted = true;
     this.startMode = mode;
     this.setState('StartingGame');
     this.callbacks.onBeginTransition(mode);
-    this.idleVideo.pause();
-    this.mainMenu.classList.add('is-leaving');
-    this.startVideo.src = `${import.meta.env.BASE_URL}assets/cinematics/wukong-start.mp4`;
     this.startVideo.currentTime = 0;
-    this.startVideo.classList.add('is-visible');
-    this.startVideo.load();
-    this.startVideo.play().catch(() => {
-      this.transitionStarted = false;
-      this.startVideo.classList.remove('is-visible');
-      this.mainMenu.classList.remove('is-leaving');
-      void this.idleVideo.play();
-      this.setState('MenuIdle');
-      this.showDialogError('El vídeo de inicio todavía no está disponible. Reintenta la reproducción.', () => this.beginTransition(mode));
+
+    try {
+      const firstFrame = this.waitForVideoFrame(this.startVideo);
+      await this.startVideo.play();
+      await firstFrame;
+      if (this.state !== 'StartingGame') return;
+
+      // Keep the levitating menu visible until a decoded start-video frame is presented.
+      this.startVideo.classList.add('is-visible');
+      this.mainMenu.classList.add('is-leaving');
+      await Promise.all([
+        this.waitForOpacityTransition(this.startVideo),
+        this.waitForOpacityTransition(this.mainMenu)
+      ]);
+      this.idleVideo.pause();
+    } catch {
+      this.recoverStartTransition('El vídeo de inicio no pudo prepararse. Reintenta para volver a cargarlo.');
+    }
+  }
+
+  private waitForVideoFrame(video: HTMLVideoElement): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.requestVideoFrameCallback(video, resolve)) {
+        video.addEventListener('playing', () => requestAnimationFrame(() => resolve()), { once: true });
+      }
     });
+  }
+
+  private requestVideoFrameCallback(video: HTMLVideoElement, callback: () => void): boolean {
+    const frameVideo = video as unknown as { requestVideoFrameCallback?: (callback: () => void) => number };
+    if (typeof frameVideo.requestVideoFrameCallback !== 'function') return false;
+    frameVideo.requestVideoFrameCallback(callback);
+    return true;
+  }
+
+  private waitForOpacityTransition(element: HTMLElement): Promise<void> {
+    const duration = getComputedStyle(element).transitionDuration.split(',').reduce((max, value) => {
+      const seconds = Number.parseFloat(value) * (value.trim().endsWith('ms') ? 0.001 : 1);
+      return Math.max(max, Number.isFinite(seconds) ? seconds : 0);
+    }, 0);
+    if (duration === 0) return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+
+    return new Promise((resolve) => {
+      let finished = false;
+      const complete = () => {
+        if (finished) return;
+        finished = true;
+        element.removeEventListener('transitionend', onEnd);
+        window.clearTimeout(fallback);
+        resolve();
+      };
+      const onEnd = (event: TransitionEvent) => {
+        if (event.target === element && event.propertyName === 'opacity') complete();
+      };
+      const fallback = window.setTimeout(complete, Math.ceil(duration * 1000) + 50);
+      element.addEventListener('transitionend', onEnd);
+    });
+  }
+
+  private recoverStartTransition(message: string): void {
+    if (this.state !== 'StartingGame') return;
+    this.transitionStarted = false;
+    this.startVideo.pause();
+    this.startVideo.classList.remove('is-visible');
+    this.mainMenu.classList.remove('is-leaving');
+    void this.idleVideo.play();
+    this.setState('MenuIdle');
+    this.showDialogError(message, () => void this.retryStartTransition(this.startMode));
+  }
+
+  private async retryStartTransition(mode: StartMode): Promise<void> {
+    this.startVideoReady = false;
+    this.startVideoFailed = false;
+    this.refreshContinueButton();
+    this.startVideo.currentTime = 0;
+    try {
+      await this.prepareStartVideo();
+      await this.beginTransition(mode);
+    } catch {
+      this.showDialogError('El vídeo de inicio sigue sin estar disponible. Comprueba la conexión e inténtalo otra vez.', () => void this.retryStartTransition(mode));
+    }
   }
 
   private finishTransition(): void {
     if (!this.transitionStarted || this.state !== 'StartingGame') return;
     this.transitionStarted = false;
-    const fade = document.getElementById('screen-fade') as HTMLDivElement | null;
-    if (fade) {
-      fade.classList.remove('hidden');
-      fade.style.transition = 'none';
-      fade.style.opacity = '1';
-    }
-    this.startVideo.classList.remove('is-visible');
-    this.idleVideo.classList.remove('is-visible');
-    this.introVideo.classList.remove('is-visible');
-    this.mainMenu.classList.remove('is-leaving');
-    this.introVideo.pause();
-    this.idleVideo.pause();
-    document.getElementById('start-screen')!.classList.add('hidden');
     this.setState('Playing');
     this.callbacks.onTransitionComplete(this.startMode);
-    if (fade) {
-      window.requestAnimationFrame(() => {
-        fade.style.transition = 'opacity 450ms ease';
-        fade.style.opacity = '0';
-      });
-      window.setTimeout(() => {
-        fade.classList.add('hidden');
-        fade.style.removeProperty('opacity');
-        fade.style.removeProperty('transition');
-      }, 500);
-    }
+    // Game has entered gameplay and synchronously rendered a complete frame behind the video.
+    document.getElementById('start-screen')!.classList.add('hidden');
+    this.introVideo.pause();
+    this.idleVideo.pause();
+    this.introVideo.classList.remove('is-visible');
+    this.idleVideo.classList.remove('is-visible');
+    this.startVideo.classList.remove('is-visible');
+    void this.waitForOpacityTransition(this.startVideo).then(() => this.startVideo.pause());
   }
 
   private hasValidSave(): boolean {
@@ -292,15 +407,19 @@ export class MainMenu {
 
   private refreshContinueButton(): void {
     const canContinue = this.hasValidSave();
-    this.continueButton.disabled = !canContinue;
+    const canStart = this.startVideoReady || this.startVideoFailed;
+    this.continueButton.disabled = !canContinue || !canStart;
+    this.newGameButton.disabled = !canStart;
     this.continueButton.classList.toggle('menu-button-primary', canContinue);
-    document.getElementById('btn-new-game')?.classList.toggle('menu-button-primary', !canContinue);
+    this.newGameButton.classList.toggle('menu-button-primary', !canContinue);
   }
 
   private openDialog(view: 'options' | 'credits' | 'confirm'): void {
     this.callbacks.onSelect();
+    this.dialog.querySelector('.dialog-card')?.classList.toggle('credits-open', view === 'credits');
     this.optionsContent.classList.toggle('hidden', view !== 'options');
     this.creditsContent.classList.toggle('hidden', view !== 'credits');
+    this.creditsActions.classList.toggle('hidden', view !== 'credits');
     this.confirmContent.classList.toggle('hidden', view !== 'confirm');
     this.dialogTitle.textContent = view === 'options' ? 'Opciones' : view === 'credits' ? 'Créditos' : 'Nueva partida';
     this.dialogError.classList.add('hidden');
