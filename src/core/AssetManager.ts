@@ -366,6 +366,7 @@ export class AssetManager {
       // ── 4. Load and retarget ALL animation clips in parallel (Instant Fast Startup) ──
       const [
         idleUnarmed,
+        idleKick,
         runUnarmed,
         jumpUnarmed,
         wukongDoubleJump,
@@ -378,7 +379,8 @@ export class AssetManager {
         jumpArmed,
         castSpellData
       ] = await Promise.all([
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle.fbx', 'Idle_Unarmed', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle_nowood.fbx', 'Idle_Unarmed', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_kick.fbx', 'Idle_Kick', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Running.fbx', 'Run_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Jumping.fbx', 'Jump_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong_no_wood_double_jumpFront Flip.fbx?v=7', 'Wukong_NoWood_DoubleJump', playerModel, translationScaleFactor),
@@ -386,7 +388,7 @@ export class AssetManager {
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Taking_item_nowood.fbx?v=7', 'TakeItem', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_kick.fbx', 'Wukong_NoWood_Kick', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Falling To Landing.fbx', 'Wukong_NoWood_HardLanding', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle.fbx', 'Idle_Armed', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle.fbx', 'Idle_Armed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Running.fbx', 'Run_Armed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Jumping.fbx', 'Jump_Armed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_atack_baculo.fbx', 'atack_wood', playerModel, translationScaleFactor)
@@ -395,6 +397,7 @@ export class AssetManager {
 
       const clips: THREE.AnimationClip[] = [];
       if (idleUnarmed) clips.push(idleUnarmed);
+      if (idleKick) clips.push(idleKick);
       if (runUnarmed) clips.push(runUnarmed);
       if (jumpUnarmed) clips.push(jumpUnarmed);
       if (wukongDoubleJump) clips.push(wukongDoubleJump);

@@ -1,3 +1,5 @@
+import { getControlModePreference, setControlModePreference, type ControlModePreference } from '../core/ControlMode';
+
 export type MenuState = 'Loading' | 'Intro' | 'MenuIdle' | 'StartingGame' | 'Playing';
 export type StartMode = 'new' | 'continue';
 
@@ -279,6 +281,9 @@ export class MainMenu {
     document.getElementById('render-quality')!.addEventListener('change', (event) => {
       this.preferences.quality = Number((event.target as HTMLSelectElement).value);
       this.persistPreferences();
+    });
+    document.getElementById('control-mode')!.addEventListener('change', (event) => {
+      setControlModePreference((event.target as HTMLSelectElement).value as ControlModePreference);
     });
 
     this.menuButtons.forEach((button) => {
@@ -638,6 +643,7 @@ export class MainMenu {
     (document.getElementById('music-volume') as HTMLInputElement).value = String(this.preferences.music);
     (document.getElementById('sfx-volume') as HTMLInputElement).value = String(this.preferences.effects);
     (document.getElementById('render-quality') as HTMLSelectElement).value = String(this.preferences.quality);
+    (document.getElementById('control-mode') as HTMLSelectElement).value = getControlModePreference();
   }
 
   private persistPreferences(): void {

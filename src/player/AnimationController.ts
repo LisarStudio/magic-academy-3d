@@ -24,6 +24,7 @@ export class AnimationController {
 
   private currentAction: THREE.AnimationAction | null = null;
   private currentState: AnimationState = 'Idle';
+  private idleCyclePhase: 'base' | 'variation' | null = null;
 
   // Procedural mesh fallbacks
   private characterGroup: THREE.Group | null = null;
@@ -57,7 +58,11 @@ export class AnimationController {
       const action = this.mixer.clipAction(clip);
 
       // One-shot animations
-      if (clip.name === 'TakeItem' || clip.name === 'CastSpell' || clip.name === 'Wukong_NoWood_Kick' || clip.name === 'Wukong_NoWood_DoubleJump' || clip.name === 'Wukong_NoWood_HardLanding') {
+      if (clip.name === 'TakeItem' || clip.name === 'CastSpell' || clip.name === 'Wukong_NoWood_Kick' || clip.name === 'Idle_Kick' || clip.name === 'Wukong_NoWood_DoubleJump' || clip.name === 'Wukong_NoWood_HardLanding') {
+        action.setLoop(THREE.LoopOnce, 1);
+        action.clampWhenFinished = true;
+      }
+      if (clip.name === 'Idle_Unarmed' || clip.name === 'Idle_Armed') {
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = true;
       }
@@ -69,6 +74,17 @@ export class AnimationController {
 
       this.allActions.set(clip.name, action);
     }
+
+    this.mixer.addEventListener('finished', (event) => {
+      const finishedAction = (event as { action: THREE.AnimationAction }).action;
+      if (this.currentState !== 'Idle') return;
+      if (this.idleCyclePhase === 'base' && finishedAction === this.currentAction) {
+        if (this.allActions.has('Idle_Kick')) this.playIdleClip('Idle_Kick', 'variation', 0.16);
+        else this.playIdleClip(this.resolveClipName('Idle'), 'base', 0.16);
+      } else if (this.idleCyclePhase === 'variation' && finishedAction === this.currentAction) {
+        this.playIdleClip(this.resolveClipName('Idle'), 'base', 0.18);
+      }
+    });
 
     // Start playing Idle_Unarmed
     this.playState('Idle');
@@ -98,6 +114,7 @@ export class AnimationController {
    * and onComplete when animation finishes to restore state and return staff to back.
    */
   public playAtackWood(onCastAtMarker: () => void, onComplete: () => void): void {
+    this.idleCyclePhase = null;
     const action = this.allActions.get('atack_wood') || this.allActions.get('CastSpell');
     if (!action || !this.mixer) {
       onCastAtMarker();
@@ -162,6 +179,7 @@ export class AnimationController {
   }
 
   public playWukongKick(onImpact: () => void, onComplete: () => void): void {
+    this.idleCyclePhase = null;
     const action = this.allActions.get('Wukong_NoWood_Kick');
     if (!action || !this.mixer) {
       onImpact();
@@ -233,6 +251,7 @@ export class AnimationController {
   }
 
   public playHardLanding(onComplete: () => void): void {
+    this.idleCyclePhase = null;
     const action = this.allActions.get('Wukong_NoWood_HardLanding');
     if (!action || !this.mixer) {
       onComplete();
@@ -269,6 +288,7 @@ export class AnimationController {
     console.log(`[AnimCtrl] Mode → ${armed ? '🪄 ARMED' : '🤲 UNARMED'}`);
     // Force transition to current state with the new animation set
     const prev = this.currentState;
+    this.idleCyclePhase = null;
     this.currentState = '' as any; // Reset so playState doesn't skip
     this.playState(prev, 0.25);
   }
@@ -278,6 +298,7 @@ export class AnimationController {
    * switch to Armed mode and call onComplete.
    */
   public playTakeItemAnimation(onContact?: () => void, onComplete?: (completed: boolean) => void): void {
+    this.idleCyclePhase = null;
     const action = this.allActions.get('TakeItem');
     if (!action || !this.mixer) {
       onContact?.();
@@ -376,6 +397,15 @@ export class AnimationController {
     // Don't interrupt one-shot animations
     if (this.isPlayingOneShot) return;
 
+    if (newState === 'Idle') {
+      // Idle base/variation are sequenced by real clip-finished events. Calls
+      // from the player update loop must not restart the active idle each frame.
+      if (this.idleCyclePhase !== null && this.currentState === 'Idle') return;
+      this.playIdleClip(this.resolveClipName('Idle'), 'base', duration);
+      return;
+    }
+    this.idleCyclePhase = null;
+
     // Skip if already in this state and playing
     if (this.currentState === newState && this.currentAction && this.currentAction.isRunning()) {
       return;
@@ -410,6 +440,22 @@ export class AnimationController {
     newAction.reset().setEffectiveWeight(1).fadeIn(duration).play();
     this.currentAction = newAction;
     this.currentState = newState;
+  }
+
+  private playIdleClip(name: string, phase: 'base' | 'variation', fadeDuration: number): void {
+    const next = this.allActions.get(name);
+    if (!next || !this.mixer) {
+      this.idleCyclePhase = null;
+      this.currentState = 'Idle';
+      return;
+    }
+    if (this.currentAction && this.currentAction !== next) this.currentAction.fadeOut(fadeDuration);
+    next.reset().setLoop(THREE.LoopOnce, 1).setEffectiveWeight(1).setEffectiveTimeScale(1);
+    next.clampWhenFinished = true;
+    next.fadeIn(fadeDuration).play();
+    this.currentAction = next;
+    this.currentState = 'Idle';
+    this.idleCyclePhase = phase;
   }
 
   public update(delta: number): void {

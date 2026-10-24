@@ -1,6 +1,7 @@
 import type { SpellType } from '../spells/SpellProjectile';
 import { EquipmentViewer } from './EquipmentViewer';
 import { MobileTouchControls } from './MobileTouchControls';
+import { usesTouchControls } from '../core/ControlMode';
 
 export class HUD {
   private reticleEl: HTMLElement;
@@ -410,12 +411,7 @@ export class HUD {
   }
 
   public isTouchDevice(): boolean {
-    return (
-      'ontouchstart' in window ||
-      navigator.maxTouchPoints > 0 ||
-      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-      window.innerWidth <= 1024
-    );
+    return usesTouchControls();
   }
 
   public showInteractionPrompt(label: string): void {
