@@ -15,6 +15,7 @@ export interface RunicPortalConfig {
   exitPoint: THREE.Vector3;
   exitYaw: number;
   unlockedByDefault?: boolean;
+  templeStyle?: boolean;
 }
 
 export class RunicPortal {
@@ -58,7 +59,7 @@ export class RunicPortal {
 
     // ── 1. Architectural Stone Framework (Ancient Carved Chinese/Gothic Gateway) ──
     const darkStoneMat = new THREE.MeshStandardMaterial({
-      color: 0x22262c,
+      color: config.templeStyle ? 0x54211b : 0x22262c,
       roughness: 0.85,
       metalness: 0.2
     });
@@ -107,6 +108,23 @@ export class RunicPortal {
 
     this.mesh.add(leftPillar, rightPillar, lCapTop, rCapTop, arch, roofCrest);
     levelColliders.push(leftPillar, rightPillar, arch);
+
+    if (config.templeStyle) {
+      // Lacquered eaves and a gold ridge tie this gate into the central temple
+      // architecture while keeping its original portal frame and triggers.
+      const eave = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.18, 1.5), darkStoneMat);
+      eave.position.set(0, 4.84, 0);
+      eave.castShadow = true;
+      const leftWing = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.14, 1.35), darkStoneMat);
+      leftWing.position.set(-1.95, 4.75, 0);
+      leftWing.rotation.z = -0.12;
+      const rightWing = leftWing.clone();
+      rightWing.position.x = 1.95;
+      rightWing.rotation.z = 0.12;
+      const ridge = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.13, 0.2), goldTrimMat);
+      ridge.position.set(0, 4.98, 0);
+      this.mesh.add(eave, leftWing, rightWing, ridge);
+    }
 
     // ── 2. Inset Glowing Runic Glyphs ──
     const runeOffsets = [
@@ -316,7 +334,7 @@ export class PortalManager {
 
     // ── A. LOCKED STATE: Interaction Prompt to awaken the pair ──
     if (!nearestPortal.isUnlocked) {
-      hud.showInteractionPrompt(`Activar ${nearestPortal.displayName} [E]`);
+      hud.showInteractionPrompt(hud.isTouchDevice() ? `Activar ${nearestPortal.displayName} · Acción` : `Activar ${nearestPortal.displayName} [E]`);
 
       if (inputManager.consumeInteractPress()) {
         hud.hideInteractionPrompt();

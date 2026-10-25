@@ -25,6 +25,7 @@ import { RunicPortal, PortalManager } from '../world/RunicPortal';
 import { DayNightCycle } from '../world/DayNightCycle';
 import { LampMothSystem } from '../world/LampMothSystem';
 import { VolcanicDragonRun } from './VolcanicDragonRun';
+import { PowerOrbSystem, type StaffUpgradeInfo } from '../collectibles/PowerOrbSystem';
 
 export class LevelToyStory {
   private sceneManager: SceneManager;
@@ -81,6 +82,7 @@ export class LevelToyStory {
   private lavaLight: THREE.PointLight | null = null;
   private lavaBubbles: Array<{ mesh: THREE.Mesh; phase: number; baseY: number }> = [];
   private dragonRun: VolcanicDragonRun | null = null;
+  private powerOrbSystem: PowerOrbSystem | null = null;
   private curiosityChest!: TreasureChest;
   public curiosityChestOpen = false;
   private curiosityKeySpawned = false;
@@ -172,6 +174,11 @@ export class LevelToyStory {
 
   public async init(): Promise<void> {
     this.buildToyStoryLevelGeometry();
+    this.powerOrbSystem = new PowerOrbSystem(this.sceneManager.scene, (count) => {
+      const equipment = (window as any).gameInstance?.hud?.equipmentViewer;
+      equipment?.refreshProgression();
+      if (count > 0) this.audioManager.playCardPickup();
+    });
     this.setupCheckpoints();
     this.setupInteractiveProps();
     this.setupCollectibles();
@@ -503,6 +510,7 @@ export class LevelToyStory {
     const center = bounds.getCenter(new THREE.Vector3());
     const half = targetWidth * 0.5;
     const ground = bounds.min.y;
+    const landingTop = ground + Math.min(0.9, Math.max(0.55, (bounds.max.y - ground) * 0.12));
     const mat = new THREE.MeshBasicMaterial({ visible: false });
     const addWall = (w: number, h: number, d: number, x: number, z: number) => {
       const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -517,6 +525,21 @@ export class LevelToyStory {
     addWall(half - doorWidth / 2, 2.7, 0.35, center.x - (half + doorWidth / 2) / 2, center.z + half);
     addWall(half - doorWidth / 2, 2.7, 0.35, center.x + (half + doorWidth / 2) / 2, center.z + half);
     addWall(targetWidth, 2.7, 0.35, center.x, center.z - half);
+    // Match the visible raised pavilion deck and its stair approach with one
+    // continuous support ramp. This prevents step-to-step ground-ray gaps.
+    const landing = new THREE.Mesh(new THREE.BoxGeometry(targetWidth - 0.8, 0.18, targetWidth - 0.9), mat);
+    landing.name = 'pavilion_deck_collision';
+    landing.position.set(center.x, landingTop - 0.09, center.z);
+    this.sceneManager.scene.add(landing);
+    this.levelColliders.push(landing);
+    const rise = landingTop - ground;
+    const rampLength = 4.6;
+    const ramp = new THREE.Mesh(new THREE.BoxGeometry(targetWidth - 2.0, 0.14, rampLength), mat);
+    ramp.name = 'pavilion_stair_ramp_collision';
+    ramp.position.set(center.x, (landingTop + ground) * 0.5, center.z + half + rampLength * 0.5 - 0.1);
+    ramp.rotation.x = Math.atan2(rise, rampLength);
+    this.sceneManager.scene.add(ramp);
+    this.levelColliders.push(ramp);
     const columnHeight = Math.min(4.8, bounds.max.y - ground);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
       const column = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.38, columnHeight, 8), mat);
@@ -1154,14 +1177,17 @@ export class LevelToyStory {
     const goldMat = new THREE.MeshStandardMaterial({ color: 0xf5c842, metalness: 0.8, roughness: 0.2 });
 
     const switchGroup = new THREE.Group();
-    // The old switch was stranded on the removed mezzanine. Put it beside the
-    // hatch at ground level so the curiosity chain remains reachable.
-    switchGroup.position.set(-14.0, this.getTerrainHeight(-14.0, -34.1), -34.1);
+    // The secret mechanism now belongs to the west pavilion's table; the
+    // revealed hatch remains across the map in the underground curiosity vault.
+    switchGroup.name = 'west_pavilion_curiosity_switch';
+    switchGroup.position.set(-55.0, this.getTerrainHeight(-55.0, -75.0) + 1.08, -75.0);
 
     const switchPedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 0.9, 8), stoneMat);
     switchPedestal.position.y = 0.45;
     switchPedestal.castShadow = true;
     switchGroup.add(switchPedestal);
+    switchPedestal.name = 'west_pavilion_secret_switch_base';
+    this.levelColliders.push(switchPedestal);
 
     const dragonHead = new THREE.Mesh(new THREE.DodecahedronGeometry(0.18), goldMat);
     dragonHead.position.set(0, 0.95, 0);
@@ -1181,6 +1207,7 @@ export class LevelToyStory {
 
     const switchLight = new THREE.PointLight(0xffaa00, 2.5, 4.0);
     switchLight.position.set(0, 1.2, 0);
+    switchLight.castShadow = false;
     switchGroup.add(switchLight);
 
     scene.add(switchGroup);
@@ -1612,26 +1639,29 @@ export class LevelToyStory {
     // Put the existing staff reward on the pavilion's center table. The chest
     // remains the single inventory/save-backed reward and stays interactable
     // from the floor beside the table.
-    const staffChestPosition = new THREE.Vector3(20.0, this.getTerrainHeight(20.0, 24.0) + 1.75, 23.0);
-    this.staffChest = new TreasureChest(staffChestPosition, Math.PI);
+    const staffChestPosition = new THREE.Vector3(20.0, this.getTerrainHeight(20.0, 24.0) + 1.56, 23.0);
+    // The approach stair is on +Z; the lock and opening face that approach.
+    this.staffChest = new TreasureChest(staffChestPosition, 0);
     scene.add(this.staffChest.mesh);
     this.chests.push(this.staffChest);
     this.spellSystem.registerChest(this.staffChest);
     this.levelColliders.push(this.staffChest.mesh);
 
     // ── Runic Fast-Travel Portal Network (PortalPair_01) ───────────────────────
-    // Portal A sits beside the sanctuary path at ground level; the replaced
-    // visual-only temple no longer provides a traversable balcony or stairs.
-    const staffPortalY = this.getTerrainHeight(25.0, 24.0) + 0.05;
+    // Re-home the fast-travel gate in the central temple's east forecourt,
+    // leaving the Chinese pavilion and its stair approach visually clear.
+    const staffPortalX = 16.2, staffPortalZ = -40;
+    const staffPortalY = this.getTerrainHeight(staffPortalX, staffPortalZ) + 0.05;
     const portalA = new RunicPortal({
       id: 'Portal_A_StaffTemple',
       pairId: 'PortalPair_01',
-      displayName: 'Santuario del Báculo',
-      position: new THREE.Vector3(25.0, staffPortalY, 24.0),
-      rotationY: -Math.PI / 2,
-      exitPoint: new THREE.Vector3(22.0, this.getTerrainHeight(22.0, 24.0) + 0.05, 24.0),
-      exitYaw: -Math.PI / 2,
+      displayName: 'Santuario Central',
+      position: new THREE.Vector3(staffPortalX, staffPortalY, staffPortalZ),
+      rotationY: Math.PI,
+      exitPoint: new THREE.Vector3(14.6, this.getTerrainHeight(14.6, -40) + 0.05, -40),
+      exitYaw: Math.PI,
       unlockedByDefault: false,
+      templeStyle: true,
     }, scene, this.levelColliders);
 
     // Portal B: Placed at the Palace Entrance Courtyard near starting route (World: 8.0, 0.0, -12.0)
@@ -1684,6 +1714,7 @@ export class LevelToyStory {
         this.subtitleSystem.show('Sistema', `¡Gema corrupta destruida! (${this.specialPotsSmashed}/${this.totalSpecialPots})`);
         
         if (this.specialPotsSmashed >= this.totalSpecialPots) {
+          this.powerOrbSystem?.spawn(new THREE.Vector3(pos.x, pos.y + 0.25, pos.z), 75);
           this.awardKey('key5_pots', new THREE.Vector3(pos.x, pos.y + 0.5, pos.z));
         }
       };
@@ -1979,6 +2010,7 @@ export class LevelToyStory {
       };
 
       e.onDeath = async () => {
+        this.powerOrbSystem?.spawn(e.mesh.position, e.id === 'crab_boss' ? 200 : 20);
         if (e.id === 'crab_boss') {
           console.log('[BOSS] HP: 0 -> Entering DYING state. Defeat sequence started.');
           if (this.isCinematicPlaying) return;
@@ -2107,6 +2139,12 @@ export class LevelToyStory {
     if (this.collectedKeys[keyId]) return;
     this.collectedKeys[keyId] = true;
 
+    // Key milestones (apart from Gekko's 50-coin reward) also feed the staff
+    // progression, making all five upgrades reachable through full exploration.
+    if (keyId !== 'key1_gekko') {
+      this.powerOrbSystem?.spawn(this.player.mesh.position.clone(), 250);
+    }
+
     // Visual sparks
     if (spawnPos) this.createSparks(spawnPos);
     this.audioManager.playCardPickup(); // Play success chime
@@ -2131,6 +2169,27 @@ export class LevelToyStory {
       this.exitDoor.open();
       this.subtitleSystem.show('LISAR', '¡PORTÓN ABIERTO! Has reunido las 4 llaves místicas. El portal de salida en el castillo está desbloqueado.');
     }
+  }
+
+  public getStaffUpgradeInfo(): StaffUpgradeInfo {
+    return this.powerOrbSystem?.getUpgradeInfo() ?? { level: 1, damageMultiplier: 1, nextDamageMultiplier: 1.1, nextCost: 100, orbs: 0 };
+  }
+
+  public getStaffDamage(baseDamage: number): number {
+    return this.powerOrbSystem?.getStaffDamage(baseDamage) ?? baseDamage;
+  }
+
+  public purchaseStaffUpgrade(): 'upgraded' | 'insufficient' | 'max' {
+    return this.powerOrbSystem?.upgradeStaff() ?? 'max';
+  }
+
+  public restoreStaffProgression(orbs: number, level: number): void {
+    this.powerOrbSystem?.restore(orbs, level);
+  }
+
+  public getStaffProgressionSaveData(): { powerOrbs: number; staffUpgradeLevel: number } {
+    const info = this.getStaffUpgradeInfo();
+    return { powerOrbs: info.orbs, staffUpgradeLevel: info.level };
   }
 
   private createSparks(pos: THREE.Vector3): void {
@@ -2554,6 +2613,7 @@ export class LevelToyStory {
       mesh.scale.setScalar(scale);
     });
     this.dragonRun?.update(delta, playerPos);
+    this.powerOrbSystem?.update(delta, playerPos);
     this.grassCullElapsed -= delta;
     if (this.grassCullElapsed <= 0) {
       // Keep original source clumps at close range and switch to derived,
@@ -2757,9 +2817,10 @@ export class LevelToyStory {
             this.isLavaVaultOpen = true;
             this.leverTarget = -Math.PI / 4;
             this.hatchTarget = 1;
-            this.audioManager.playCardPickup();
+          this.audioManager.playHitImpact();
+          this.audioManager.playPortalActivate();
             void this.runCuriosityReveal();
-            this.subtitleSystem.show('Mecanismo Secreto', '¡Has activado la Palanca del Dragón! La Cripta de Lava Subterránea se ha abierto en la planta baja.');
+          this.subtitleSystem.show('Mecanismo Secreto', '¡El mecanismo del pabellón ha abierto una cámara secreta al otro lado del reino!');
           }
         } else {
           hud?.showInteractionPrompt('Trampilla abierta: baja por las escaleras');
@@ -2827,6 +2888,7 @@ export class LevelToyStory {
       this.curiosityChest.unlock(this.audioManager, this.collectibleSystem, () => {
         if (this.curiosityKeySpawned || this.collectedKeys.key4_curiosity) return;
         this.curiosityKeySpawned = true;
+        this.powerOrbSystem?.spawn(this.curiosityChest.mesh.position, 60);
         this.spawn3DKey('key4_curiosity', this.curiosityChest.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0)));
         this.subtitleSystem.show('Cofre antiguo', 'Dentro del cofre está la Llave de la Curiosidad.');
       });
@@ -2834,7 +2896,7 @@ export class LevelToyStory {
 
     if (!this.stateFlags.staffFound && this.staffChest.mesh.position.distanceTo(playerPos) < 2.2 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
       const hud = (window as any).gameInstance?.hud;
-      hud?.showInteractionPrompt('Presiona [E] para abrir cofre');
+      hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Abrir cofre · Acción' : 'Presiona [E] para abrir cofre');
 
       if (openStaffChest && !this.staffChest.isUnlocked) {
         this.stateFlags.staffFound = true;
@@ -2846,6 +2908,7 @@ export class LevelToyStory {
         this.enemies.forEach(e => e.isPaused = true);
 
         this.staffChest.unlock(this.audioManager, this.collectibleSystem);
+        this.powerOrbSystem?.spawn(this.staffChest.mesh.position, 30);
 
         const cinematic = new ChestCinematic({
           scene: this.sceneManager.scene,

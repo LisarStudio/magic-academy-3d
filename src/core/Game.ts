@@ -182,7 +182,7 @@ export class Game {
     // 6. Bind Player & HUD Status Callbacks
     this.player.onHealthChange = (hp, maxHp) => this.hud.setHealth(hp, maxHp);
     this.hud.mobileControls = new MobileTouchControls(this.inputManager);
-    this.hud.equipmentViewer = new EquipmentViewer(this.player);
+    this.hud.equipmentViewer = new EquipmentViewer(this.player, this.level01);
 
     this.spellSystem.onCollectStaffCallback = () => {
       this.player.equipStaff();
@@ -242,7 +242,7 @@ export class Game {
                 if (dot > 0.15 || dist < 1.8 || enemy.id === 'crab_boss') {
                   console.log(`[Game] Physical Staff Hit on '${enemy.id}'!`);
                   try {
-                    enemy.takeHit(playerPos, 1);
+                    enemy.takeHit(playerPos, this.level01.getStaffDamage(1));
                     this.audioManager.playHitImpact();
                     this.spellSystem.createImpactParticles(enemyPos.clone().add(new THREE.Vector3(0, 0.5, 0)), 0xffd700);
                   } catch (err) {
@@ -581,7 +581,7 @@ export class Game {
 
   public saveGame(): void {
     const saveData = {
-      version: 2,
+      version: 3,
       levelId: 'magic-academy-3d',
       playerPos: { x: this.player.mesh.position.x, y: this.player.mesh.position.y, z: this.player.mesh.position.z },
       playerRotY: this.player.mesh.rotation.y,
@@ -591,6 +591,7 @@ export class Game {
       maxMana: this.player.maxMana,
       hasStaff: this.player.hasStaff,
       staffEquipped: this.player.staffEquipped,
+      ...this.level01.getStaffProgressionSaveData(),
       coinsCount: this.collectibleSystem.coinCount,
       gekkoMissionState: this.level01.gekkoMissionState,
       checkpointId: this.checkpointManager.getCurrentCheckpointId(),
@@ -619,7 +620,7 @@ export class Game {
     }
     try {
       const data = JSON.parse(raw);
-      if (data.version !== undefined && data.version !== 1 && data.version !== 2) throw new Error('Versión de partida no compatible.');
+      if (data.version !== undefined && data.version !== 1 && data.version !== 2 && data.version !== 3) throw new Error('Versión de partida no compatible.');
       if (data.playerPos) {
         this.player.mesh.position.set(data.playerPos.x, data.playerPos.y, data.playerPos.z);
       }
@@ -640,6 +641,7 @@ export class Game {
         this.player.obtainWeapon('STAFF', data.staffEquipped !== false);
         if (data.staffEquipped === false) this.player.unequipStaff();
       }
+      this.level01.restoreStaffProgression(Number(data.powerOrbs) || 0, Number(data.staffUpgradeLevel) || 1);
       if (data.coinsCount !== undefined) {
         this.collectibleSystem.coinCount = data.coinsCount;
         this.hud.setCoinCount(this.collectibleSystem.coinCount);

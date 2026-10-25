@@ -32,7 +32,7 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDefinition> = {
     name: 'Báculo Sagrado (Ruyi Jingu Bang)',
     subtitle: 'Arma Mítica de Cinabrio y Oro Imperial',
     category: 'Arma de Combate Cuerpo a Cuerpo',
-    description: 'Báculo legendario del Rey Mono forjado en cinabrio sagrado y oro imperial. Permite ejecutar la técnica de golpe marcial atack_wood.',
+    description: 'Ruyi Jingu Bang: cuenta la leyenda que descansaba en las profundidades del Palacio del Dragón hasta que el Rey Mono reclamó su poder. Cambia de tamaño, obedece a su portador y despierta con cada desafío.',
     icon: '🥢',
     animationSet: 'WOOD',
     attackAnimation: 'atack_wood',
@@ -43,8 +43,8 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDefinition> = {
       // Clears head, clears monkey tail on left, flush against back fabric
       // Offsets are metres in the local bone axes. PlayerController converts
       // them to this rig's (centimetre-scaled) bone coordinates at binding.
-      position: new THREE.Vector3(0.02, -0.28, -0.22),
-      rotation: new THREE.Euler(0.02, -0.06, 0.78, 'XYZ')
+      position: new THREE.Vector3(0.02, -0.22, -0.14),
+      rotation: new THREE.Euler(0.02, -0.06, 0.72, 'XYZ')
     },
     handAttachment: {
       boneNameSubstrings: ['righthand'],
