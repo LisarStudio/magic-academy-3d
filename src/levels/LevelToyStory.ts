@@ -524,9 +524,40 @@ export class LevelToyStory {
 
   private addTempleCollision(asset: THREE.Object3D): void {
     const bounds = new THREE.Box3().setFromObject(asset);
-    this.structureColliderCandidates.push({
-      root: asset, center: bounds.getCenter(new THREE.Vector3()), radius: 34, active: false
+    // The imported temple meshes are authored single-sided. Raycaster ignores
+    // their back faces, which let Wukong run out through a wall from inside and
+    // then prevented re-entry. Build invisible, double-sided collision copies
+    // of the actual architecture so both directions use the same solid shell.
+    asset.updateMatrixWorld(true);
+    const inverseRoot = asset.matrixWorld.clone().invert();
+    const collisionRoot = new THREE.Group();
+    collisionRoot.name = 'central_temple_double_sided_collision';
+    const collisionMaterial = new THREE.MeshBasicMaterial({
+      side: THREE.DoubleSide,
+      colorWrite: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0,
     });
+    let colliderCount = 0;
+    asset.traverse((object) => {
+      const source = object as THREE.Mesh;
+      if (!source.isMesh || !source.geometry) return;
+      const proxy = new THREE.Mesh(source.geometry, collisionMaterial);
+      proxy.name = source.name || `temple_surface_${colliderCount}`;
+      proxy.matrixAutoUpdate = false;
+      proxy.matrix.copy(inverseRoot).multiply(source.matrixWorld);
+      proxy.frustumCulled = false;
+      proxy.castShadow = false;
+      proxy.receiveShadow = false;
+      collisionRoot.add(proxy);
+      colliderCount++;
+    });
+    this.sceneManager.scene.add(collisionRoot);
+    this.structureColliderCandidates.push({
+      root: collisionRoot, center: bounds.getCenter(new THREE.Vector3()), radius: 34, active: false
+    });
+    console.info(`[Temple] Built ${colliderCount} double-sided colliders from the existing temple meshes.`);
   }
 
   private alignStaffChestToPavilionTable(pavilion: THREE.Object3D, x: number, z: number): void {
@@ -762,10 +793,31 @@ export class LevelToyStory {
     sourceRoot.updateMatrixWorld(true);
     lodRoot.updateMatrixWorld(true);
 
+    // GLTF exports Blender mesh objects as named parent Groups, with the
+    // actual mesh nested below (often named Plane.003, Plane.004, etc.).
+    // Resolve the named object first, then find its renderable mesh instead
+    // of assuming the named node itself is a Mesh.
+    const findMesh = (root: THREE.Object3D, objectName: string): THREE.Mesh | null => {
+      const named = root.getObjectByName(objectName);
+      if (!named) return null;
+      if ((named as THREE.Mesh).isMesh) return named as THREE.Mesh;
+      let mesh: THREE.Mesh | null = null;
+      named.traverse((child) => {
+        if (!mesh && (child as THREE.Mesh).isMesh) mesh = child as THREE.Mesh;
+      });
+      return mesh;
+    };
+
     const templates = sourceNames.map((name) => {
-      const source = sourceRoot.getObjectByName(name) as THREE.Mesh | null;
-      if (!source?.isMesh) throw new Error(`Original grass GLB is missing mesh ${name}`);
+      const source = findMesh(sourceRoot, name);
+      if (!source) throw new Error(`Original grass GLB is missing mesh under ${name}`);
+      // The Blender source was exported Z-up (its blade height is on the
+      // asset Z axis). Three.js places the field on an XZ ground plane with
+      // Y up, so convert the original geometry once before calculating its
+      // bounds or instances. Without this, the real blades lie almost flat
+      // and the gameplay field appears bare even though instances exist.
       const geometry = source.geometry.clone().applyMatrix4(source.matrixWorld);
+      geometry.rotateX(-Math.PI / 2);
       geometry.computeBoundingBox();
       const sourceBounds = geometry.boundingBox!;
       const height = Math.max(0.05, sourceBounds.max.y - sourceBounds.min.y);
@@ -775,10 +827,11 @@ export class LevelToyStory {
       geometry.computeBoundingBox();
       geometry.computeBoundingSphere();
 
-      const lodSource = lodRoot.getObjectByName(`${name}_LOD`) as THREE.Mesh | null;
-      const lodGeometry = lodSource?.isMesh
+      const lodSource = findMesh(lodRoot, `${name}_LOD`);
+      const lodGeometry = lodSource
         ? lodSource.geometry.clone().applyMatrix4(lodSource.matrixWorld)
         : geometry.clone();
+      if (lodSource) lodGeometry.rotateX(-Math.PI / 2);
       lodGeometry.computeBoundingBox();
       const lodBounds = lodGeometry.boundingBox!;
       lodGeometry.translate(
@@ -876,7 +929,7 @@ export class LevelToyStory {
     // instancing keeps the distribution compact on the GPU.
     // Source clumps contain many fine blades already. A wider mobile sampling
     // interval retains the carpet while reducing instance preparation and draws.
-    const spacing = isMobile ? 0.74 : 0.48;
+    const spacing = isMobile ? 0.58 : 0.42;
     const sectorsPerAxis = Math.ceil(160 / sectorSize);
     let placedTotal = 0;
     const playerAtLoad = this.player.mesh.position;
@@ -2632,7 +2685,10 @@ export class LevelToyStory {
       // carries coverage beyond the vegetation range.
       const isMobile = isLowPowerDevice();
       const detailedDistance = isMobile ? 8 : 12;
-      const lodDistance = isMobile ? 72 : 104;
+      // Keep the source-derived grass carpet across the complete 160 m level.
+      // The previous 72 m mobile cutoff exposed bare terrain across the far
+      // side of the field and made the requested coverage look absent.
+      const lodDistance = 170;
       for (let i = 0; i < this.grassSectors.length; i++) {
         const sector = this.grassSectors[i];
         const lodSector = this.grassLodSectors[i];

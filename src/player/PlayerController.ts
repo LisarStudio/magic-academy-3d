@@ -527,6 +527,10 @@ export class PlayerController {
           if (Math.abs(wallNormal.y) < 0.35) {
             wallNormal.y = 0;
             wallNormal.normalize();
+            // Double-sided structural colliders can be hit from either side.
+            // Orient the response normal against movement so the inward and
+            // outward approaches are both stopped instead of only one face.
+            if (wallNormal.dot(moveNorm) > 0) wallNormal.negate();
 
             // Remove the component of velocity going into the wall
             const dot = this.velocity.x * wallNormal.x + this.velocity.z * wallNormal.z;
@@ -606,6 +610,7 @@ export class PlayerController {
 
             // Only push away from steep vertical surfaces (abs(normal.y) < 0.35)
             if (Math.abs(normal.y) < 0.35) {
+              if (normal.dot(dir) > 0) normal.negate();
               const overlap = this.PLAYER_RADIUS - hits[0].distance;
               normal.y = 0;
               const nLen = normal.length();

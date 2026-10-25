@@ -393,17 +393,22 @@ export class AssetManager {
         wukongDoubleJump,
         wukongFall,
         takeItem,
+        idleKick,
         wukongKick,
         wukongHardLanding,
         idleArmed,
         castSpellData
       ] = await Promise.all([
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle_nowood.fbx', 'Idle_Unarmed', playerModel, translationScaleFactor),
+        // iddle_2.fbx is the calm second idle supplied for the gameplay loop.
+        // Keep the first iddle.fbx as its decorative kick variation; the
+        // separate wukong_kick.fbx remains exclusively the player attack.
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle_2.fbx?v=20261025-idle2', 'Idle_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Running.fbx', 'Run_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Jumping.fbx', 'Jump_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong_no_wood_double_jumpFront Flip.fbx?v=7', 'Wukong_NoWood_DoubleJump', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_falling_air.fbx', 'Fall_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Taking_item_nowood.fbx?v=7', 'TakeItem', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle.fbx', 'Idle_Kick', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_kick.fbx', 'Wukong_NoWood_Kick', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Falling To Landing.fbx', 'Wukong_NoWood_HardLanding', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle.fbx', 'Idle_Armed', playerModel, translationScaleFactor),
@@ -419,8 +424,6 @@ export class AssetManager {
       const jumpArmed = jumpUnarmed?.clone() ?? null;
       if (jumpArmed) jumpArmed.name = 'Jump_Armed';
 
-      const idleKick = wukongKick?.clone() ?? null;
-      if (idleKick) idleKick.name = 'Idle_Kick';
       const clips: THREE.AnimationClip[] = [];
       if (idleUnarmed) clips.push(idleUnarmed);
       if (idleKick) clips.push(idleKick);
