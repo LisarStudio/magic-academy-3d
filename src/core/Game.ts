@@ -13,7 +13,7 @@ import { CheckpointManager } from '../world/CheckpointManager';
 import { CollectibleSystem } from '../collectibles/CollectibleSystem';
 import { HUD } from '../ui/HUD';
 import { SubtitleSystem } from '../ui/SubtitleSystem';
-import { LevelToyStory } from '../levels/LevelToyStory';
+import type { LevelToyStory } from '../levels/LevelToyStory';
 import { EquipmentViewer } from '../ui/EquipmentViewer';
 import { MobileTouchControls } from '../ui/MobileTouchControls';
 import { MainMenu, type MenuState, type StartMode } from '../ui/MainMenu';
@@ -138,7 +138,10 @@ export class Game {
     this.collectibleSystem = new CollectibleSystem(this.sceneManager.scene, this.audioManager);
 
     // 5. Setup Level Toy Story
-    this.level01 = new LevelToyStory(
+    // Keep the map, scenery and hazard systems out of the initial mobile
+    // bootstrap bundle. They load only after the intro frame and hero assets.
+    const { LevelToyStory: LevelConstructor } = await import('../levels/LevelToyStory');
+    this.level01 = new LevelConstructor(
       this.sceneManager,
       this.cameraController,
       this.player,

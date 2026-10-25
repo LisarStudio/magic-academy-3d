@@ -24,6 +24,7 @@ import { KeyPickupSequence, type KeyData } from '../player/KeyPickupSequence';
 import { RunicPortal, PortalManager } from '../world/RunicPortal';
 import { DayNightCycle } from '../world/DayNightCycle';
 import { LampMothSystem } from '../world/LampMothSystem';
+import { VolcanicDragonRun } from './VolcanicDragonRun';
 
 export class LevelToyStory {
   private sceneManager: SceneManager;
@@ -75,6 +76,11 @@ export class LevelToyStory {
   private grassCullElapsed = 0;
   private cloudsUniforms: any = null;
   private lampMoths: LampMothSystem | null = null;
+  private lavaUniforms: { uTime: { value: number } } | null = null;
+  private lavaEmberUniforms: { uTime: { value: number } } | null = null;
+  private lavaLight: THREE.PointLight | null = null;
+  private lavaBubbles: Array<{ mesh: THREE.Mesh; phase: number; baseY: number }> = [];
+  private dragonRun: VolcanicDragonRun | null = null;
   private curiosityChest!: TreasureChest;
   public curiosityChestOpen = false;
   private curiosityKeySpawned = false;
@@ -528,6 +534,7 @@ export class LevelToyStory {
     const center = bounds.getCenter(new THREE.Vector3());
     const half = targetWidth * 0.5;
     const ground = bounds.min.y;
+    const floorTop = this.getTerrainHeight(center.x, center.z) + 0.16;
     const height = Math.min(6.5, bounds.max.y - ground);
     const thickness = 0.45;
     const mat = new THREE.MeshBasicMaterial({ visible: false });
@@ -552,16 +559,23 @@ export class LevelToyStory {
       new THREE.MeshBasicMaterial({ visible: false })
     );
     ramp.name = 'temple_entry_ramp_collider';
-    ramp.position.set(center.x, ground + 0.22, center.z + half + 5.25);
-    ramp.rotation.x = 0.035;
+    ramp.position.set(center.x, (ground + floorTop) * 0.5, center.z + half + 5.25);
+    ramp.rotation.x = Math.atan2(floorTop - ground, 10.5);
     this.sceneManager.scene.add(ramp);
     this.levelColliders.push(ramp);
 
-    const treadMat = new THREE.MeshStandardMaterial({ color: 0x615b58, roughness: 0.94 });
+    const treadMat = new THREE.MeshStandardMaterial({ color: 0x615b58, roughness: 0.78, metalness: 0.03 });
+    const stairBed = new THREE.Mesh(new THREE.BoxGeometry(entranceWidth + 0.9, 0.32, 10.6), treadMat);
+    stairBed.name = 'temple_entry_stair_foundation';
+    stairBed.position.set(center.x, ground - 0.16, center.z + half + 5.25);
+    stairBed.receiveShadow = true;
+    this.sceneManager.scene.add(stairBed);
+    this.levelColliders.push(stairBed);
     for (let i = 0; i < 6; i++) {
       const tread = new THREE.Mesh(new THREE.BoxGeometry(entranceWidth - 0.8, 0.16, 1.35), treadMat);
       tread.name = `temple_entry_tread_${i + 1}`;
-      tread.position.set(center.x, ground + 0.4 - i * 0.055, center.z + half + 0.35 + i * 1.55);
+      const treadTop = THREE.MathUtils.lerp(floorTop, ground, i / 5);
+      tread.position.set(center.x, treadTop - 0.08, center.z + half + 0.35 + i * 1.55);
       tread.receiveShadow = true;
       this.sceneManager.scene.add(tread);
       this.levelColliders.push(tread);
@@ -587,13 +601,67 @@ export class LevelToyStory {
     const map = new THREE.CanvasTexture(canvas);
     map.colorSpace = THREE.SRGBColorSpace;
     map.anisotropy = Math.min(8, this.sceneManager.renderer.capabilities.getMaxAnisotropy());
-    const floorMaterial = new THREE.MeshStandardMaterial({ map, color: 0xc4c0bb, roughness: 0.92 });
+    const floorMaterial = new THREE.MeshStandardMaterial({ map, color: 0xc4c0bb, roughness: 0.58, metalness: 0.06 });
     const floor = new THREE.Mesh(new THREE.BoxGeometry(21.8, 0.22, 21.8), floorMaterial);
     floor.name = 'central_temple_stone_floor';
-    floor.position.set(0, 0.35, -40);
+    // The outdoor terrain is y=0 here. Keep the walkable temple surface within
+    // the player's step height and put the collider's top at the same y as the
+    // visible mosaic, avoiding the old 46 cm floor lip that hid Wukong's legs.
+    const topY = this.getTerrainHeight(0, -40) + 0.16;
+    floor.position.set(0, topY - 0.11, -40);
     floor.receiveShadow = true;
     this.sceneManager.scene.add(floor);
     this.levelColliders.push(floor);
+
+    const scene = this.sceneManager.scene;
+    const bronze = new THREE.MeshStandardMaterial({ color: 0xb27635, roughness: 0.48, metalness: 0.52 });
+    const borderY = topY + 0.015;
+    const borderA = new THREE.Mesh(new THREE.BoxGeometry(21.9, 0.05, 0.16), bronze);
+    const borderB = borderA.clone();
+    borderA.position.set(0, borderY, -40 - 10.82);
+    borderB.position.set(0, borderY, -40 + 10.82);
+    const borderC = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.05, 21.9), bronze);
+    const borderD = borderC.clone();
+    borderC.position.set(-10.82, borderY, -40);
+    borderD.position.set(10.82, borderY, -40);
+    scene.add(borderA, borderB, borderC, borderD);
+
+    // Recessed-looking stone medallion with an actual yin-yang S curve, not a
+    // flat image. Its top sits only a few millimeters above the tiled floor.
+    const medallion = new THREE.Mesh(
+      new THREE.CircleGeometry(3.7, 64),
+      new THREE.MeshStandardMaterial({ color: 0xd6cbb5, roughness: 0.56, metalness: 0.08 })
+    );
+    medallion.name = 'temple_yinyang_mosaic_base';
+    medallion.rotation.x = -Math.PI / 2;
+    medallion.position.set(0, topY + 0.002, -40);
+    scene.add(medallion);
+    const yinShape = new THREE.Shape();
+    const r = 3.15;
+    yinShape.moveTo(0, r);
+    yinShape.bezierCurveTo(r, r, r, -r, 0, -r);
+    yinShape.absarc(0, 0, r, -Math.PI / 2, -3 * Math.PI / 2, true);
+    yinShape.closePath();
+    const yinStone = new THREE.Mesh(
+      new THREE.ShapeGeometry(yinShape, 48),
+      new THREE.MeshStandardMaterial({ color: 0x292d37, roughness: 0.52, metalness: 0.12, side: THREE.DoubleSide })
+    );
+    yinStone.name = 'temple_yinyang_dark_stone';
+    yinStone.rotation.x = -Math.PI / 2;
+    yinStone.position.set(0, topY + 0.004, -40);
+    scene.add(yinStone);
+    const dotGeometry = new THREE.CircleGeometry(0.48, 24);
+    const dotLight = new THREE.Mesh(dotGeometry, new THREE.MeshStandardMaterial({ color: 0xe4d7bd, roughness: 0.55 }));
+    const dotDark = new THREE.Mesh(dotGeometry, new THREE.MeshStandardMaterial({ color: 0x282a32, roughness: 0.55 }));
+    dotLight.rotation.x = dotDark.rotation.x = -Math.PI / 2;
+    dotLight.position.set(0, topY + 0.006, -40 - 1.55);
+    dotDark.position.set(0, topY + 0.006, -40 + 1.55);
+    scene.add(dotLight, dotDark);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(3.65, 0.045, 8, 96), bronze);
+    ring.name = 'temple_yinyang_bronze_inlay';
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(0, topY + 0.008, -40);
+    scene.add(ring);
   }
 
   private createGrassGroundTexture(): THREE.CanvasTexture {
@@ -904,6 +972,7 @@ export class LevelToyStory {
     // ═══════════════════════════════════════════════════════════════════════════════
     (() => {
       const gltfLoader = new GLTFLoader();
+      const treeColliderMaterial = new THREE.MeshBasicMaterial({ visible: false });
 
       // 1. Real 3D Conifer Pine & Oak Trees
       gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/tree_conifer.gltf', (gltf) => {
@@ -919,7 +988,13 @@ export class LevelToyStory {
           const s = 1.0 + Math.random() * 0.5;
           t.scale.set(s, s * (0.9 + Math.random() * 0.3), s);
           scene.add(t);
-          this.levelColliders.push(t);
+          // Foliage and whole-tree bounds were acting as invisible walls.
+          // Only the visible trunk gets a compact gameplay collider.
+          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.24 * s, 0.34 * s, 3.1 * s, 8), treeColliderMaterial);
+          trunk.name = 'conifer_trunk_collision';
+          trunk.position.set(x, y + 1.55 * s, z);
+          scene.add(trunk);
+          this.levelColliders.push(trunk);
         });
       });
 
@@ -935,7 +1010,11 @@ export class LevelToyStory {
           const s = 0.9 + Math.random() * 0.4;
           t.scale.set(s, s, s);
           scene.add(t);
-          this.levelColliders.push(t);
+          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3 * s, 0.42 * s, 3.5 * s, 8), treeColliderMaterial);
+          trunk.name = 'oak_trunk_collision';
+          trunk.position.set(x, y + 1.75 * s, z);
+          scene.add(trunk);
+          this.levelColliders.push(trunk);
         });
       });
 
@@ -1149,44 +1228,144 @@ export class LevelToyStory {
   private buildSecretLavaRoute(scene: THREE.Scene): void {
     const basalt = new THREE.MeshStandardMaterial({ color: 0x39353a, roughness: 0.96, metalness: 0.08 });
     const gold = new THREE.MeshStandardMaterial({ color: 0x9c542d, roughness: 0.72, metalness: 0.42 });
-    const lavaMaterial = new THREE.MeshBasicMaterial({ color: 0xff4a12, transparent: true, opacity: 0.88, side: THREE.DoubleSide });
+    const lavaMaterial = new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 } },
+      vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: `
+        uniform float uTime;
+        varying vec2 vUv;
+        float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+        float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f); return mix(mix(hash(i),hash(i+vec2(1.0,0.0)),f.x),mix(hash(i+vec2(0.0,1.0)),hash(i+vec2(1.0,1.0)),f.x),f.y); }
+        float fbm(vec2 p){ float n=0.0, a=0.5; for(int i=0;i<3;i++){ n+=noise(p)*a; p=p*2.0+vec2(0.0,uTime*0.012); a*=0.5; } return n; }
+        void main(){
+          vec2 flow=vUv*5.0+vec2(uTime*0.025,-uTime*0.018);
+          float heat=fbm(flow);
+          float cracks=smoothstep(0.60,0.73,noise(vUv*13.0+vec2(-uTime*0.05,uTime*0.04)));
+          vec3 color=mix(vec3(0.18,0.025,0.012),vec3(0.92,0.12,0.012),smoothstep(0.22,0.72,heat));
+          color=mix(color,vec3(1.0,0.43,0.035),smoothstep(0.56,0.78,heat)*0.8);
+          color=mix(color,vec3(1.0,0.79,0.17),smoothstep(0.79,0.93,heat)*0.8);
+          color=mix(color,vec3(0.11,0.018,0.012),cracks*0.72);
+          gl_FragColor=vec4(color,1.0);
+        }
+      `,
+      side: THREE.DoubleSide,
+      toneMapped: false
+    });
     const lava = new THREE.Mesh(new THREE.CircleGeometry(14.2, 48), lavaMaterial);
     lava.name = 'secret_lava_pool';
     lava.rotation.x = -Math.PI / 2;
     lava.position.set(this.secretLavaCenter.x, this.secretLavaY, this.secretLavaCenter.y);
+    lava.renderOrder = 1;
     scene.add(lava);
 
-    const lavaCore = new THREE.Mesh(
-      new THREE.CircleGeometry(8.2, 36),
-      new THREE.MeshBasicMaterial({ color: 0xffb42b, transparent: true, opacity: 0.75, side: THREE.DoubleSide })
-    );
-    lavaCore.name = 'secret_lava_glow';
-    lavaCore.rotation.x = -Math.PI / 2;
-    lavaCore.position.set(this.secretLavaCenter.x, this.secretLavaY + 0.025, this.secretLavaCenter.y);
-    scene.add(lavaCore);
-    const lavaLight = new THREE.PointLight(0xff5724, 2.3, 29, 2);
-    lavaLight.position.set(this.secretLavaCenter.x, this.secretLavaY + 3.5, this.secretLavaCenter.y);
-    lavaLight.castShadow = false;
-    scene.add(lavaLight);
-    this.dayNightCycle?.registerNightLight(lavaLight);
+    this.lavaUniforms = lavaMaterial.uniforms as { uTime: { value: number } };
+    this.lavaLight = new THREE.PointLight(0xff5724, 2.3, 29, 2);
+    this.lavaLight.name = 'secret_lava_warm_fill';
+    this.lavaLight.position.set(this.secretLavaCenter.x, this.secretLavaY + 3.5, this.secretLavaCenter.y);
+    this.lavaLight.castShadow = false;
+    scene.add(this.lavaLight);
+    this.dayNightCycle?.registerNightLight(this.lavaLight);
+    const bubbleGeometry = new THREE.SphereGeometry(0.28, 10, 8);
+    const bubbleMaterial = new THREE.MeshBasicMaterial({ color: 0xffa52c, toneMapped: false });
+    for (let i = 0; i < 7; i++) {
+      const angle = i * 2.399;
+      const radius = 2.5 + (i % 3) * 2.7;
+      const bubble = new THREE.Mesh(bubbleGeometry, bubbleMaterial);
+      bubble.name = `lava_bubble_${i}`;
+      bubble.position.set(this.secretLavaCenter.x + Math.cos(angle) * radius, this.secretLavaY + 0.12, this.secretLavaCenter.y + Math.sin(angle) * radius);
+      bubble.visible = false;
+      scene.add(bubble);
+      this.lavaBubbles.push({ mesh: bubble, phase: i * 1.31, baseY: this.secretLavaY + 0.12 });
+    }
+    const emberPositions = new Float32Array(48 * 3);
+    for (let i = 0; i < 48; i++) {
+      const angle = i * 2.399;
+      const radius = 4 + ((i * 17) % 100) / 100 * 10;
+      emberPositions[i * 3] = Math.cos(angle) * radius;
+      emberPositions[i * 3 + 1] = ((i * 29) % 100) / 100 * 2.4;
+      emberPositions[i * 3 + 2] = Math.sin(angle) * radius;
+    }
+    const emberGeo = new THREE.BufferGeometry();
+    emberGeo.setAttribute('position', new THREE.BufferAttribute(emberPositions, 3));
+    const emberMaterial = new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 } },
+      vertexShader: `uniform float uTime; void main(){ vec3 p=position; float phase=fract(position.y*0.37+uTime*0.28); p.y=0.25+phase*2.1; p.x+=sin(uTime*1.2+position.z)*0.13; vec4 mv=modelViewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mv; gl_PointSize=clamp(4.0/-mv.z,1.0,4.0); }`,
+      fragmentShader: `void main(){ vec2 p=gl_PointCoord-0.5; float a=1.0-smoothstep(0.12,0.25,dot(p,p)); gl_FragColor=vec4(1.0,0.34,0.045,a); }`,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    const embers = new THREE.Points(emberGeo, emberMaterial);
+    embers.name = 'secret_lava_embers';
+    embers.position.set(this.secretLavaCenter.x, this.secretLavaY + 0.2, this.secretLavaCenter.y);
+    scene.add(embers);
+    this.lavaEmberUniforms = emberMaterial.uniforms as { uTime: { value: number } };
+
+    // A short tutorial run of paired Chinese dragon statues guards the sloped
+    // approach. Its checkpoint is placed just before the first warning zone.
+    const gateX = 48, gateZ = -84, gateY = this.getTerrainHeight(gateX, gateZ);
+    const routeStart = new THREE.Vector3(gateX, gateY + 0.2, gateZ);
+    const routeEnd = new THREE.Vector3(58, -7.7, -95);
+    const routeSurface = (x: number, z: number) => {
+      const path = new THREE.Vector2(routeEnd.x - routeStart.x, routeEnd.z - routeStart.z);
+      const point = new THREE.Vector2(x - routeStart.x, z - routeStart.z);
+      const t = THREE.MathUtils.clamp(point.dot(path) / Math.max(path.lengthSq(), 0.001), 0, 1);
+      return THREE.MathUtils.lerp(routeStart.y, routeEnd.y, t);
+    };
+    this.dragonRun = new VolcanicDragonRun(scene, routeStart, routeEnd, routeSurface, this.levelColliders, (damage) => {
+      if (this.player.isControlsLocked || this.player.isMovementLocked) return;
+      this.player.takeDamage(damage, this.checkpointManager.getActiveCheckpointPosition());
+      this.audioManager.playPlayerHurt();
+      this.audioManager.playHitImpact();
+      this.spellSystem.createImpactParticles(this.player.mesh.position.clone().add(new THREE.Vector3(0, 0.8, 0)), 0xff6b16);
+      (window as any).gameInstance?.hud?.triggerDamageFlash();
+    });
 
     // A weathered gate marks the hidden trail without a teleport or shortcut.
-    const gateX = 48, gateZ = -84, gateY = this.getTerrainHeight(gateX, gateZ);
+    const gateCenter = new THREE.Vector3(gateX, gateY, gateZ);
+    const gateAxis = new THREE.Vector3(routeEnd.x - routeStart.x, 0, routeEnd.z - routeStart.z).normalize();
+    const gateAcross = new THREE.Vector3(-gateAxis.z, 0, gateAxis.x);
+    const gateYaw = Math.atan2(-gateAcross.z, gateAcross.x);
+    const postBaseMat = new THREE.MeshStandardMaterial({ color: 0x6a6266, roughness: 0.82, metalness: 0.04 });
+    const gateRoofMat = new THREE.MeshStandardMaterial({ color: 0x74262a, roughness: 0.68, metalness: 0.06 });
     for (const side of [-1, 1]) {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.55, 4.4, 0.6), basalt);
-      post.position.set(gateX + side * 2.5, gateY + 2.2, gateZ);
+      const anchor = gateCenter.clone().addScaledVector(gateAcross, side * 2.5);
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.48, 4.4, 10), basalt);
+      post.position.set(anchor.x, gateY + 2.2, anchor.z);
       post.castShadow = true;
       scene.add(post);
-      this.levelColliders.push(post);
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.66, 0.45, 10), postBaseMat);
+      base.position.set(anchor.x, gateY + 0.225, anchor.z);
+      scene.add(base);
+      this.levelColliders.push(post, base);
       const cap = new THREE.Mesh(new THREE.SphereGeometry(0.48, 8, 6), gold);
-      cap.position.set(gateX + side * 2.5, gateY + 4.45, gateZ);
+      cap.position.set(anchor.x, gateY + 4.45, anchor.z);
       scene.add(cap);
+      const finial = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.56, 7), gold);
+      finial.position.set(anchor.x, gateY + 5.02, anchor.z);
+      finial.rotation.z = side * -0.24;
+      scene.add(finial);
     }
     const lintel = new THREE.Mesh(new THREE.BoxGeometry(5.8, 0.55, 0.75), basalt);
     lintel.position.set(gateX, gateY + 4.45, gateZ);
+    lintel.rotation.y = gateYaw;
     lintel.castShadow = true;
     scene.add(lintel);
     this.levelColliders.push(lintel);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(7.5, 0.24, 2.5), gateRoofMat);
+    roof.name = 'volcanic_ceremonial_gate_roof';
+    roof.position.set(gateX, gateY + 4.95, gateZ);
+    roof.rotation.y = gateYaw;
+    roof.castShadow = true;
+    scene.add(roof);
+    for (const depthSign of [-1, 1]) {
+      const eave = new THREE.Mesh(new THREE.BoxGeometry(7.8, 0.16, 0.32), gold);
+      eave.position.set(gateX, gateY + 4.84, gateZ + gateAxis.z * depthSign * 1.06);
+      eave.position.x += gateAxis.x * depthSign * 1.06;
+      eave.rotation.y = gateYaw;
+      eave.rotation.z = depthSign * -0.07;
+      scene.add(eave);
+    }
 
     // Continuous sloped basalt causeway reaches the sunken basin. Its top is
     // a solid collider and its endpoints follow the carved terrain.
@@ -1354,87 +1533,77 @@ export class LevelToyStory {
       this.levelColliders.push(base);
     };
 
-    // 1. Ruta Imperial del Oeste (Palacio → Templo 02 Pagoda de la Montaña)
-    const westWaypoints = [
-      new THREE.Vector3(-12, 0, -35),
-      new THREE.Vector3(-22, 0, -45),
-      new THREE.Vector3(-35, 0, -58),
-      new THREE.Vector3(-48, 0, -68),
-      new THREE.Vector3(-55, 0, -75)
-    ];
+    const pathMap = stoneTex.clone();
+    pathMap.wrapS = pathMap.wrapT = THREE.RepeatWrapping;
+    pathMap.repeat.set(2.4, 1);
+    pathMap.needsUpdate = true;
+    const pathMaterial = new THREE.MeshStandardMaterial({ map: pathMap, color: 0xbdb8ad, roughness: 0.82, metalness: 0.02 });
 
-    for (let w = 0; w < westWaypoints.length - 1; w++) {
-      const pA = westWaypoints[w];
-      const pB = westWaypoints[w + 1];
-      const steps = 8;
-      for (let s = 0; s <= steps; s++) {
-        const t = s / steps;
-        const rx = THREE.MathUtils.lerp(pA.x, pB.x, t);
-        const rz = THREE.MathUtils.lerp(pA.z, pB.z, t);
-        const ry = this.getTerrainHeight(rx, rz) + 0.04;
-
-        const pathSlab = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.08, 4.2), stoneMat);
-        pathSlab.position.set(rx, ry, rz);
-        pathSlab.rotation.y = Math.atan2(pB.x - pA.x, pB.z - pA.z);
-        pathSlab.receiveShadow = true;
-        scene.add(pathSlab);
-
-        // Place Tōrō lantern every 4 steps on alternating sides of the road
-        if (s % 4 === 0) {
-          const sideOffset = (s % 8 === 0 ? 2.6 : -2.6);
-          const perpX = -Math.sin(pathSlab.rotation.y) * sideOffset;
-          const perpZ = Math.cos(pathSlab.rotation.y) * sideOffset;
-          createToroLantern(rx + perpX, rz + perpZ, 0xff9900);
+    // Continuous, terrain-conforming stone ribbon. The same surface is the
+    // collider, replacing the old overlapping 4.2m square slabs that left
+    // visible zigzags and did not support the player's ground ray.
+    const addStonePath = (name: string, waypoints: THREE.Vector3[], width: number): THREE.Vector3[] => {
+      const curve = new THREE.CatmullRomCurve3(waypoints, false, 'centripetal');
+      const sampleCount = Math.max(12, Math.ceil(curve.getLength() / 1.45));
+      const vertices: number[] = [];
+      const uvs: number[] = [];
+      const indices: number[] = [];
+      const centers: THREE.Vector3[] = [];
+      let distance = 0;
+      let previous: THREE.Vector3 | null = null;
+      for (let i = 0; i <= sampleCount; i++) {
+        const t = i / sampleCount;
+        const point = curve.getPointAt(t);
+        point.y = this.getTerrainHeight(point.x, point.z) + 0.055;
+        const tangent = curve.getTangentAt(t).setY(0).normalize();
+        const sideX = -tangent.z * width * 0.5;
+        const sideZ = tangent.x * width * 0.5;
+        if (previous) distance += previous.distanceTo(point);
+        previous = point.clone();
+        centers.push(point.clone());
+        vertices.push(point.x + sideX, point.y, point.z + sideZ, point.x - sideX, point.y, point.z - sideZ);
+        uvs.push(0, distance / 1.8, 1, distance / 1.8);
+        if (i < sampleCount) {
+          const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+          indices.push(a, c, b, b, c, d);
         }
       }
-    }
-
-    // 2. Ruta Imperial del Este (Palacio → Templo 03 Santuario del Báculo)
-    const eastWaypoints = [
-      new THREE.Vector3(12, 0, -35),
-      new THREE.Vector3(22, 0, -45),
-      new THREE.Vector3(35, 0, -58),
-      new THREE.Vector3(48, 0, -68),
-      new THREE.Vector3(55, 0, -75)
-    ];
-
-    for (let w = 0; w < eastWaypoints.length - 1; w++) {
-      const pA = eastWaypoints[w];
-      const pB = eastWaypoints[w + 1];
-      const steps = 8;
-      for (let s = 0; s <= steps; s++) {
-        const t = s / steps;
-        const rx = THREE.MathUtils.lerp(pA.x, pB.x, t);
-        const rz = THREE.MathUtils.lerp(pA.z, pB.z, t);
-        const ry = this.getTerrainHeight(rx, rz) + 0.04;
-
-        const pathSlab = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.08, 4.2), stoneMat);
-        pathSlab.position.set(rx, ry, rz);
-        pathSlab.rotation.y = Math.atan2(pB.x - pA.x, pB.z - pA.z);
-        pathSlab.receiveShadow = true;
-        scene.add(pathSlab);
-
-        if (s % 4 === 0) {
-          const sideOffset = (s % 8 === 0 ? 2.6 : -2.6);
-          const perpX = -Math.sin(pathSlab.rotation.y) * sideOffset;
-          const perpZ = Math.cos(pathSlab.rotation.y) * sideOffset;
-          createToroLantern(rx + perpX, rz + perpZ, 0x00e5ff);
-        }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      const path = new THREE.Mesh(geometry, pathMaterial);
+      path.name = name;
+      path.receiveShadow = true;
+      path.castShadow = false;
+      scene.add(path);
+      this.levelColliders.push(path);
+      return centers;
+    };
+    const addRouteLanterns = (centers: THREE.Vector3[], color: number) => {
+      for (let i = 0; i < centers.length; i += 8) {
+        const point = centers[i];
+        const before = centers[Math.max(0, i - 1)];
+        const after = centers[Math.min(centers.length - 1, i + 1)];
+        const dx = after.x - before.x, dz = after.z - before.z;
+        const side = i % 16 === 0 ? 1 : -1;
+        const length = Math.hypot(dx, dz) || 1;
+        createToroLantern(point.x - dz / length * 2.8 * side, point.z + dx / length * 2.8 * side, color);
       }
-    }
+    };
 
-    // 3. Ruta de la Cresta Norte (Conexión entre Templo 02 y Templo 03)
-    for (let s = 0; s <= 15; s++) {
-      const t = s / 15;
-      const rx = THREE.MathUtils.lerp(-55, 55, t);
-      const rz = -75;
-      const ry = this.getTerrainHeight(rx, rz) + 0.04;
-
-      const ridgeSlab = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.08, 3.6), stoneMat);
-      ridgeSlab.position.set(rx, ry, rz);
-      ridgeSlab.receiveShadow = true;
-      scene.add(ridgeSlab);
-    }
+    const west = addStonePath('imperial_west_stone_path', [
+      new THREE.Vector3(-12, 0, -35), new THREE.Vector3(-22, 0, -45),
+      new THREE.Vector3(-35, 0, -58), new THREE.Vector3(-48, 0, -68), new THREE.Vector3(-55, 0, -75)
+    ], 4.2);
+    addRouteLanterns(west, 0xff9900);
+    const east = addStonePath('imperial_east_stone_path', [
+      new THREE.Vector3(12, 0, -35), new THREE.Vector3(22, 0, -45),
+      new THREE.Vector3(35, 0, -58), new THREE.Vector3(48, 0, -68), new THREE.Vector3(55, 0, -75)
+    ], 4.2);
+    addRouteLanterns(east, 0xffbd70);
+    addStonePath('north_ridge_stone_path', [new THREE.Vector3(-55, 0, -75), new THREE.Vector3(0, 0, -75), new THREE.Vector3(55, 0, -75)], 3.6);
   }
 
   private setupInteractiveProps(): void {
@@ -1554,6 +1723,7 @@ export class LevelToyStory {
     this.checkpointManager.addCheckpoint(2, new THREE.Vector3(20, this.getTerrainHeight(20, 18) + 0.2, 18), Math.PI); // Pavilion approach
     this.checkpointManager.addCheckpoint(3, new THREE.Vector3(-55, this.getTerrainHeight(-55, -68) + 0.2, -68), Math.PI); // West ridge pavilion
     this.checkpointManager.addCheckpoint(4, new THREE.Vector3(30, 0.2, -40), Math.PI * 0.5); // Boss Arena Entrance
+    this.checkpointManager.addCheckpoint(7, new THREE.Vector3(46.5, this.getTerrainHeight(46.5, -82) + 0.2, -82), Math.PI * 0.5); // Before dragon fire corridor
     this.checkpointManager.addCheckpoint(5, new THREE.Vector3(57, -7.35, -94), Math.PI * 0.5); // Secret lava entry
     this.checkpointManager.addCheckpoint(6, new THREE.Vector3(67, -7.35, -102), Math.PI * 0.5); // Midway lava platform
   }
@@ -1989,7 +2159,11 @@ export class LevelToyStory {
     });
     this.triggerZones.push(tGekko);
 
-    const lavaEntry = new TriggerZone('trig_secret_lava_entry', new THREE.Vector3(53, -4, -98), new THREE.Vector3(61, 4, -90), () => {
+    const dragonCheckpoint = new TriggerZone('trig_volcanic_dragon_checkpoint', new THREE.Vector3(44, -5, -89), new THREE.Vector3(51, 6, -79), () => {
+      this.checkpointManager.setActiveCheckpoint(7);
+    });
+    this.triggerZones.push(dragonCheckpoint);
+    const lavaEntry = new TriggerZone('trig_secret_lava_entry', new THREE.Vector3(53, -10, -98), new THREE.Vector3(61, -5, -90), () => {
       this.checkpointManager.setActiveCheckpoint(5);
     });
     this.triggerZones.push(lavaEntry);
@@ -2369,6 +2543,17 @@ export class LevelToyStory {
         this.grassUniforms.uPlayerPos.value.copy(playerPos);
       }
     }
+    const lavaTime = performance.now() / 1000;
+    if (this.lavaUniforms) this.lavaUniforms.uTime.value = lavaTime;
+    if (this.lavaEmberUniforms) this.lavaEmberUniforms.uTime.value = lavaTime;
+    this.lavaBubbles.forEach(({ mesh, phase, baseY }) => {
+      const wave = Math.sin(lavaTime * 1.7 + phase);
+      mesh.visible = wave > 0.58;
+      mesh.position.y = baseY + Math.max(0, wave) * 0.34;
+      const scale = 0.55 + Math.max(0, wave) * 0.75;
+      mesh.scale.setScalar(scale);
+    });
+    this.dragonRun?.update(delta, playerPos);
     this.grassCullElapsed -= delta;
     if (this.grassCullElapsed <= 0) {
       // Keep original source clumps at close range and switch to derived,
