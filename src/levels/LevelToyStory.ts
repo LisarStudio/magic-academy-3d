@@ -70,6 +70,7 @@ export class LevelToyStory {
   private grassSectors: THREE.InstancedMesh[] = [];
   private grassLodSectors: THREE.InstancedMesh[] = [];
   private grassLoadStarted = false;
+  private grassLoadPromise: Promise<void> | null = null;
   private grassCullElapsed = 0;
   private cloudsUniforms: any = null;
   private lampMoths: LampMothSystem | null = null;
@@ -80,6 +81,8 @@ export class LevelToyStory {
   private hatchOpenProgress = 0;
   private hatchTarget = 0;
   private leverTarget = Math.PI / 4;
+  private readonly secretLavaCenter = new THREE.Vector2(66, -105);
+  private secretLavaY = -11.2;
 
   public getTerrainHeight(x: number, z: number): number {
     // Gameplay zones (Castle fortress, arena, front entrance road) are strictly flat at y = 0.0
@@ -91,12 +94,15 @@ export class LevelToyStory {
     if (arenaDist < 8) blend *= Math.max(0, arenaDist / 8);
     if (z > -22 && Math.abs(x) < 9) blend *= Math.max(0, Math.abs(x) / 9);
 
-    if (blend <= 0.001) return 0.0;
-
     const hill1 = Math.sin(x * 0.05 + z * 0.04) * 2.2;
     const hill2 = Math.cos(x * 0.09 - z * 0.07) * 1.4;
     const knoll = Math.sin(x * 0.15) * Math.sin(z * 0.15) * 0.8;
-    return (hill1 + hill2 + knoll) * blend;
+    const naturalHeight = (hill1 + hill2 + knoll) * blend;
+    // Remote eastern volcanic basin: the same terrain function drives the
+    // visible surface, foliage placement, and the player ground ray.
+    const lavaDistance = Math.hypot(x - 66, z + 105);
+    const basinBlend = 1 - THREE.MathUtils.smoothstep(lavaDistance, 15, 36);
+    return THREE.MathUtils.lerp(naturalHeight, -13.2, basinBlend);
   }
 
   // Quest states & Gekko Mission State Machine
@@ -368,6 +374,9 @@ export class LevelToyStory {
 
     this.checkpointManager.respawnPlayer(this.player);
     await this.loadIntroEnvironmentAssets();
+    // Start fetching and instancing the original grass before the player
+    // reaches gameplay, without adding it to the level's blocking load path.
+    this.loadGrassInBackground();
   }
 
   /** Adds the pavilion and a subtle green ground texture as scenery only. */
@@ -431,8 +440,11 @@ export class LevelToyStory {
       const temple = templeResult.value.scene;
       // One temple anchors the route beyond Gekko. The duplicate eastern
       // sanctuary was removed; its staff reward now lives in the pavilion.
-      const routeTemple = placeAsset(temple, 'chinese_temple_gekko_route', 24, 0, -40);
+      // The source asset's open entrance faces opposite the spawn-facing
+      // perimeter, so rotate the visual temple to match its actual access.
+      const routeTemple = placeAsset(temple, 'chinese_temple_gekko_route', 24, 0, -40, Math.PI);
       this.addTempleCollision(routeTemple, 24, 8);
+      this.addTempleStoneFloor();
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese Temple asset.', templeResult.reason);
     }
@@ -525,6 +537,56 @@ export class LevelToyStory {
     const segment = (targetWidth - entranceWidth) / 2;
     add(segment, thickness, center.x - half + segment / 2, center.z + half);
     add(segment, thickness, center.x + half - segment / 2, center.z + half);
+
+    // One continuous walkable ramp bridges the approach to the temple sill;
+    // low decorative treads preserve the original architectural language.
+    const ramp = new THREE.Mesh(
+      new THREE.BoxGeometry(entranceWidth - 0.5, 0.16, 10.5),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    ramp.name = 'temple_entry_ramp_collider';
+    ramp.position.set(center.x, ground + 0.22, center.z + half + 5.25);
+    ramp.rotation.x = 0.035;
+    this.sceneManager.scene.add(ramp);
+    this.levelColliders.push(ramp);
+
+    const treadMat = new THREE.MeshStandardMaterial({ color: 0x615b58, roughness: 0.94 });
+    for (let i = 0; i < 6; i++) {
+      const tread = new THREE.Mesh(new THREE.BoxGeometry(entranceWidth - 0.8, 0.16, 1.35), treadMat);
+      tread.name = `temple_entry_tread_${i + 1}`;
+      tread.position.set(center.x, ground + 0.4 - i * 0.055, center.z + half + 0.35 + i * 1.55);
+      tread.receiveShadow = true;
+      this.sceneManager.scene.add(tread);
+      this.levelColliders.push(tread);
+    }
+  }
+
+  private addTempleStoneFloor(): void {
+    const size = 512;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#514d4b';
+    ctx.fillRect(0, 0, size, size);
+    const tile = 64;
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+      const shade = 88 + ((row * 23 + col * 17) % 25);
+      ctx.fillStyle = `rgb(${shade},${shade - 3},${shade - 5})`;
+      ctx.fillRect(col * tile + 2, row * tile + 2, tile - 4, tile - 4);
+      ctx.strokeStyle = 'rgba(25,24,24,.55)';
+      ctx.strokeRect(col * tile + 2, row * tile + 2, tile - 4, tile - 4);
+    }
+    const map = new THREE.CanvasTexture(canvas);
+    map.colorSpace = THREE.SRGBColorSpace;
+    map.anisotropy = Math.min(8, this.sceneManager.renderer.capabilities.getMaxAnisotropy());
+    const floorMaterial = new THREE.MeshStandardMaterial({ map, color: 0xc4c0bb, roughness: 0.92 });
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(21.8, 0.22, 21.8), floorMaterial);
+    floor.name = 'central_temple_stone_floor';
+    floor.position.set(0, 0.35, -40);
+    floor.receiveShadow = true;
+    this.sceneManager.scene.add(floor);
+    this.levelColliders.push(floor);
   }
 
   private createGrassGroundTexture(): THREE.CanvasTexture {
@@ -572,25 +634,38 @@ export class LevelToyStory {
    * la_leyenda_de_wukong_Camarasuave.blend. The original GLB remains untouched;
    * GPU wind bends its real blades at the tips while the roots stay planted.
    */
-  public loadGrassInBackground(): void {
-    if (this.grassLoadStarted) return;
+  public loadGrassInBackground(): Promise<void> {
+    if (this.grassLoadStarted) return this.grassLoadPromise ?? Promise.resolve();
     this.grassLoadStarted = true;
     const base = import.meta.env.BASE_URL + 'assets/environment/';
     const loader = new GLTFLoader();
-    void Promise.all([
-      loader.loadAsync(`${base}wukong-grass-clumps.glb`),
-      loader.loadAsync(`${base}wukong-grass-clumps-lod.glb`),
-    ]).then(([original, lod]) => this.buildOriginalGrass(original.scene, lod.scene))
+    this.grassLoadPromise = loader.loadAsync(`${base}wukong-grass-clumps.glb`)
+      .then(async (original) => {
+        let lodRoot: THREE.Object3D | null = null;
+        try {
+          lodRoot = (await loader.loadAsync(`${base}wukong-grass-clumps-lod.glb`)).scene;
+        } catch (error) {
+          console.warn('[Grass] Optional LOD failed; using the original meshes at every distance.', error);
+        }
+        await this.buildOriginalGrass(original.scene, lodRoot ?? original.scene);
+      })
       .catch((error: unknown) => {
         console.error('[Grass] Background load of original Grass It! assets failed; no substitute grass was generated.', error);
+        this.grassSectors.forEach((sector) => this.sceneManager.scene.remove(sector));
+        this.grassLodSectors.forEach((sector) => this.sceneManager.scene.remove(sector));
+        this.grassSectors = [];
+        this.grassLodSectors = [];
+        this.grassUniforms = null;
         this.grassLoadStarted = false;
+        this.grassLoadPromise = null;
       });
+    return this.grassLoadPromise;
   }
 
   private async buildOriginalGrass(sourceRoot: THREE.Object3D, lodRoot: THREE.Object3D): Promise<void> {
     const sourceNames = ['Grass_Short', 'Grass_Lush', 'Grass_Tall'] as const;
     const weights = [0.43, 0.43, 0.14];
-    const scaleRanges: Array<[number, number]> = [[0.9, 1.08], [0.78, 1.28], [0.72, 1.18]];
+    const scaleRanges: Array<[number, number]> = [[0.9, 1.0], [0.7, 2.3], [0.8, 1.6]];
     this.grassUniforms = {
       uTime: { value: 0 },
       uPlayerPos: { value: new THREE.Vector3(999, 999, 999) },
@@ -603,17 +678,18 @@ export class LevelToyStory {
       if (!source?.isMesh) throw new Error(`Original grass GLB is missing mesh ${name}`);
       const geometry = source.geometry.clone().applyMatrix4(source.matrixWorld);
       geometry.computeBoundingBox();
-      const bounds = geometry.boundingBox!;
-      const height = Math.max(0.05, bounds.max.y - bounds.min.y);
-      const centerX = (bounds.min.x + bounds.max.x) * 0.5;
-      const centerZ = (bounds.min.z + bounds.max.z) * 0.5;
-      geometry.translate(-centerX, -bounds.min.y, -centerZ);
+      const sourceBounds = geometry.boundingBox!;
+      const height = Math.max(0.05, sourceBounds.max.y - sourceBounds.min.y);
+      const centerX = (sourceBounds.min.x + sourceBounds.max.x) * 0.5;
+      const centerZ = (sourceBounds.min.z + sourceBounds.max.z) * 0.5;
+      geometry.translate(-centerX, -sourceBounds.min.y, -centerZ);
       geometry.computeBoundingBox();
       geometry.computeBoundingSphere();
 
       const lodSource = lodRoot.getObjectByName(`${name}_LOD`) as THREE.Mesh | null;
-      if (!lodSource?.isMesh) throw new Error(`Derived grass LOD is missing mesh ${name}_LOD`);
-      const lodGeometry = lodSource.geometry.clone().applyMatrix4(lodSource.matrixWorld);
+      const lodGeometry = lodSource?.isMesh
+        ? lodSource.geometry.clone().applyMatrix4(lodSource.matrixWorld)
+        : geometry.clone();
       lodGeometry.computeBoundingBox();
       const lodBounds = lodGeometry.boundingBox!;
       lodGeometry.translate(
@@ -687,11 +763,13 @@ export class LevelToyStory {
       [[12, -35], [22, -45], [35, -58], [48, -68], [55, -75]],
     ];
     const excluded = (x: number, z: number): boolean => {
-      if (Math.abs(x) < 18.5 && Math.abs(z + 40) < 18.5) return true;
+      if (Math.abs(x) < 14.2 && Math.abs(z + 40) < 14.2) return true;
       if (Math.hypot(x - 45, z + 40) < 16.2) return true;
       if (Math.hypot(x + 55, z + 75) < 11.2 || Math.hypot(x - 55, z + 75) < 19.2) return true;
       if (Math.hypot(x - 20, z - 24) < 7.5) return true;
       if (Math.hypot(x + 30, z - 10) < 9 || Math.hypot(x + 45, z + 40) < 9) return true;
+      if (Math.hypot(x - this.secretLavaCenter.x, z - this.secretLavaCenter.y) < 16.8) return true;
+      if (segmentDistance(x, z, 49, -84, 58, -95) < 2.4) return true;
       if (Math.abs(x) < 4.2 && z > -27 && z < 17) return true;
       if (Math.abs(z + 75) < 2.8 && Math.abs(x) < 56) return true;
       for (const road of roads) for (let i = 0; i < road.length - 1; i++) {
@@ -703,11 +781,24 @@ export class LevelToyStory {
     const isMobile = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0 ||
       /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     const sectorSize = 32;
-    const spacing = isMobile ? 1.18 : 0.92;
+    // The original Geometry Nodes field used far more than one clump per m².
+    // Four-ish randomized source clumps per square meter closes the gaps while
+    // instancing keeps the distribution compact on the GPU.
+    const spacing = isMobile ? 0.62 : 0.48;
     const sectorsPerAxis = Math.ceil(160 / sectorSize);
     let placedTotal = 0;
+    const playerAtLoad = this.player.mesh.position;
+    const sectorOrder: Array<[number, number]> = [];
     for (let sx = 0; sx < sectorsPerAxis; sx++) {
-      for (let sz = 0; sz < sectorsPerAxis; sz++) {
+      for (let sz = 0; sz < sectorsPerAxis; sz++) sectorOrder.push([sx, sz]);
+    }
+    const sectorDistanceSq = ([sx, sz]: [number, number]) => {
+      const cx = -80 + sx * sectorSize + sectorSize * 0.5;
+      const cz = -120 + sz * sectorSize + sectorSize * 0.5;
+      return (cx - playerAtLoad.x) ** 2 + (cz - playerAtLoad.z) ** 2;
+    };
+    sectorOrder.sort((a, b) => sectorDistanceSq(a) - sectorDistanceSq(b));
+    for (const [sx, sz] of sectorOrder) {
         const x0 = -80 + sx * sectorSize;
         const z0 = -120 + sz * sectorSize;
         const matrices = templates.map(() => [] as THREE.Matrix4[]);
@@ -762,8 +853,7 @@ export class LevelToyStory {
           placedTotal += instances.length;
         });
         // Give input, camera and rendering a frame between sector batches.
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      }
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     }
     console.info(`[Grass] ${placedTotal} original Grass It! clumps from ${sourceNames.join(', ')} in ${sectorSize}m sectors (${isMobile ? 'mobile' : 'desktop'} spacing ${spacing}m)`);
   }
@@ -1036,11 +1126,9 @@ export class LevelToyStory {
       this.levelColliders.push(boundary);
     }
 
-    // 5. Exit Portal/Door at the back of the castle
-    this.exitDoor = new Door('door_exit', new THREE.Vector3(0, this.getTerrainHeight(0, castleCenterZ - 15) + 0.1, castleCenterZ - 15), 0, true);
-    scene.add(this.exitDoor.mesh);
-    this.doors.push(this.exitDoor);
-    this.levelColliders.push(this.exitDoor.mesh);
+    // The four-key exit remains the same door; its destination is now hidden
+    // behind a traversable volcanic route at the eastern edge of the map.
+    this.buildSecretLavaRoute(scene);
 
     // 6. Ancient Ruins & Landmarks (Expanded Map)
     this.buildAncientRuinsAndLandmarks();
@@ -1048,6 +1136,105 @@ export class LevelToyStory {
     // Configure collision objects in controllers
     this.cameraController.setCollisionObjects(this.levelColliders);
     this.player.setColliders(this.levelColliders);
+  }
+
+  private buildSecretLavaRoute(scene: THREE.Scene): void {
+    const basalt = new THREE.MeshStandardMaterial({ color: 0x39353a, roughness: 0.96, metalness: 0.08 });
+    const gold = new THREE.MeshStandardMaterial({ color: 0x9c542d, roughness: 0.72, metalness: 0.42 });
+    const lavaMaterial = new THREE.MeshBasicMaterial({ color: 0xff4a12, transparent: true, opacity: 0.88, side: THREE.DoubleSide });
+    const lava = new THREE.Mesh(new THREE.CircleGeometry(14.2, 48), lavaMaterial);
+    lava.name = 'secret_lava_pool';
+    lava.rotation.x = -Math.PI / 2;
+    lava.position.set(this.secretLavaCenter.x, this.secretLavaY, this.secretLavaCenter.y);
+    scene.add(lava);
+
+    const lavaCore = new THREE.Mesh(
+      new THREE.CircleGeometry(8.2, 36),
+      new THREE.MeshBasicMaterial({ color: 0xffb42b, transparent: true, opacity: 0.75, side: THREE.DoubleSide })
+    );
+    lavaCore.name = 'secret_lava_glow';
+    lavaCore.rotation.x = -Math.PI / 2;
+    lavaCore.position.set(this.secretLavaCenter.x, this.secretLavaY + 0.025, this.secretLavaCenter.y);
+    scene.add(lavaCore);
+    const lavaLight = new THREE.PointLight(0xff5724, 2.3, 29, 2);
+    lavaLight.position.set(this.secretLavaCenter.x, this.secretLavaY + 3.5, this.secretLavaCenter.y);
+    lavaLight.castShadow = false;
+    scene.add(lavaLight);
+    this.dayNightCycle?.registerNightLight(lavaLight);
+
+    // A weathered gate marks the hidden trail without a teleport or shortcut.
+    const gateX = 48, gateZ = -84, gateY = this.getTerrainHeight(gateX, gateZ);
+    for (const side of [-1, 1]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.55, 4.4, 0.6), basalt);
+      post.position.set(gateX + side * 2.5, gateY + 2.2, gateZ);
+      post.castShadow = true;
+      scene.add(post);
+      this.levelColliders.push(post);
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.48, 8, 6), gold);
+      cap.position.set(gateX + side * 2.5, gateY + 4.45, gateZ);
+      scene.add(cap);
+    }
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(5.8, 0.55, 0.75), basalt);
+    lintel.position.set(gateX, gateY + 4.45, gateZ);
+    lintel.castShadow = true;
+    scene.add(lintel);
+    this.levelColliders.push(lintel);
+
+    // Continuous sloped basalt causeway reaches the sunken basin. Its top is
+    // a solid collider and its endpoints follow the carved terrain.
+    const rampStart = new THREE.Vector3(49, this.getTerrainHeight(49, -84) + 0.3, -84);
+    const rampEnd = new THREE.Vector3(58, -7.9, -95);
+    const rampVector = rampEnd.clone().sub(rampStart);
+    const rampLength = rampVector.length();
+    const causeway = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.42, rampLength), basalt);
+    causeway.name = 'secret_lava_causeway';
+    causeway.position.copy(rampStart).add(rampEnd).multiplyScalar(0.5);
+    causeway.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), rampVector.normalize());
+    causeway.castShadow = true;
+    causeway.receiveShadow = true;
+    scene.add(causeway);
+    this.levelColliders.push(causeway);
+
+    const platforms = [
+      { x: 57, z: -94, y: -7.7, w: 7.0, d: 5.4 },
+      { x: 62, z: -98, y: -7.7, w: 5.6, d: 5.2 },
+      { x: 67, z: -102, y: -7.7, w: 6.0, d: 5.6 },
+      { x: 72, z: -106, y: -7.7, w: 5.8, d: 5.4 },
+      { x: 76, z: -111, y: -7.7, w: 7.2, d: 6.0 },
+    ];
+    platforms.forEach((p, index) => {
+      const platform = new THREE.Mesh(new THREE.BoxGeometry(p.w, 0.42, p.d), basalt);
+      platform.name = `secret_lava_platform_${index + 1}`;
+      platform.position.set(p.x, p.y, p.z);
+      platform.receiveShadow = true;
+      platform.castShadow = true;
+      scene.add(platform);
+      this.levelColliders.push(platform);
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(p.w * 0.92, 0.08, p.d * 0.9), gold);
+      edge.position.set(p.x, p.y + 0.24, p.z);
+      scene.add(edge);
+    });
+
+    // Rock outcrops make the rim readable and break up the lava silhouette.
+    const rockGeometry = new THREE.DodecahedronGeometry(1, 0);
+    for (let i = 0; i < 18; i++) {
+      const angle = (i / 18) * Math.PI * 2;
+      const radius = 14.5 + (i % 3) * 1.3;
+      const x = this.secretLavaCenter.x + Math.cos(angle) * radius;
+      const z = this.secretLavaCenter.y + Math.sin(angle) * radius;
+      const rock = new THREE.Mesh(rockGeometry, basalt);
+      rock.position.set(x, this.getTerrainHeight(x, z) + 0.35, z);
+      rock.scale.set(1.0 + (i % 3) * 0.22, 0.65 + (i % 2) * 0.3, 1.0 + (i % 4) * 0.12);
+      rock.rotation.set(0.12 * (i % 3), angle, 0.08 * (i % 2));
+      rock.castShadow = true;
+      scene.add(rock);
+    }
+
+    this.exitDoor = new Door('door_exit', new THREE.Vector3(76, -7.45, -111), 0, true);
+    this.exitDoor.mesh.name = 'secret_lava_exit_door';
+    scene.add(this.exitDoor.mesh);
+    this.doors.push(this.exitDoor);
+    this.levelColliders.push(this.exitDoor.mesh);
   }
 
   private buildCuriosityVault(scene: THREE.Scene, stoneMat: THREE.Material, castleCenterZ: number): void {
@@ -1359,6 +1546,8 @@ export class LevelToyStory {
     this.checkpointManager.addCheckpoint(2, new THREE.Vector3(20, this.getTerrainHeight(20, 18) + 0.2, 18), Math.PI); // Pavilion approach
     this.checkpointManager.addCheckpoint(3, new THREE.Vector3(-55, this.getTerrainHeight(-55, -68) + 0.2, -68), Math.PI); // West ridge pavilion
     this.checkpointManager.addCheckpoint(4, new THREE.Vector3(30, 0.2, -40), Math.PI * 0.5); // Boss Arena Entrance
+    this.checkpointManager.addCheckpoint(5, new THREE.Vector3(57, -7.35, -94), Math.PI * 0.5); // Secret lava entry
+    this.checkpointManager.addCheckpoint(6, new THREE.Vector3(67, -7.35, -102), Math.PI * 0.5); // Midway lava platform
   }
 
   private energyItems: THREE.Group[] = [];
@@ -1566,10 +1755,18 @@ export class LevelToyStory {
     const patrol4 = new EnemyController('crab_second_floor_1', new THREE.Vector3(-10, this.getTerrainHeight(-10, -52), -52));
     const patrol5 = new EnemyController('crab_second_floor_2', new THREE.Vector3(10, this.getTerrainHeight(10, -52), -52));
 
+    // Reuse the common crab AI on safe landings in the new exploration route.
+    const lavaGuard1 = new EnemyController('lava_crab_guard_1', new THREE.Vector3(62, -7.45, -98), [
+      new THREE.Vector3(60.5, -7.45, -98), new THREE.Vector3(63.5, -7.45, -98),
+    ]);
+    const lavaGuard2 = new EnemyController('lava_crab_guard_2', new THREE.Vector3(72, -7.45, -106), [
+      new THREE.Vector3(70.5, -7.45, -106), new THREE.Vector3(73.5, -7.45, -106),
+    ]);
+
     // Boss Giant Crab in the Sand Arena (firmly grounded at y = 0.2)
     const bossY = 0.2;
     this.bossEnemy = new EnemyController('crab_boss', new THREE.Vector3(45, bossY, -40));
-    this.enemies.push(patrol1, patrol2, patrol3, patrol4, patrol5, this.bossEnemy);
+    this.enemies.push(patrol1, patrol2, patrol3, patrol4, patrol5, lavaGuard1, lavaGuard2, this.bossEnemy);
 
     this.enemies.forEach(e => {
       const scaleMult = e.id === 'crab_boss' ? 3.5 : 1.0;
@@ -1784,8 +1981,17 @@ export class LevelToyStory {
     });
     this.triggerZones.push(tGekko);
 
-    // Exit portal trigger at the back
-    const tExit = new TriggerZone('trig_exit', new THREE.Vector3(-5, -1, -54), new THREE.Vector3(5, 5, -50), () => {
+    const lavaEntry = new TriggerZone('trig_secret_lava_entry', new THREE.Vector3(53, -4, -98), new THREE.Vector3(61, 4, -90), () => {
+      this.checkpointManager.setActiveCheckpoint(5);
+    });
+    this.triggerZones.push(lavaEntry);
+    const lavaMidpoint = new TriggerZone('trig_secret_lava_midpoint', new THREE.Vector3(64, -10, -105), new THREE.Vector3(70, -4, -99), () => {
+      this.checkpointManager.setActiveCheckpoint(6);
+    });
+    this.triggerZones.push(lavaMidpoint);
+
+    // Preserve the original four-key requirement at the new secret door.
+    const tExit = new TriggerZone('trig_exit_secret_lava', new THREE.Vector3(71, -10, -115), new THREE.Vector3(81, 0, -105), () => {
       if (!this.stateFlags.levelCompleted && this.exitDoor.isOpen) {
         this.stateFlags.levelCompleted = true;
         (window as any).gameInstance?.hud.showVictoryScreen(5, "05:00");
@@ -2162,8 +2368,8 @@ export class LevelToyStory {
       // carries coverage beyond the vegetation range.
       const isMobile = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0 ||
         /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      const detailedDistance = isMobile ? 28 : 46;
-      const lodDistance = isMobile ? 64 : 104;
+      const detailedDistance = isMobile ? 8 : 12;
+      const lodDistance = isMobile ? 112 : 160;
       for (let i = 0; i < this.grassSectors.length; i++) {
         const sector = this.grassSectors[i];
         const lodSector = this.grassLodSectors[i];
@@ -2197,6 +2403,15 @@ export class LevelToyStory {
 
     // Check triggers
     this.triggerZones.forEach(t => t.check(playerPos, delta));
+
+    const lavaDistance = Math.hypot(playerPos.x - this.secretLavaCenter.x, playerPos.z - this.secretLavaCenter.y);
+    if (lavaDistance < 14.1 && playerPos.y < this.secretLavaY + 1.0 &&
+        !this.player.isControlsLocked && !this.player.isMovementLocked) {
+      this.subtitleSystem.show('¡Lava!', 'El calor te devuelve al último punto seguro.');
+      this.player.takeDamage(this.player.health, this.checkpointManager.getActiveCheckpointPosition());
+      (window as any).gameInstance?.hud.triggerDamageFlash();
+      this.audioManager.playPlayerHurt();
+    }
 
     // Claim high-priority contextual presses before nearby coins or keys can consume them.
     const chestInRange = !this.stateFlags.staffFound && !this.staffChest.isUnlocked &&

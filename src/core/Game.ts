@@ -456,7 +456,7 @@ export class Game {
     this.player.isControlsLocked = false;
     this.player.forceIdle();
     this.cameraController.setTarget(this.player.mesh);
-    this.cameraController.snapBehindTarget();
+    this.cameraController.snapBehindTarget(mode === 'new');
     this.isPaused = false;
     document.getElementById('pause-screen')?.classList.add('hidden');
     this.hud.showGameplayHUD();

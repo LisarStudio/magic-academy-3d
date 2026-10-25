@@ -19,6 +19,8 @@ export class CameraController {
   private currentPosition = new THREE.Vector3();
   private currentLookAt   = new THREE.Vector3();
   private currentDistance = 5.5;
+  private overviewRemaining = 0;
+  private readonly overviewDuration = 4.2;
 
   // Auto-recenter
   private idleTimer = 0;
@@ -42,12 +44,19 @@ export class CameraController {
     }
   }
 
-  public snapBehindTarget(): void {
+  public snapBehindTarget(showTempleOverview = false): void {
     if (!this.target) return;
-    this.yaw = Math.PI; // Look along -Z
-    this.pitch = 0.22;
-    this.distance = 5.5;
-    this.currentDistance = 5.5;
+    // The character faces -Z at a new-game spawn, so +Z is behind them.
+    this.yaw = this.target.rotation.y + Math.PI;
+    this.pitch = showTempleOverview ? 0.18 : 0.22;
+    this.distance = showTempleOverview ? 16.5 : 5.5;
+    this.currentDistance = this.distance;
+    this.overviewRemaining = showTempleOverview ? this.overviewDuration : 0;
+    const overviewFov = window.innerWidth < window.innerHeight ? 70 : 64;
+    if (showTempleOverview && Math.abs(this.camera.fov - overviewFov) > 0.05) {
+      this.camera.fov = overviewFov;
+      this.camera.updateProjectionMatrix();
+    }
     this.currentLookAt.copy(this.target.position).add(new THREE.Vector3(0, this.heightOffset, 0));
     
     const dir = new THREE.Vector3(
@@ -89,6 +98,17 @@ export class CameraController {
     const mouseDelta  = input.consumeMouseDelta();
     const sensitivity = 0.0024;
     this.isManual = Math.hypot(mouseDelta.x, mouseDelta.y) > 0.5;
+
+    if (this.overviewRemaining > 0) {
+      this.overviewRemaining = Math.max(0, this.overviewRemaining - delta);
+      const progress = 1 - this.overviewRemaining / this.overviewDuration;
+      const eased = progress * progress * (3 - 2 * progress);
+      this.distance = THREE.MathUtils.lerp(16.5, 5.5, eased);
+      if (this.isManual || (input.moveForward || input.moveBackward || input.moveLeft || input.moveRight)) {
+        this.overviewRemaining = 0;
+        this.distance = 5.5;
+      }
+    }
 
     if (this.isManual) {
       this.yaw   -= mouseDelta.x * sensitivity;
@@ -161,7 +181,9 @@ export class CameraController {
     const isRunning = input
       ? (input.isRunning && (input.moveForward || input.moveBackward || input.moveLeft || input.moveRight))
       : false;
-    const targetFov = isRunning ? 65 : 60;
+    const targetFov = this.overviewRemaining > 0
+      ? (window.innerWidth < window.innerHeight ? 70 : 64)
+      : isRunning ? 65 : 60;
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
       this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, targetFov, Math.min(1.0, delta * 6.0));
       this.camera.updateProjectionMatrix();
