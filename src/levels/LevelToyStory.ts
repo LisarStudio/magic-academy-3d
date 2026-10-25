@@ -75,6 +75,8 @@ export class LevelToyStory {
   private grassLoadStarted = false;
   private grassLoadPromise: Promise<void> | null = null;
   private grassCullElapsed = 0;
+  private structureColliderSyncElapsed = 0;
+  private structureColliderCandidates: Array<{ root: THREE.Object3D; center: THREE.Vector3; radius: number; active: boolean }> = [];
   private cloudsUniforms: any = null;
   private lampMoths: LampMothSystem | null = null;
   private lavaUniforms: { uTime: { value: number } } | null = null;
@@ -456,7 +458,8 @@ export class LevelToyStory {
       const pavilion = pavilionResult.value.scene;
       const mainPavilion = placeAsset(pavilion, 'chinese_pavilion_intro_reference', 8.5, 20, 24);
       placeAsset(pavilion, 'chinese_pavilion_west_landmark', 8.5, -55, -75);
-      this.addPavilionCollision(mainPavilion, 8.5);
+      this.addPavilionCollision(mainPavilion);
+      this.alignStaffChestToPavilionTable(mainPavilion, 20, 24);
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese Pavilion asset.', pavilionResult.reason);
     }
@@ -468,7 +471,7 @@ export class LevelToyStory {
       // The source asset's open entrance faces opposite the spawn-facing
       // perimeter, so rotate the visual temple to match its actual access.
       const routeTemple = placeAsset(temple, 'chinese_temple_gekko_route', 24, 0, -40, Math.PI);
-      this.addTempleCollision(routeTemple, 24, 8);
+      this.addTempleCollision(routeTemple);
       this.addTempleStoneFloor();
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese Temple asset.', templeResult.reason);
@@ -511,104 +514,67 @@ export class LevelToyStory {
 
   }
 
-  /** Lightweight static blockers around the pavilion; the entrances stay open. */
-  private addPavilionCollision(asset: THREE.Object3D, targetWidth: number): void {
+  /** Use the actual visible geometry as collision, activated only nearby. */
+  private addPavilionCollision(asset: THREE.Object3D): void {
     const bounds = new THREE.Box3().setFromObject(asset);
-    const center = bounds.getCenter(new THREE.Vector3());
-    const half = targetWidth * 0.5;
-    const ground = bounds.min.y;
-    const landingTop = ground + Math.min(0.9, Math.max(0.55, (bounds.max.y - ground) * 0.12));
-    const mat = new THREE.MeshBasicMaterial({ visible: false });
-    const addWall = (w: number, h: number, d: number, x: number, z: number) => {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-      wall.position.set(x, ground + h / 2, z);
-      wall.name = 'pavilion_static_collision';
-      this.sceneManager.scene.add(wall);
-      this.levelColliders.push(wall);
-    };
-    const doorWidth = 2.8;
-    addWall(0.35, 2.7, targetWidth, center.x - half, center.z);
-    addWall(0.35, 2.7, targetWidth, center.x + half, center.z);
-    addWall(half - doorWidth / 2, 2.7, 0.35, center.x - (half + doorWidth / 2) / 2, center.z + half);
-    addWall(half - doorWidth / 2, 2.7, 0.35, center.x + (half + doorWidth / 2) / 2, center.z + half);
-    addWall(targetWidth, 2.7, 0.35, center.x, center.z - half);
-    // Match the visible raised pavilion deck and its stair approach with one
-    // continuous support ramp. This prevents step-to-step ground-ray gaps.
-    const landing = new THREE.Mesh(new THREE.BoxGeometry(targetWidth - 0.8, 0.18, targetWidth - 0.9), mat);
-    landing.name = 'pavilion_deck_collision';
-    landing.position.set(center.x, landingTop - 0.09, center.z);
-    this.sceneManager.scene.add(landing);
-    this.levelColliders.push(landing);
-    const rise = landingTop - ground;
-    const rampLength = 4.6;
-    const ramp = new THREE.Mesh(new THREE.BoxGeometry(targetWidth - 2.0, 0.14, rampLength), mat);
-    ramp.name = 'pavilion_stair_ramp_collision';
-    ramp.position.set(center.x, (landingTop + ground) * 0.5, center.z + half + rampLength * 0.5 - 0.1);
-    ramp.rotation.x = Math.atan2(rise, rampLength);
-    this.sceneManager.scene.add(ramp);
-    this.levelColliders.push(ramp);
-    const columnHeight = Math.min(4.8, bounds.max.y - ground);
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      const column = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.38, columnHeight, 8), mat);
-      column.position.set(center.x + sx * half * 0.34, ground + columnHeight / 2, center.z + sz * half * 0.34);
-      column.name = 'pavilion_column_static_collision';
-      this.sceneManager.scene.add(column);
-      this.levelColliders.push(column);
-    }
+    this.structureColliderCandidates.push({
+      root: asset, center: bounds.getCenter(new THREE.Vector3()), radius: 20, active: false
+    });
   }
 
-  /** Simple perimeter colliders preserve a walk-through entrance and avoid
-   * raycasting the high-poly decorative GLB on every player frame. */
-  private addTempleCollision(asset: THREE.Object3D, targetWidth: number, entranceWidth: number): void {
+  private addTempleCollision(asset: THREE.Object3D): void {
     const bounds = new THREE.Box3().setFromObject(asset);
-    const center = bounds.getCenter(new THREE.Vector3());
-    const half = targetWidth * 0.5;
-    const ground = bounds.min.y;
-    const floorTop = this.getTerrainHeight(center.x, center.z) + 0.16;
-    const height = Math.min(6.5, bounds.max.y - ground);
-    const thickness = 0.45;
-    const mat = new THREE.MeshBasicMaterial({ visible: false });
-    const add = (w: number, d: number, x: number, z: number) => {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(w, height, d), mat);
-      wall.position.set(x, ground + height / 2, z);
-      wall.name = 'chinese_temple_static_collision';
-      this.sceneManager.scene.add(wall);
-      this.levelColliders.push(wall);
-    };
-    add(thickness, targetWidth, center.x - half, center.z);
-    add(thickness, targetWidth, center.x + half, center.z);
-    add(targetWidth, thickness, center.x, center.z - half);
-    const segment = (targetWidth - entranceWidth) / 2;
-    add(segment, thickness, center.x - half + segment / 2, center.z + half);
-    add(segment, thickness, center.x + half - segment / 2, center.z + half);
+    this.structureColliderCandidates.push({
+      root: asset, center: bounds.getCenter(new THREE.Vector3()), radius: 34, active: false
+    });
+  }
 
-    // One continuous walkable ramp bridges the approach to the temple sill;
-    // low decorative treads preserve the original architectural language.
-    const ramp = new THREE.Mesh(
-      new THREE.BoxGeometry(entranceWidth - 0.5, 0.16, 10.5),
-      new THREE.MeshBasicMaterial({ visible: false })
-    );
-    ramp.name = 'temple_entry_ramp_collider';
-    ramp.position.set(center.x, (ground + floorTop) * 0.5, center.z + half + 5.25);
-    ramp.rotation.x = Math.atan2(floorTop - ground, 10.5);
-    this.sceneManager.scene.add(ramp);
-    this.levelColliders.push(ramp);
+  private alignStaffChestToPavilionTable(pavilion: THREE.Object3D, x: number, z: number): void {
+    if (!this.staffChest) return;
+    const ground = this.getTerrainHeight(x, z);
+    const ray = new THREE.Raycaster(new THREE.Vector3(x, ground + 5, z), new THREE.Vector3(0, -1, 0), 0, 8);
+    const tabletop = ray.intersectObject(pavilion, true)
+      .filter((hit) => hit.face && hit.point.y > ground + 0.8 && hit.point.y < ground + 3.5)
+      .sort((a, b) => b.point.y - a.point.y)[0];
+    if (!tabletop) {
+      console.warn('[LevelToyStory] Pavilion table surface was not found; keeping the authored chest placement.');
+      return;
+    }
+    const position = new THREE.Vector3(x, tabletop.point.y + 0.025, z);
+    this.staffChest.position.copy(position);
+    this.staffChest.mesh.position.copy(position);
+    this.staffChest.mesh.scale.setScalar(0.74);
+    console.info('[LevelToyStory] Staff chest aligned to the visible pavilion tabletop.');
+  }
 
-    const treadMat = new THREE.MeshStandardMaterial({ color: 0x615b58, roughness: 0.78, metalness: 0.03 });
-    const stairBed = new THREE.Mesh(new THREE.BoxGeometry(entranceWidth + 0.9, 0.32, 10.6), treadMat);
-    stairBed.name = 'temple_entry_stair_foundation';
-    stairBed.position.set(center.x, ground - 0.16, center.z + half + 5.25);
-    stairBed.receiveShadow = true;
-    this.sceneManager.scene.add(stairBed);
-    this.levelColliders.push(stairBed);
-    for (let i = 0; i < 6; i++) {
-      const tread = new THREE.Mesh(new THREE.BoxGeometry(entranceWidth - 0.8, 0.16, 1.35), treadMat);
-      tread.name = `temple_entry_tread_${i + 1}`;
-      const treadTop = THREE.MathUtils.lerp(floorTop, ground, i / 5);
-      tread.position.set(center.x, treadTop - 0.08, center.z + half + 0.35 + i * 1.55);
-      tread.receiveShadow = true;
-      this.sceneManager.scene.add(tread);
-      this.levelColliders.push(tread);
+  private syncStructureColliders(delta: number, playerPos: THREE.Vector3): void {
+    this.structureColliderSyncElapsed -= delta;
+    if (this.structureColliderSyncElapsed > 0) return;
+    this.structureColliderSyncElapsed = 0.3;
+    let changed = false;
+    for (const candidate of this.structureColliderCandidates) {
+      const dx = playerPos.x - candidate.center.x;
+      const dz = playerPos.z - candidate.center.z;
+      const distanceSq = dx * dx + dz * dz;
+      const shouldBeActive = distanceSq <= candidate.radius * candidate.radius;
+      if (shouldBeActive === candidate.active) continue;
+      candidate.active = shouldBeActive;
+      if (shouldBeActive) this.levelColliders.push(candidate.root);
+      else {
+        const index = this.levelColliders.indexOf(candidate.root);
+        if (index >= 0) this.levelColliders.splice(index, 1);
+      }
+      changed = true;
+    }
+    if (changed) {
+      const cameraStructureMeshes: THREE.Mesh[] = [];
+      for (const candidate of this.structureColliderCandidates) {
+        if (!candidate.active) continue;
+        candidate.root.traverse((object) => {
+          if ((object as THREE.Mesh).isMesh) cameraStructureMeshes.push(object as THREE.Mesh);
+        });
+      }
+      this.cameraController.setCollisionObjects([...this.levelColliders, ...cameraStructureMeshes]);
     }
   }
 
@@ -902,7 +868,9 @@ export class LevelToyStory {
     };
 
     const isMobile = isLowPowerDevice();
-    const sectorSize = 40;
+    // Smaller spatial chunks keep the high-poly source clumps close to Wukong
+    // instead of rendering an entire 40 m tile at full detail.
+    const sectorSize = 20;
     // The original Geometry Nodes field used far more than one clump per m².
     // Four-ish randomized source clumps per square meter closes the gaps while
     // instancing keeps the distribution compact on the GPU.
@@ -2631,6 +2599,7 @@ export class LevelToyStory {
   }
 
   public update(delta: number, playerPos: THREE.Vector3): void {
+    this.syncStructureColliders(delta, playerPos);
     const interactionHud = (window as any).gameInstance?.hud;
     interactionHud?.beginInteractionFrame();
     // Tick Dynamic Day/Night Cycle
@@ -2663,14 +2632,14 @@ export class LevelToyStory {
       // carries coverage beyond the vegetation range.
       const isMobile = isLowPowerDevice();
       const detailedDistance = isMobile ? 8 : 12;
-      const lodDistance = isMobile ? 112 : 160;
+      const lodDistance = isMobile ? 72 : 104;
       for (let i = 0; i < this.grassSectors.length; i++) {
         const sector = this.grassSectors[i];
         const lodSector = this.grassLodSectors[i];
         const center = sector.userData.grassCenter as THREE.Vector2;
         const dx = playerPos.x - center.x;
         const dz = playerPos.z - center.y;
-        // Distance to the nearest point of the 32m sector avoids the visible
+        // Distance to the nearest point of the sector avoids the visible
         // circular cutoff caused by testing only each sector's center.
         const halfSize = (sector.userData.grassHalfSize as number) || 20;
         const edgeX = Math.max(Math.abs(dx) - halfSize, 0);

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { AudioManager } from '../core/AudioManager';
 import { CollectibleSystem } from '../collectibles/CollectibleSystem';
 
@@ -21,28 +22,29 @@ export class TreasureChest {
     const woodMat = new THREE.MeshStandardMaterial({ color: 0x5c3a21, roughness: 0.7 });
     const brassMat = new THREE.MeshStandardMaterial({ color: 0xd4a017, metalness: 0.8, roughness: 0.3 });
 
-    // Chest Body Base
-    const bodyGeo = new THREE.BoxGeometry(1.2, 0.6, 0.8);
+    // Compact beveled proportions sit cleanly on the pavilion's round table.
+    const bodyGeo = new RoundedBoxGeometry(1.04, 0.52, 0.72, 3, 0.065);
     const body = new THREE.Mesh(bodyGeo, woodMat);
-    body.position.y = 0.3;
+    body.position.y = 0.26;
     body.castShadow = true;
     body.receiveShadow = true;
     this.mesh.add(body);
 
-    // Brass corner straps
-    const strapL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.62, 0.82), brassMat);
-    strapL.position.set(-0.5, 0.3, 0);
-    const strapR = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.62, 0.82), brassMat);
-    strapR.position.set(0.5, 0.3, 0);
+    // Brass bindings follow the softened body instead of forming sharp cubes.
+    const strapL = new THREE.Mesh(new RoundedBoxGeometry(0.075, 0.54, 0.735, 2, 0.025), brassMat);
+    strapL.position.set(-0.43, 0.26, 0);
+    const strapR = strapL.clone();
+    strapR.position.x = 0.43;
     this.mesh.add(strapL, strapR);
 
     // Hinged Lid Group
     this.lidMesh = new THREE.Group();
-    this.lidMesh.position.set(0, 0.6, -0.4); // Hinge pivot at back
+    this.lidMesh.position.set(0, 0.51, -0.34); // Hinge pivot at back
 
-    const lidTop = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.2, 12, 1, false, 0, Math.PI), woodMat);
-    lidTop.rotation.z = Math.PI / 2;
-    lidTop.position.set(0, 0, 0.4);
+    const lidTop = new THREE.Mesh(new RoundedBoxGeometry(1.08, 0.34, 0.72, 4, 0.11), woodMat);
+    lidTop.position.set(0, 0.16, 0.36);
+    lidTop.castShadow = true;
+    lidTop.receiveShadow = true;
     this.lidMesh.add(lidTop);
 
     this.mesh.add(this.lidMesh);
@@ -50,7 +52,7 @@ export class TreasureChest {
     // Glowing Alohomora Padlock
     const lockGeo = new THREE.TorusGeometry(0.1, 0.03, 8, 16);
     this.lockMesh = new THREE.Mesh(lockGeo, brassMat);
-    this.lockMesh.position.set(0, 0.45, 0.43);
+    this.lockMesh.position.set(0, 0.39, 0.375);
     this.mesh.add(this.lockMesh);
 
     this.lockLight = new THREE.PointLight(0xffd700, 1.2, 2.5);
