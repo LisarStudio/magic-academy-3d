@@ -877,13 +877,13 @@ export class LevelToyStory {
     };
 
     const isMobile = isLowPowerDevice();
-    const sectorSize = 32;
+    const sectorSize = 40;
     // The original Geometry Nodes field used far more than one clump per m².
     // Four-ish randomized source clumps per square meter closes the gaps while
     // instancing keeps the distribution compact on the GPU.
     // Source clumps contain many fine blades already. A wider mobile sampling
     // interval retains the carpet while reducing instance preparation and draws.
-    const spacing = isMobile ? 0.86 : 0.48;
+    const spacing = isMobile ? 0.74 : 0.62;
     const sectorsPerAxis = Math.ceil(160 / sectorSize);
     let placedTotal = 0;
     const playerAtLoad = this.player.mesh.position;
@@ -902,7 +902,8 @@ export class LevelToyStory {
         const z0 = -120 + sz * sectorSize;
         const matrices = templates.map(() => [] as THREE.Matrix4[]);
         const steps = Math.ceil(sectorSize / spacing);
-        for (let gx = 0; gx < steps; gx++) for (let gz = 0; gz < steps; gz++) {
+        for (let gx = 0; gx < steps; gx++) {
+          for (let gz = 0; gz < steps; gz++) {
           const x = x0 + (gx + 0.12 + random() * 0.76) * spacing;
           const z = z0 + (gz + 0.12 + random() * 0.76) * spacing;
           if (x > 80 || z > 40 || excluded(x, z)) continue;
@@ -921,6 +922,12 @@ export class LevelToyStory {
           dummy.scale.setScalar(scale);
           dummy.updateMatrix();
           matrices[variant].push(dummy.matrix.clone());
+          }
+          // Keep the render/input loop responsive on mobile and desktop while
+          // sampling the same original grass field at the selected density.
+          if (gx > 0 && gx % 8 === 0) {
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          }
         }
 
         matrices.forEach((instances, variant) => {
@@ -932,8 +939,10 @@ export class LevelToyStory {
           lodSector.name = `${sector.name}-lod`;
           const center = new THREE.Vector2(x0 + sectorSize * 0.5, z0 + sectorSize * 0.5);
           sector.userData.grassCenter = center;
+          sector.userData.grassHalfSize = sectorSize * 0.5;
           sector.userData.grassLod = lodSector;
           lodSector.userData.grassCenter = center;
+          lodSector.userData.grassHalfSize = sectorSize * 0.5;
           sector.castShadow = false;
           sector.receiveShadow = false;
           lodSector.castShadow = false;
@@ -2630,8 +2639,9 @@ export class LevelToyStory {
         const dz = playerPos.z - center.y;
         // Distance to the nearest point of the 32m sector avoids the visible
         // circular cutoff caused by testing only each sector's center.
-        const edgeX = Math.max(Math.abs(dx) - 16, 0);
-        const edgeZ = Math.max(Math.abs(dz) - 16, 0);
+        const halfSize = (sector.userData.grassHalfSize as number) || 20;
+        const edgeX = Math.max(Math.abs(dx) - halfSize, 0);
+        const edgeZ = Math.max(Math.abs(dz) - halfSize, 0);
         const distanceSq = edgeX * edgeX + edgeZ * edgeZ;
         sector.visible = distanceSq <= detailedDistance * detailedDistance;
         lodSector.visible = !sector.visible && distanceSq <= lodDistance * lodDistance;

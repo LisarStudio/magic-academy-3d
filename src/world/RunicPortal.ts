@@ -37,6 +37,8 @@ export class RunicPortal {
   private particlesMesh: THREE.Points;
   private particlePositions: Float32Array;
   private particleCount = 24;
+  private energyRings: THREE.Mesh[] = [];
+  private energyRingMaterials: THREE.MeshStandardMaterial[] = [];
 
   private isActivating = false;
   private activationTime = 0.0;
@@ -182,6 +184,37 @@ export class RunicPortal {
     const innerRing = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.04, 8, 24), innerRingMat);
     innerRing.position.set(0, 2.05, 0);
     this.mesh.add(innerRing);
+    this.energyRingMaterials.push(innerRingMat);
+
+    // Floating celestial bands give the old runic gate a distinctly mystical
+    // silhouette while reusing the portal's existing animation/update loop.
+    // Three modest rings cost three draws and no per-frame allocations.
+    for (let i = 0; i < 2; i++) {
+      const ringMat = new THREE.MeshStandardMaterial({
+        color: i === 0 ? 0xe9b94b : 0x42d9c4,
+        emissive: i === 0 ? 0xb57920 : 0x087f85,
+        emissiveIntensity: this.isUnlocked ? 1.15 : 0.08,
+        metalness: 0.68,
+        roughness: 0.3,
+        transparent: true,
+        opacity: this.isUnlocked ? 0.76 : 0.14,
+        depthWrite: false
+      });
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(i === 0 ? 1.43 : 1.57, 0.025, 6, 32), ringMat);
+      ring.position.set(0, 2.05, 0.02 + i * 0.015);
+      ring.rotation.set(i === 0 ? 0.16 : -0.18, 0, i === 0 ? 0.23 : -0.2);
+      this.mesh.add(ring);
+      this.energyRings.push(ring);
+      this.energyRingMaterials.push(ringMat);
+    }
+
+    // Small gold celestial pearl crowns the lintel and links it to the temple.
+    const pearl = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.16, 1),
+      new THREE.MeshStandardMaterial({ color: 0xffd878, emissive: 0x9d5a12, emissiveIntensity: 0.75, metalness: 0.6, roughness: 0.25 })
+    );
+    pearl.position.set(0, 4.98, 0.2);
+    this.mesh.add(pearl);
 
     // ── 4. Swirling Ethereal Particle Whirlpool (Zero-Allocation Buffer Geometry) ──
     const pGeo = new THREE.BufferGeometry();
@@ -234,6 +267,12 @@ export class RunicPortal {
     this.vortexMat.emissiveIntensity = THREE.MathUtils.lerp(0.08, 1.8, progress);
     this.vortexMat.opacity = THREE.MathUtils.lerp(0.06, 0.82, progress);
 
+    for (let i = 0; i < this.energyRingMaterials.length; i++) {
+      const mat = this.energyRingMaterials[i];
+      mat.emissiveIntensity = THREE.MathUtils.lerp(0.08, i === 0 ? 1.7 : 1.15, progress);
+      mat.opacity = THREE.MathUtils.lerp(0.12, 0.78, progress);
+    }
+
     const pMat = this.particlesMesh.material as THREE.PointsMaterial;
     pMat.opacity = THREE.MathUtils.lerp(0.0, 0.85, progress);
   }
@@ -265,6 +304,8 @@ export class RunicPortal {
       }
 
       this.vortexMat.emissiveIntensity = 1.4 + Math.sin(time * 2.5) * 0.3;
+      this.energyRings[0].rotation.z += delta * 0.16;
+      this.energyRings[1].rotation.z -= delta * 0.11;
 
       // Swirl particles in vertical elliptical orbit
       const pArr = this.particlePositions;

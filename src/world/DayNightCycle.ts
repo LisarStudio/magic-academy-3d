@@ -1,5 +1,17 @@
 import * as THREE from 'three';
 
+interface DayNightKey {
+  p: number;
+  sky: THREE.Color;
+  fog: THREE.Color;
+  ambient: THREE.Color;
+  dir: THREE.Color;
+  ai: number;
+  di: number;
+  y: number;
+  sun: number;
+}
+
 export interface DayNightConfig {
   cycleDuration?: number; // Total cycle seconds (e.g. 240s = 4 mins)
   startPhase?: number;    // Initial phase 0.0 - 1.0 (0.0 = Night, 0.45 = Dawn, 0.70 = Sunrise, 0.90 = Morning)
@@ -59,6 +71,19 @@ export class DayNightCycle {
   private readonly cMorningSky = new THREE.Color(0x5b9df2);
   private readonly cMorningAmbient = new THREE.Color(0xb8dcff);
   private readonly cMorningDir = new THREE.Color(0xfffae0);
+  // Allocated once instead of creating a ten-entry palette on every frame.
+  private readonly phaseKeys: DayNightKey[] = [
+    { p: 0.00, sky: this.cNightSky, fog: this.cNightFog, ambient: this.cNightAmbient, dir: this.cNightDir, ai: 1.0, di: 1.8, y: -20, sun: 0 },
+    { p: 0.18, sky: this.cNightSky, fog: this.cNightFog, ambient: this.cNightAmbient, dir: this.cNightDir, ai: 1.0, di: 1.8, y: -20, sun: 0 },
+    { p: 0.30, sky: this.cPreDawnSky, fog: this.cPreDawnFog, ambient: this.cPreDawnAmbient, dir: this.cPreDawnDir, ai: 1.05, di: 1.9, y: -12, sun: 0.15 },
+    { p: 0.42, sky: this.cDawnSky, fog: this.cDawnFog, ambient: this.cDawnAmbient, dir: this.cDawnDir, ai: 1.2, di: 2.1, y: 2, sun: 0.5 },
+    { p: 0.58, sky: this.cSunriseSky, fog: this.cSunriseFog, ambient: this.cSunriseAmbient, dir: this.cSunriseDir, ai: 1.4, di: 2.3, y: 25, sun: 0.9 },
+    { p: 0.76, sky: this.cMorningSky, fog: this.cMorningSky, ambient: this.cMorningAmbient, dir: this.cMorningDir, ai: 1.55, di: 2.5, y: 48, sun: 1 },
+    { p: 0.84, sky: this.cMorningSky, fog: this.cMorningSky, ambient: this.cMorningAmbient, dir: this.cMorningDir, ai: 1.55, di: 2.5, y: 48, sun: 1 },
+    { p: 0.92, sky: this.cDawnSky, fog: this.cDawnFog, ambient: this.cDawnAmbient, dir: this.cDawnDir, ai: 1.2, di: 2.1, y: 8, sun: 0.45 },
+    { p: 0.97, sky: this.cPreDawnSky, fog: this.cPreDawnFog, ambient: this.cPreDawnAmbient, dir: this.cPreDawnDir, ai: 1.05, di: 1.9, y: -10, sun: 0.1 },
+    { p: 1.00, sky: this.cNightSky, fog: this.cNightFog, ambient: this.cNightAmbient, dir: this.cNightDir, ai: 1.0, di: 1.8, y: -20, sun: 0 },
+  ];
 
   constructor(
     scene: THREE.Scene,
@@ -124,18 +149,7 @@ export class DayNightCycle {
 
     // Cyclic keyframes cover both dawn and sunset. Smoothstep interpolation
     // keeps sky, fog, ambient and sun continuous even at phase wrap.
-    const keys = [
-      { p: 0.00, sky: this.cNightSky, fog: this.cNightFog, ambient: this.cNightAmbient, dir: this.cNightDir, ai: 1.0, di: 1.8, y: -20, sun: 0 },
-      { p: 0.18, sky: this.cNightSky, fog: this.cNightFog, ambient: this.cNightAmbient, dir: this.cNightDir, ai: 1.0, di: 1.8, y: -20, sun: 0 },
-      { p: 0.30, sky: this.cPreDawnSky, fog: this.cPreDawnFog, ambient: this.cPreDawnAmbient, dir: this.cPreDawnDir, ai: 1.05, di: 1.9, y: -12, sun: 0.15 },
-      { p: 0.42, sky: this.cDawnSky, fog: this.cDawnFog, ambient: this.cDawnAmbient, dir: this.cDawnDir, ai: 1.2, di: 2.1, y: 2, sun: 0.5 },
-      { p: 0.58, sky: this.cSunriseSky, fog: this.cSunriseFog, ambient: this.cSunriseAmbient, dir: this.cSunriseDir, ai: 1.4, di: 2.3, y: 25, sun: 0.9 },
-      { p: 0.76, sky: this.cMorningSky, fog: this.cMorningSky, ambient: this.cMorningAmbient, dir: this.cMorningDir, ai: 1.55, di: 2.5, y: 48, sun: 1 },
-      { p: 0.84, sky: this.cMorningSky, fog: this.cMorningSky, ambient: this.cMorningAmbient, dir: this.cMorningDir, ai: 1.55, di: 2.5, y: 48, sun: 1 },
-      { p: 0.92, sky: this.cDawnSky, fog: this.cDawnFog, ambient: this.cDawnAmbient, dir: this.cDawnDir, ai: 1.2, di: 2.1, y: 8, sun: 0.45 },
-      { p: 0.97, sky: this.cPreDawnSky, fog: this.cPreDawnFog, ambient: this.cPreDawnAmbient, dir: this.cPreDawnDir, ai: 1.05, di: 1.9, y: -10, sun: 0.1 },
-      { p: 1.00, sky: this.cNightSky, fog: this.cNightFog, ambient: this.cNightAmbient, dir: this.cNightDir, ai: 1.0, di: 1.8, y: -20, sun: 0 },
-    ];
+    const keys = this.phaseKeys;
     let left = keys[0];
     let right = keys[1];
     for (let i = 1; i < keys.length; i++) {
