@@ -883,7 +883,7 @@ export class LevelToyStory {
     // instancing keeps the distribution compact on the GPU.
     // Source clumps contain many fine blades already. A wider mobile sampling
     // interval retains the carpet while reducing instance preparation and draws.
-    const spacing = isMobile ? 0.74 : 0.62;
+    const spacing = isMobile ? 0.74 : 0.48;
     const sectorsPerAxis = Math.ceil(160 / sectorSize);
     let placedTotal = 0;
     const playerAtLoad = this.player.mesh.position;
