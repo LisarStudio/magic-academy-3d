@@ -88,11 +88,12 @@ export class AudioManager {
     if (this.musicPrepared) return Promise.resolve();
     if (this.musicPreparation) return this.musicPreparation;
 
-    const base = import.meta.env.BASE_URL;
-    const introPath = this.musicPaths.intro;
-    this.musicPreparation = this.fetchMusicAsset(`${base}${introPath}`).then(async (response) => {
-      if (!response.ok) throw new Error(`Could not load music asset: ${introPath} (${response.status})`);
-      this.musicUrls.set('intro', URL.createObjectURL(await response.blob()));
+    // Stream the intro track directly instead of fetching the whole MP3 into a
+    // Blob before starting the video. On cellular networks the old full-file
+    // fetch could monopolize the connection and leave the first cinematic
+    // frame waiting behind several megabytes of audio. canplay still ensures
+    // the opening audio buffer is ready before Intro is allowed to start.
+    this.musicPreparation = Promise.resolve().then(async () => {
       this.setMusicSource('intro');
       this.bgmAudio.loop = true;
       await this.waitForMediaReady(this.bgmAudio);
@@ -103,9 +104,6 @@ export class AudioManager {
       // track starts preparing only when gameplay begins; the boss track is
       // fetched only when that encounter actually starts.
     }).catch((error: unknown) => {
-      const url = this.musicUrls.get('intro');
-      if (url) URL.revokeObjectURL(url);
-      this.musicUrls.delete('intro');
       this.preparedGameplayTracks.delete('intro');
       throw error;
     }).finally(() => {
@@ -322,13 +320,14 @@ export class AudioManager {
       const onError = () => { cleanup(); reject(new Error('Audio could not be decoded.')); };
       audio.addEventListener('canplay', onReady, { once: true });
       audio.addEventListener('error', onError, { once: true });
-      audio.load();
+      // setMusicSource/preflightTrack already starts the request. Calling load()
+      // again here can restart or cancel that request in mobile Safari.
+      if (audio.networkState === HTMLMediaElement.NETWORK_EMPTY) audio.load();
     });
   }
 
   private setMusicSource(track: keyof typeof this.musicPaths): void {
-    const url = this.musicUrls.get(track);
-    if (!url) return;
+    const url = this.musicUrls.get(track) ?? `${import.meta.env.BASE_URL}${this.musicPaths[track]}`;
     this.bgmAudio.pause();
     this.bgmAudio.src = url;
     this.bgmAudio.load();

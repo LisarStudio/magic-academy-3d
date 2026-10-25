@@ -15,6 +15,24 @@ export class AssetManager {
   private gltfLoader = new GLTFLoader(this.loadingManager);
   public onProgress?: (loaded: number, total: number, url: string) => void;
 
+  private async withAssetTimeout<T>(load: Promise<T>, url: string): Promise<T> {
+    let timeoutId = 0;
+    const timeoutMs = isLowPowerDevice() ? 25_000 : 45_000;
+    try {
+      return await Promise.race([
+        load,
+        new Promise<T>((_, reject) => {
+          timeoutId = window.setTimeout(
+            () => reject(new Error(`Timed out loading ${url} after ${timeoutMs} ms`)),
+            timeoutMs
+          );
+        })
+      ]);
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
   constructor() {
     this.loadingManager.onProgress = (url, loaded, total) => this.onProgress?.(loaded, total, url);
   }
@@ -30,7 +48,7 @@ export class AssetManager {
     translationScale: number
   ): Promise<THREE.AnimationClip | null> {
     try {
-      const fbx = await this.fbxLoader.loadAsync(url);
+      const fbx = await this.withAssetTimeout(this.fbxLoader.loadAsync(url), url);
       if (fbx.animations && fbx.animations.length > 0) {
         let rawClip = fbx.animations[0];
         if (fbx.animations.length > 1) {
@@ -131,7 +149,7 @@ export class AssetManager {
     targetRoot: THREE.Object3D
   ): Promise<{ clip: THREE.AnimationClip; externalMeshes: THREE.Object3D[] } | null> {
     try {
-      const gltf = await this.gltfLoader.loadAsync(url);
+      const gltf = await this.withAssetTimeout(this.gltfLoader.loadAsync(url), url);
       if (gltf.animations && gltf.animations.length > 0) {
         const rawClip = gltf.animations[0];
 
@@ -218,7 +236,8 @@ export class AssetManager {
       // Try loading player.glb first (custom character Lisar)
       try {
         console.log('[AssetManager] Loading the rigged Wukong 2.0 model via GLTFLoader...');
-        const gltf = await this.gltfLoader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/wukong_2.0_rigged.glb?v=20261024-cuerpo-skinweights');
+        const modelUrl = import.meta.env.BASE_URL + 'assets/characters/wukong_2.0_rigged.glb?v=20261024-cuerpo-skinweights';
+        const gltf = await this.withAssetTimeout(this.gltfLoader.loadAsync(modelUrl), modelUrl);
         playerModel = gltf.scene;
         console.log('[AssetManager] ✅ Loaded rigged Wukong 2.0 successfully');
 
@@ -258,10 +277,12 @@ export class AssetManager {
       // Fallback to FBX if GLTF failed
       if (!playerModel) {
         try {
-          playerModel = await this.fbxLoader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle.fbx');
+          const idleUrl = import.meta.env.BASE_URL + 'assets/characters/wukong/iddle.fbx';
+          playerModel = await this.withAssetTimeout(this.fbxLoader.loadAsync(idleUrl), idleUrl);
         } catch {
           console.warn('[AssetManager] Wukong idle FBX failed, trying the project Wukong fallback');
-          playerModel = await this.fbxLoader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/Wukong_NoWood.fbx');
+          const fallbackUrl = import.meta.env.BASE_URL + 'assets/characters/Wukong_NoWood.fbx';
+          playerModel = await this.withAssetTimeout(this.fbxLoader.loadAsync(fallbackUrl), fallbackUrl);
         }
       }
 
