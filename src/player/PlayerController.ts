@@ -638,7 +638,7 @@ export class PlayerController {
       this.animationController.playState('Fall', 0.18);
     } else if (this.isGrounded && !this.isAttacking) {
       if (isMoving) {
-        this.animationController.playState('Run');
+        this.animationController.playState(isSprinting ? 'Sprint' : 'Run');
       } else {
         this.animationController.playState('Idle');
       }

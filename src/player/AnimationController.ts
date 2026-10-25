@@ -4,6 +4,7 @@ export type AnimationState =
   | 'Idle'
   | 'Walk'
   | 'Run'
+  | 'Sprint'
   | 'Jump'
   | 'Fall'
   | 'Land'
@@ -101,6 +102,7 @@ export class AnimationController {
     const suffix = this.isArmed ? '_Armed' : '_Unarmed';
 
     if (state === 'Idle') return 'Idle' + suffix;
+    if (state === 'Sprint') return this.allActions.has('Wukong_Naruto_Run') ? 'Wukong_Naruto_Run' : 'Run' + suffix;
     if (state === 'Run' || state === 'Walk') return 'Run' + suffix;
     if (state === 'Jump') return 'Jump' + suffix;
     if (state === 'Fall') return 'Fall' + suffix;
@@ -499,6 +501,7 @@ export class AnimationController {
         if (body) body.position.y = Math.abs(Math.sin(this.proceduralTime * 2)) * 0.05;
         break;
       case 'Run':
+      case 'Sprint':
         if (leftLeg) leftLeg.rotation.x = Math.sin(this.proceduralTime * 1.5) * 0.7;
         if (rightLeg) rightLeg.rotation.x = -Math.sin(this.proceduralTime * 1.5) * 0.7;
         if (body) body.position.y = Math.abs(Math.sin(this.proceduralTime * 3)) * 0.08;

@@ -389,6 +389,7 @@ export class AssetManager {
       const [
         idleUnarmed,
         runUnarmed,
+        narutoRun,
         jumpUnarmed,
         wukongDoubleJump,
         wukongFall,
@@ -404,6 +405,7 @@ export class AssetManager {
         // separate wukong_kick.fbx remains exclusively the player attack.
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle_2.fbx?v=20261025-idle2', 'Idle_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Running.fbx', 'Run_Unarmed', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_naruto_run.fbx', 'Wukong_Naruto_Run', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Jumping.fbx', 'Jump_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong_no_wood_double_jumpFront Flip.fbx?v=7', 'Wukong_NoWood_DoubleJump', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_falling_air.fbx', 'Fall_Unarmed', playerModel, translationScaleFactor),
@@ -428,6 +430,7 @@ export class AssetManager {
       if (idleUnarmed) clips.push(idleUnarmed);
       if (idleKick) clips.push(idleKick);
       if (runUnarmed) clips.push(runUnarmed);
+      if (narutoRun) clips.push(narutoRun);
       if (jumpUnarmed) clips.push(jumpUnarmed);
       if (wukongDoubleJump) clips.push(wukongDoubleJump);
       if (wukongFall) {

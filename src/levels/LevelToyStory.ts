@@ -69,6 +69,7 @@ export class LevelToyStory {
   private dragonLeverStick!: THREE.Mesh;
   public isLavaVaultOpen = false;
   private lavaVaultHatch!: THREE.Mesh;
+  private curiosityCryptMouth!: THREE.Group;
   private grassUniforms: any = null;
   private grassSectors: THREE.InstancedMesh[] = [];
   private grassLodSectors: THREE.InstancedMesh[] = [];
@@ -91,6 +92,10 @@ export class LevelToyStory {
   private hatchPivot!: THREE.Group;
   private hatchOpenProgress = 0;
   private hatchTarget = 0;
+  private readonly curiosityCryptSurface = new THREE.Vector3(-45, 0, -65);
+  private readonly curiosityCryptRoomEntry = new THREE.Vector3(-9.8, -5.82, -40);
+  private isInsideCuriosityCrypt = false;
+  private curiosityCryptTransitioning = false;
   private leverTarget = Math.PI / 4;
   private readonly secretLavaCenter = new THREE.Vector2(66, -105);
   private secretLavaY = -11.2;
@@ -1507,10 +1512,13 @@ export class LevelToyStory {
   }
 
   private buildCuriosityVault(scene: THREE.Scene, stoneMat: THREE.Material, castleCenterZ: number): void {
-    // Real floor opening; the original solid 28m slab continued beneath its hatch.
+    // The hatch is deliberately outside and west of the central temple. The
+    // interaction at the hatch transfers into the existing underground room;
+    // this avoids leaving the entrance buried beneath the temple terrain.
+    this.curiosityCryptSurface.y = this.getTerrainHeight(this.curiosityCryptSurface.x, this.curiosityCryptSurface.z);
     this.hatchPivot = new THREE.Group();
     this.hatchPivot.name = 'curiosity_hatch_hinge';
-    this.hatchPivot.position.set(-9.0, 0.4, castleCenterZ + 5.9);
+    this.hatchPivot.position.set(this.curiosityCryptSurface.x, this.curiosityCryptSurface.y + 0.4, this.curiosityCryptSurface.z);
     this.lavaVaultHatch = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.35, 4.2), stoneMat);
     this.lavaVaultHatch.name = 'curiosity_hatch_lid';
     this.lavaVaultHatch.position.set(0, -0.2, 2.1);
@@ -1519,6 +1527,29 @@ export class LevelToyStory {
     this.hatchPivot.add(this.lavaVaultHatch);
     scene.add(this.hatchPivot);
     this.levelColliders.push(this.lavaVaultHatch);
+
+    // Make the open hatch read as a real entrance from above instead of a lid
+    // opening onto ordinary terrain. Interaction transfers through this mouth
+    // to the existing crypt room below the map.
+    this.curiosityCryptMouth = new THREE.Group();
+    this.curiosityCryptMouth.name = 'curiosity_crypt_surface_mouth';
+    this.curiosityCryptMouth.position.copy(this.curiosityCryptSurface);
+    const voidPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(3.9, 3.9),
+      new THREE.MeshBasicMaterial({ color: 0x080b17, side: THREE.DoubleSide })
+    );
+    voidPlane.rotation.x = -Math.PI / 2;
+    voidPlane.position.y = 0.025;
+    this.curiosityCryptMouth.add(voidPlane);
+    const mouthRing = new THREE.Mesh(
+      new THREE.TorusGeometry(1.8, 0.075, 8, 40),
+      new THREE.MeshBasicMaterial({ color: 0x37d9d1, toneMapped: false })
+    );
+    mouthRing.rotation.x = Math.PI / 2;
+    mouthRing.position.y = 0.045;
+    this.curiosityCryptMouth.add(mouthRing);
+    this.curiosityCryptMouth.visible = false;
+    scene.add(this.curiosityCryptMouth);
 
     const stairLen = 8.0;
     const stairDrop = 6.0;
@@ -2714,6 +2745,7 @@ export class LevelToyStory {
       this.hatchOpenProgress = THREE.MathUtils.damp(this.hatchOpenProgress, this.hatchTarget, 3.2, delta);
       if (Math.abs(this.hatchOpenProgress - this.hatchTarget) < 0.002) this.hatchOpenProgress = this.hatchTarget;
       this.hatchPivot.rotation.x = -this.hatchOpenProgress * Math.PI * 0.5;
+      if (this.curiosityCryptMouth) this.curiosityCryptMouth.visible = this.hatchOpenProgress > 0.28;
     }
     if (this.dragonLeverStick) {
       this.dragonLeverStick.rotation.x = THREE.MathUtils.damp(this.dragonLeverStick.rotation.x, this.leverTarget, 9, delta);
@@ -2891,15 +2923,41 @@ export class LevelToyStory {
           this.subtitleSystem.show('Mecanismo Secreto', '¡El mecanismo del pabellón ha abierto una cámara secreta al otro lado del reino!');
           }
         } else {
-          hud?.showInteractionPrompt('Trampilla abierta: baja por las escaleras');
+          hud?.showInteractionPrompt('La cripta está abierta; busca la entrada al oeste.');
+        }
+      }
+    }
+
+    // The west-field hatch is the usable entrance to the existing crypt.
+    // Use the shared E / Acción input path so neither desktop nor mobile has
+    // to rely on walking through a decorative lid or an underground terrain slab.
+    if (this.isLavaVaultOpen && !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying) {
+      const hud = (window as any).gameInstance?.hud;
+      if (!this.isInsideCuriosityCrypt) {
+        const dx = playerPos.x - this.curiosityCryptSurface.x;
+        const dz = playerPos.z - this.curiosityCryptSurface.z;
+        if (Math.hypot(dx, dz) < 3.2) {
+          if (this.hatchOpenProgress > 0.92) {
+            hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Entrar a la cripta · Acción' : 'Entrar a la cripta [E]');
+            if (this.inputManager.consumeInteractPress()) void this.transitionCuriosityCrypt(true);
+          } else {
+            hud?.showInteractionPrompt('La entrada se está abriendo…');
+          }
+        }
+      } else {
+        const dx = playerPos.x - this.curiosityCryptRoomEntry.x;
+        const dz = playerPos.z - this.curiosityCryptRoomEntry.z;
+        if (Math.hypot(dx, dz) < 3.0) {
+          hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Volver al exterior · Acción' : 'Volver al exterior [E]');
+          if (this.inputManager.consumeInteractPress()) void this.transitionCuriosityCrypt(false);
         }
       }
     }
 
     // ── Subterranean Lava Fall Check ──
-    if (playerPos.y < -7.2 && playerPos.x <= -10 && playerPos.x >= -36 && playerPos.z >= -54 && playerPos.z <= -26) {
+    if (playerPos.y < -7.2 && playerPos.x <= -6 && playerPos.x >= -38 && playerPos.z >= -54 && playerPos.z <= -26) {
       this.player.takeDamage(15);
-      this.player.mesh.position.set(-9.0, -5.5, -40.0);
+      this.player.mesh.position.copy(this.curiosityCryptRoomEntry);
       this.player.velocity.set(0, 0, 0);
       this.audioManager.playPlayerHurt();
       const hud = (window as any).gameInstance?.hud;
@@ -3023,9 +3081,9 @@ export class LevelToyStory {
     this.player.velocity.set(0, 0, 0);
     this.enemies.forEach((enemy) => { enemy.isPaused = true; });
     try {
-      const hatchLook = new THREE.Vector3(-9, 0.2, this.curiosityChest.mesh.position.z + 6);
+      const hatchLook = this.curiosityCryptSurface.clone().add(new THREE.Vector3(0, 0.15, 0));
       const from = cameraController.camera.position.clone();
-      const to = new THREE.Vector3(-5.5, 5.5, hatchLook.z + 5.5);
+      const to = hatchLook.clone().add(new THREE.Vector3(4.2, 5.5, 5.5));
       await cinematicCamera.moveCamera(from, to, this.player.mesh.position.clone().add(new THREE.Vector3(0, 1, 0)), hatchLook, 1.8);
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     } catch (error) {
@@ -3042,12 +3100,57 @@ export class LevelToyStory {
     }
   }
 
+  private async transitionCuriosityCrypt(entering: boolean): Promise<void> {
+    if (this.curiosityCryptTransitioning || !this.isLavaVaultOpen) return;
+    this.curiosityCryptTransitioning = true;
+    this.player.isControlsLocked = true;
+    this.player.isMovementLocked = true;
+    this.player.velocity.set(0, 0, 0);
+    const hud = (window as any).gameInstance?.hud;
+    const cameraController = (window as any).gameInstance?.cameraController;
+    hud?.hideInteractionPrompt();
+    let screenIsFadedOut = false;
+    try {
+      if (hud) {
+        await hud.fadeScreenOut(180);
+        screenIsFadedOut = true;
+      }
+      if (entering) {
+        this.player.mesh.position.copy(this.curiosityCryptRoomEntry);
+        this.isInsideCuriosityCrypt = true;
+      } else {
+        this.player.mesh.position.set(this.curiosityCryptSurface.x, this.curiosityCryptSurface.y + 0.08, this.curiosityCryptSurface.z + 3.0);
+        this.isInsideCuriosityCrypt = false;
+      }
+      this.player.mesh.rotation.y = entering ? Math.PI / 2 : Math.PI;
+      this.player.velocity.set(0, 0, 0);
+      cameraController?.snapBehindTarget();
+      if (hud) {
+        await hud.fadeScreenIn(220);
+        screenIsFadedOut = false;
+      }
+      this.subtitleSystem.show(
+        'Cripta de la Curiosidad',
+        entering ? 'Has llegado a la cámara secreta.' : 'Has regresado al exterior.'
+      );
+    } catch (error) {
+      console.error('[CuriosityVault] Entrance transition failed.', error);
+    } finally {
+      if (hud && screenIsFadedOut) await hud.fadeScreenIn(120);
+      this.player.isControlsLocked = false;
+      this.player.isMovementLocked = false;
+      this.player.velocity.set(0, 0, 0);
+      this.curiosityCryptTransitioning = false;
+    }
+  }
+
   public restoreCuriosityPuzzle(hatchOpen: boolean, chestOpen: boolean, preserveLegacyExit = false): void {
     this.isLavaVaultOpen = hatchOpen;
     this.hatchTarget = hatchOpen ? 1 : 0;
     this.hatchOpenProgress = this.hatchTarget;
     this.leverTarget = hatchOpen ? -Math.PI / 4 : Math.PI / 4;
     if (this.hatchPivot) this.hatchPivot.rotation.x = -this.hatchOpenProgress * Math.PI * 0.5;
+    if (this.curiosityCryptMouth) this.curiosityCryptMouth.visible = this.hatchOpenProgress > 0.28;
     if (this.dragonLeverStick) this.dragonLeverStick.rotation.x = this.leverTarget;
     this.curiosityChestOpen = chestOpen;
     if (chestOpen) {
