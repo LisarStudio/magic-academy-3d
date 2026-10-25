@@ -499,8 +499,10 @@ export class LevelToyStory {
       console.warn('[LevelToyStory] Could not load the Chinese red lamp asset.', lampResult.reason);
     }
 
-    const warmFill = new THREE.PointLight(0xffb56b, 3.5, 26, 2);
-    warmFill.position.set(0, this.getTerrainHeight(0, -34) + 7, -34);
+    // Existing lantern fill, tuned up to reveal the interior timber and floor
+    // at night without adding shadow-casting lights or a global color filter.
+    const warmFill = new THREE.PointLight(0xffc98c, 4.8, 30, 2);
+    warmFill.position.set(0, this.getTerrainHeight(0, -34) + 6.2, -34);
     warmFill.castShadow = false;
     scene.add(warmFill);
     this.dayNightCycle?.registerNightLight(warmFill);
@@ -629,7 +631,10 @@ export class LevelToyStory {
     const map = new THREE.CanvasTexture(canvas);
     map.colorSpace = THREE.SRGBColorSpace;
     map.anisotropy = Math.min(8, this.sceneManager.renderer.capabilities.getMaxAnisotropy());
-    const floorMaterial = new THREE.MeshStandardMaterial({ map, color: 0xc4c0bb, roughness: 0.58, metalness: 0.06 });
+    const floorMaterial = new THREE.MeshPhysicalMaterial({
+      map, color: 0xc9c4bc, roughness: 0.34, metalness: 0.12,
+      clearcoat: 0.22, clearcoatRoughness: 0.4
+    });
     const floor = new THREE.Mesh(new THREE.BoxGeometry(21.8, 0.22, 21.8), floorMaterial);
     floor.name = 'central_temple_stone_floor';
     // The outdoor terrain is y=0 here. Keep the walkable temple surface within
@@ -658,7 +663,7 @@ export class LevelToyStory {
     // flat image. Its top sits only a few millimeters above the tiled floor.
     const medallion = new THREE.Mesh(
       new THREE.CircleGeometry(3.7, 64),
-      new THREE.MeshStandardMaterial({ color: 0xd6cbb5, roughness: 0.56, metalness: 0.08 })
+      new THREE.MeshStandardMaterial({ color: 0xd6cbb5, roughness: 0.42, metalness: 0.1, emissive: 0x173d35, emissiveIntensity: 0.045 })
     );
     medallion.name = 'temple_yinyang_mosaic_base';
     medallion.rotation.x = -Math.PI / 2;
@@ -672,7 +677,7 @@ export class LevelToyStory {
     yinShape.closePath();
     const yinStone = new THREE.Mesh(
       new THREE.ShapeGeometry(yinShape, 48),
-      new THREE.MeshStandardMaterial({ color: 0x292d37, roughness: 0.52, metalness: 0.12, side: THREE.DoubleSide })
+      new THREE.MeshStandardMaterial({ color: 0x292d37, roughness: 0.4, metalness: 0.14, emissive: 0x0b3938, emissiveIntensity: 0.055, side: THREE.DoubleSide })
     );
     yinStone.name = 'temple_yinyang_dark_stone';
     yinStone.rotation.x = -Math.PI / 2;
@@ -690,6 +695,21 @@ export class LevelToyStory {
     ring.rotation.x = Math.PI / 2;
     ring.position.set(0, topY + 0.008, -40);
     scene.add(ring);
+    // Fine secondary inlays refine the existing medallion edge without
+    // changing its footprint, height, collision, or yin-yang placement.
+    const inlayMaterial = new THREE.MeshStandardMaterial({
+      color: 0xe0bd69, emissive: 0x3e2910, emissiveIntensity: 0.22,
+      roughness: 0.3, metalness: 0.78
+    });
+    const innerInlay = new THREE.Mesh(new THREE.TorusGeometry(3.42, 0.018, 6, 96), inlayMaterial);
+    innerInlay.name = 'temple_yinyang_inner_gold_inlay';
+    innerInlay.rotation.x = Math.PI / 2;
+    innerInlay.position.set(0, topY + 0.009, -40);
+    const outerInlay = new THREE.Mesh(new THREE.TorusGeometry(3.82, 0.016, 6, 96), inlayMaterial);
+    outerInlay.name = 'temple_yinyang_outer_gold_inlay';
+    outerInlay.rotation.x = Math.PI / 2;
+    outerInlay.position.set(0, topY + 0.009, -40);
+    scene.add(innerInlay, outerInlay);
   }
 
   private createGrassGroundTexture(): THREE.CanvasTexture {
@@ -1662,17 +1682,19 @@ export class LevelToyStory {
     this.levelColliders.push(this.staffChest.mesh);
 
     // ── Runic Fast-Travel Portal Network (PortalPair_01) ───────────────────────
-    // Re-home the fast-travel gate in the central temple's east forecourt,
-    // leaving the Chinese pavilion and its stair approach visually clear.
-    const staffPortalX = 16.2, staffPortalZ = -40;
-    const staffPortalY = this.getTerrainHeight(staffPortalX, staffPortalZ) + 0.05;
+    // The existing PortalPair_01 connects this sanctuary to the Palace Atrium.
+    // Manifest the temple endpoint over the center of the existing yin-yang.
+    const staffPortalX = 0, staffPortalZ = -40;
+    const staffPortalY = this.getTerrainHeight(staffPortalX, staffPortalZ) + 0.16;
     const portalA = new RunicPortal({
       id: 'Portal_A_StaffTemple',
       pairId: 'PortalPair_01',
       displayName: 'Santuario Central',
       position: new THREE.Vector3(staffPortalX, staffPortalY, staffPortalZ),
       rotationY: Math.PI,
-      exitPoint: new THREE.Vector3(14.6, this.getTerrainHeight(14.6, -40) + 0.05, -40),
+      // Arrive outside the 1.45 m trigger so a return trip cannot immediately
+      // bounce the player back through the same portal.
+      exitPoint: new THREE.Vector3(0, this.getTerrainHeight(0, -34) + 0.05, -34),
       exitYaw: Math.PI,
       unlockedByDefault: false,
       templeStyle: true,
