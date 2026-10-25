@@ -39,6 +39,7 @@ export class RunicPortal {
   private particleCount = 24;
   private energyRings: THREE.Mesh[] = [];
   private energyRingMaterials: THREE.MeshStandardMaterial[] = [];
+  private runeOrbit: THREE.Group;
 
   private isActivating = false;
   private activationTime = 0.0;
@@ -208,6 +209,32 @@ export class RunicPortal {
       this.energyRingMaterials.push(ringMat);
     }
 
+    // One instanced draw call for the orbiting celestial runes.
+    this.runeOrbit = new THREE.Group();
+    this.runeOrbit.position.set(0, 2.05, 0.08);
+    const runeOrbit = new THREE.InstancedMesh(
+      new THREE.OctahedronGeometry(0.095, 0),
+      new THREE.MeshStandardMaterial({
+        color: 0xffdf87,
+        emissive: 0xa66a1a,
+        emissiveIntensity: this.isUnlocked ? 1.6 : 0.12,
+        metalness: 0.55,
+        roughness: 0.28
+      }),
+      8
+    );
+    const runeTransform = new THREE.Object3D();
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      runeTransform.position.set(Math.cos(angle) * 1.36, Math.sin(angle) * 1.36, 0);
+      runeTransform.rotation.z = angle;
+      runeTransform.updateMatrix();
+      runeOrbit.setMatrixAt(i, runeTransform.matrix);
+    }
+    runeOrbit.instanceMatrix.needsUpdate = true;
+    this.runeOrbit.add(runeOrbit);
+    this.mesh.add(this.runeOrbit);
+
     // Small gold celestial pearl crowns the lintel and links it to the temple.
     const pearl = new THREE.Mesh(
       new THREE.IcosahedronGeometry(0.16, 1),
@@ -272,6 +299,8 @@ export class RunicPortal {
       mat.emissiveIntensity = THREE.MathUtils.lerp(0.08, i === 0 ? 1.7 : 1.15, progress);
       mat.opacity = THREE.MathUtils.lerp(0.12, 0.78, progress);
     }
+    const runes = this.runeOrbit.children[0] as THREE.InstancedMesh;
+    (runes.material as THREE.MeshStandardMaterial).emissiveIntensity = THREE.MathUtils.lerp(0.12, 1.6, progress);
 
     const pMat = this.particlesMesh.material as THREE.PointsMaterial;
     pMat.opacity = THREE.MathUtils.lerp(0.0, 0.85, progress);
@@ -306,6 +335,7 @@ export class RunicPortal {
       this.vortexMat.emissiveIntensity = 1.4 + Math.sin(time * 2.5) * 0.3;
       this.energyRings[0].rotation.z += delta * 0.16;
       this.energyRings[1].rotation.z -= delta * 0.11;
+      this.runeOrbit.rotation.z += delta * 0.2;
 
       // Swirl particles in vertical elliptical orbit
       const pArr = this.particlePositions;
