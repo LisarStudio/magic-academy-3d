@@ -17,6 +17,7 @@ import { LevelToyStory } from '../levels/LevelToyStory';
 import { EquipmentViewer } from '../ui/EquipmentViewer';
 import { MobileTouchControls } from '../ui/MobileTouchControls';
 import { MainMenu, type MenuState, type StartMode } from '../ui/MainMenu';
+import { isLowPowerDevice, renderPixelRatio } from './DevicePerformance';
 
 export class Game {
   private sceneManager: SceneManager;
@@ -67,8 +68,7 @@ export class Game {
       onPreferences: ({ music, effects, quality }) => {
         this.audioManager.setMusicVolume(music);
         this.audioManager.setSFXVolume(effects);
-        const maxDpr = window.innerWidth <= 1024 ? 1.0 : 1.5;
-        this.sceneManager.renderer.setPixelRatio(Math.min(window.devicePixelRatio * quality, maxDpr));
+        this.sceneManager.renderer.setPixelRatio(renderPixelRatio(quality));
         this.sceneManager.renderer.setSize(window.innerWidth, window.innerHeight);
       },
       onSelect: () => this.audioManager.playMenuSelect()
@@ -159,12 +159,16 @@ export class Game {
     const backStaffWasVisible = this.player.staffBackMesh?.visible ?? false;
     const handStaffWasVisible = this.player.staffHandMesh?.visible ?? false;
     try {
-      // The sockets are normally hidden until pickup. Compile their shared
-      // materials before the player can interact with the chest.
-      if (this.player.staffBackMesh) this.player.staffBackMesh.visible = true;
-      if (this.player.staffHandMesh) this.player.staffHandMesh.visible = true;
-      this.sceneManager.renderer.compile(this.sceneManager.scene, this.sceneManager.camera);
-      console.log('[Game] ✅ Pre-compiled all WebGL shaders and materials into GPU memory.');
+      if (isLowPowerDevice()) {
+        console.info('[Game] Skipping full-scene shader compilation on a constrained device.');
+      } else {
+        // The sockets are normally hidden until pickup. Compile their shared
+        // materials before the player can interact with the chest.
+        if (this.player.staffBackMesh) this.player.staffBackMesh.visible = true;
+        if (this.player.staffHandMesh) this.player.staffHandMesh.visible = true;
+        this.sceneManager.renderer.compile(this.sceneManager.scene, this.sceneManager.camera);
+      }
+      if (!isLowPowerDevice()) console.log('[Game] Pre-compiled scene shaders.');
     } catch (e) {
       console.warn('[Game] Shader precompilation warning:', e);
     } finally {

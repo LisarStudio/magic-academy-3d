@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { isLowPowerDevice, renderPixelRatio } from './DevicePerformance';
 
 export class SceneManager {
   public scene: THREE.Scene;
@@ -23,7 +24,7 @@ export class SceneManager {
     this.camera.position.set(0, 3, 5);
 
     // 3. Renderer
-    const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    const isMobile = isLowPowerDevice();
 
     this.renderer = new THREE.WebGLRenderer({
       canvas,
@@ -32,9 +33,9 @@ export class SceneManager {
       precision: isMobile ? 'mediump' : 'highp'
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    const maxDPR = isMobile ? 1.0 : 1.5;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxDPR));
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.setPixelRatio(renderPixelRatio());
+    // Dynamic shadow maps are expensive on phones; keep ambient and rim lighting.
+    this.renderer.shadowMap.enabled = !isMobile;
     this.renderer.shadowMap.type = isMobile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.3; // Bright, readable scene
@@ -47,7 +48,7 @@ export class SceneManager {
   }
 
   private setupLighting(): void {
-    const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    const isMobile = isLowPowerDevice();
 
     // Ambient moon / morning glow
     this.ambientLight = new THREE.AmbientLight(0x404870, 1.0);
@@ -56,7 +57,7 @@ export class SceneManager {
     // Main celestial light direction
     this.dirLight = new THREE.DirectionalLight(0x7588c4, 1.8);
     this.dirLight.position.set(20, 40, -10);
-    this.dirLight.castShadow = true;
+    this.dirLight.castShadow = !isMobile;
     this.dirLight.shadow.mapSize.width = isMobile ? 512 : 1024;
     this.dirLight.shadow.mapSize.height = isMobile ? 512 : 1024;
     this.dirLight.shadow.camera.near = 0.5;

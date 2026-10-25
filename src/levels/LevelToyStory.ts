@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { isLowPowerDevice } from '../core/DevicePerformance';
 import { SceneManager } from '../core/SceneManager';
 import { CameraController } from '../camera/CameraController';
 import { PlayerController } from '../player/PlayerController';
@@ -369,14 +370,20 @@ export class LevelToyStory {
     // Add key visual hints
     this.spawnKeysInWorld();
 
-    // Pre-compile cinematic key shaders & materials ahead of time to eliminate boss death stutter
-    KeyPickupSequence.precompileShaders(this.sceneManager.renderer, scene, this.sceneManager.camera);
+    // This compiles the whole level as a side effect. Keep it for desktop, but
+    // never block a phone's main thread on a shader warmup before first play.
+    if (!isLowPowerDevice()) {
+      KeyPickupSequence.precompileShaders(this.sceneManager.renderer, scene, this.sceneManager.camera);
+    }
 
     this.checkpointManager.respawnPlayer(this.player);
-    await this.loadIntroEnvironmentAssets();
-    // Start fetching and instancing the original grass before the player
-    // reaches gameplay, without adding it to the level's blocking load path.
-    this.loadGrassInBackground();
+    // Visual dressing is optional and loads while the player views the intro/menu.
+    // Slow mobile networks must not keep gameplay disabled for decorative GLBs.
+    void this.loadIntroEnvironmentAssets().catch((error: unknown) => {
+      console.warn('[Level] Optional temple dressing did not load:', error);
+    });
+    // Build the original grass in yielding sector batches after level setup.
+    void this.loadGrassInBackground();
   }
 
   /** Adds the pavilion and a subtle green ground texture as scenery only. */
@@ -778,13 +785,14 @@ export class LevelToyStory {
       return false;
     };
 
-    const isMobile = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0 ||
-      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const isMobile = isLowPowerDevice();
     const sectorSize = 32;
     // The original Geometry Nodes field used far more than one clump per m².
     // Four-ish randomized source clumps per square meter closes the gaps while
     // instancing keeps the distribution compact on the GPU.
-    const spacing = isMobile ? 0.62 : 0.48;
+    // Source clumps contain many fine blades already. A wider mobile sampling
+    // interval retains the carpet while reducing instance preparation and draws.
+    const spacing = isMobile ? 0.86 : 0.48;
     const sectorsPerAxis = Math.ceil(160 / sectorSize);
     let placedTotal = 0;
     const playerAtLoad = this.player.mesh.position;
@@ -2366,8 +2374,7 @@ export class LevelToyStory {
       // Keep original source clumps at close range and switch to derived,
       // topology-reduced copies in the middle distance. The ground material
       // carries coverage beyond the vegetation range.
-      const isMobile = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0 ||
-        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      const isMobile = isLowPowerDevice();
       const detailedDistance = isMobile ? 8 : 12;
       const lodDistance = isMobile ? 112 : 160;
       for (let i = 0; i < this.grassSectors.length; i++) {

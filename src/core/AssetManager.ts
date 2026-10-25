@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { isLowPowerDevice } from './DevicePerformance';
 
 export interface LoadedPlayerData {
   model: THREE.Object3D;
@@ -324,7 +325,7 @@ export class AssetManager {
               
               // Sharp textures with high-grade anisotropic filtering
               if (mat.map) {
-                mat.map.anisotropy = 16;
+                mat.map.anisotropy = isLowPowerDevice() ? 4 : 16;
                 mat.map.minFilter = THREE.LinearMipmapLinearFilter;
                 mat.map.magFilter = THREE.LinearFilter;
                 mat.map.needsUpdate = true;
