@@ -32,7 +32,7 @@ export class SceneManager {
       precision: isMobile ? 'mediump' : 'highp'
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    const maxDPR = isMobile ? 0.9 : 1.5;
+    const maxDPR = isMobile ? 1.0 : 1.5;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxDPR));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = isMobile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
@@ -57,8 +57,8 @@ export class SceneManager {
     this.dirLight = new THREE.DirectionalLight(0x7588c4, 1.8);
     this.dirLight.position.set(20, 40, -10);
     this.dirLight.castShadow = true;
-    this.dirLight.shadow.mapSize.width = isMobile ? 768 : 2048;
-    this.dirLight.shadow.mapSize.height = isMobile ? 1024 : 2048;
+    this.dirLight.shadow.mapSize.width = isMobile ? 512 : 1024;
+    this.dirLight.shadow.mapSize.height = isMobile ? 512 : 1024;
     this.dirLight.shadow.camera.near = 0.5;
     this.dirLight.shadow.camera.far = isMobile ? 90 : 150;
     this.dirLight.shadow.radius = isMobile ? 1 : 2.5;

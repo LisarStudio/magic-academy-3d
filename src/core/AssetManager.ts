@@ -374,8 +374,6 @@ export class AssetManager {
         wukongKick,
         wukongHardLanding,
         idleArmed,
-        runArmed,
-        jumpArmed,
         castSpellData
       ] = await Promise.all([
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle_nowood.fbx', 'Idle_Unarmed', playerModel, translationScaleFactor),
@@ -387,11 +385,17 @@ export class AssetManager {
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_kick.fbx', 'Wukong_NoWood_Kick', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Falling To Landing.fbx', 'Wukong_NoWood_HardLanding', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle.fbx', 'Idle_Armed', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Running.fbx', 'Run_Armed', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Jumping.fbx', 'Jump_Armed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_atack_baculo.fbx', 'atack_wood', playerModel, translationScaleFactor)
           .then(async (clip) => clip || (await this.loadAndRetargetGltfClip(import.meta.env.BASE_URL + 'assets/characters/atack_wood.glb', 'atack_wood', playerModel!))?.clip || null)
       ]);
+
+      // Armed and unarmed movement use the same source FBX clips. Clone the
+      // already retargeted actions instead of downloading and retargeting the
+      // same 3.5 MB FBX twice during startup.
+      const runArmed = runUnarmed?.clone() ?? null;
+      if (runArmed) runArmed.name = 'Run_Armed';
+      const jumpArmed = jumpUnarmed?.clone() ?? null;
+      if (jumpArmed) jumpArmed.name = 'Jump_Armed';
 
       const idleKick = wukongKick?.clone() ?? null;
       if (idleKick) idleKick.name = 'Idle_Kick';

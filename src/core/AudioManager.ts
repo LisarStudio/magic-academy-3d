@@ -2,7 +2,7 @@ export class AudioManager {
   private ctx: AudioContext | null = null;
   private readonly bgmAudio = new Audio();
   private readonly musicPaths = {
-    intro: 'assets/music/wukong-intro-theme.mp3',
+    intro: 'assets/music/optimized/wukong-intro-theme-128.mp3',
     gameplayB: 'assets/music/wukong-game-lisar-studio.mp3',
     crabBoss: 'assets/music/crab-boss-theme.mp3'
   } as const;
@@ -99,15 +99,9 @@ export class AudioManager {
       this.bgmAudio.currentTime = 0;
       this.preparedGameplayTracks.add('intro');
       this.musicPrepared = true;
-      // The intro's own score is ready before the intro starts. The second
-      // playlist track decodes in the background and becomes eligible only
-      // after its preflight succeeds, so it never delays the first frame.
-      void this.prepareGameplayMusicAsset().catch((error: unknown) => {
-        console.warn('[AudioManager] Gameplay playlist track is not ready yet; it will retry later.', error);
-      });
-      void this.prepareBossMusicAsset().catch((error: unknown) => {
-        console.warn('[AudioManager] Crab theme is not ready yet; it will retry when needed.', error);
-      });
+      // Keep the intro's first-frame network lane clear. The alternate game
+      // track starts preparing only when gameplay begins; the boss track is
+      // fetched only when that encounter actually starts.
     }).catch((error: unknown) => {
       const url = this.musicUrls.get('intro');
       if (url) URL.revokeObjectURL(url);
@@ -141,9 +135,6 @@ export class AudioManager {
     if (!this.musicPrepared) return;
     void this.prepareGameplayMusicAsset().catch((error: unknown) => {
       console.warn('[AudioManager] Gameplay playlist track preparation failed.', error);
-    });
-    void this.prepareBossMusicAsset().catch((error: unknown) => {
-      console.warn('[AudioManager] Background crab theme preparation failed.', error);
     });
     if (this.musicMode === 'gameplay' && !this.bgmAudio.paused) return;
     this.musicMode = 'gameplay';

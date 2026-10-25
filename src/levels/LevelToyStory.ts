@@ -69,6 +69,7 @@ export class LevelToyStory {
   private grassUniforms: any = null;
   private grassSectors: THREE.InstancedMesh[] = [];
   private grassLodSectors: THREE.InstancedMesh[] = [];
+  private grassLoadStarted = false;
   private grassCullElapsed = 0;
   private cloudsUniforms: any = null;
   private lampMoths: LampMothSystem | null = null;
@@ -175,9 +176,10 @@ export class LevelToyStory {
     
     const moonLight = new THREE.DirectionalLight(0xb4d3fe, 1.2);
     moonLight.position.set(40, 80, -60);
-    moonLight.castShadow = true;
-    moonLight.shadow.mapSize.width = 2048;
-    moonLight.shadow.mapSize.height = 2048;
+    // SceneManager's main directional light already provides the gameplay
+    // shadow map. A second 2048² shadow pass doubled mobile shadow work without
+    // adding meaningful contact detail.
+    moonLight.castShadow = false;
     moonLight.shadow.camera.near = 0.5;
     moonLight.shadow.camera.far = 200;
     const d = 60;
@@ -372,13 +374,11 @@ export class LevelToyStory {
   private async loadIntroEnvironmentAssets(): Promise<void> {
     const base = import.meta.env.BASE_URL + 'assets/environment/';
     const loader = new GLTFLoader();
-    const [pavilionResult, templeResult, lionResult, lampResult, grassResult, grassLodResult] = await Promise.allSettled([
+    const [pavilionResult, templeResult, lionResult, lampResult] = await Promise.allSettled([
       loader.loadAsync(`${base}chinese-pavilion.glb`),
       loader.loadAsync(`${base}wukong-chinese-temple.glb`),
       loader.loadAsync(`${base}wukong-porcelain-lion.glb`),
       loader.loadAsync(`${base}wukong-red-lamp.glb`),
-      loader.loadAsync(`${base}wukong-grass-clumps.glb`),
-      loader.loadAsync(`${base}wukong-grass-clumps-lod.glb`),
     ]);
 
     const terrain = this.sceneManager.scene.getObjectByName('world-terrain') as THREE.Mesh | null;
@@ -394,12 +394,6 @@ export class LevelToyStory {
     }
 
     const scene = this.sceneManager.scene;
-    if (grassResult.status === 'fulfilled' && grassLodResult.status === 'fulfilled') {
-      this.buildOriginalGrass(grassResult.value.scene, grassLodResult.value.scene);
-    } else {
-      console.error('[Grass] Could not load the original Grass It! meshes and their derived distance LOD; no substitute grass was generated.',
-        grassResult.status === 'rejected' ? grassResult.reason : grassLodResult.status === 'rejected' ? grassLodResult.reason : 'unknown load error');
-    }
     const placeAsset = (source: THREE.Object3D, name: string, targetWidth: number, x: number, z: number, rotationY = 0): THREE.Object3D => {
       const asset = source.clone(true);
       asset.name = name;
@@ -578,7 +572,22 @@ export class LevelToyStory {
    * la_leyenda_de_wukong_Camarasuave.blend. The original GLB remains untouched;
    * GPU wind bends its real blades at the tips while the roots stay planted.
    */
-  private buildOriginalGrass(sourceRoot: THREE.Object3D, lodRoot: THREE.Object3D): void {
+  public loadGrassInBackground(): void {
+    if (this.grassLoadStarted) return;
+    this.grassLoadStarted = true;
+    const base = import.meta.env.BASE_URL + 'assets/environment/';
+    const loader = new GLTFLoader();
+    void Promise.all([
+      loader.loadAsync(`${base}wukong-grass-clumps.glb`),
+      loader.loadAsync(`${base}wukong-grass-clumps-lod.glb`),
+    ]).then(([original, lod]) => this.buildOriginalGrass(original.scene, lod.scene))
+      .catch((error: unknown) => {
+        console.error('[Grass] Background load of original Grass It! assets failed; no substitute grass was generated.', error);
+        this.grassLoadStarted = false;
+      });
+  }
+
+  private async buildOriginalGrass(sourceRoot: THREE.Object3D, lodRoot: THREE.Object3D): Promise<void> {
     const sourceNames = ['Grass_Short', 'Grass_Lush', 'Grass_Tall'] as const;
     const weights = [0.43, 0.43, 0.14];
     const scaleRanges: Array<[number, number]> = [[0.9, 1.08], [0.78, 1.28], [0.72, 1.18]];
@@ -752,6 +761,8 @@ export class LevelToyStory {
           this.grassLodSectors.push(lodSector);
           placedTotal += instances.length;
         });
+        // Give input, camera and rendering a frame between sector batches.
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       }
     }
     console.info(`[Grass] ${placedTotal} original Grass It! clumps from ${sourceNames.join(', ')} in ${sectorSize}m sectors (${isMobile ? 'mobile' : 'desktop'} spacing ${spacing}m)`);
@@ -2151,8 +2162,8 @@ export class LevelToyStory {
       // carries coverage beyond the vegetation range.
       const isMobile = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0 ||
         /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      const detailedDistance = isMobile ? 48 : 68;
-      const lodDistance = isMobile ? 104 : 148;
+      const detailedDistance = isMobile ? 28 : 46;
+      const lodDistance = isMobile ? 64 : 104;
       for (let i = 0; i < this.grassSectors.length; i++) {
         const sector = this.grassSectors[i];
         const lodSector = this.grassLodSectors[i];

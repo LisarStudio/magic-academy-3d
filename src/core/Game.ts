@@ -67,7 +67,7 @@ export class Game {
       onPreferences: ({ music, effects, quality }) => {
         this.audioManager.setMusicVolume(music);
         this.audioManager.setSFXVolume(effects);
-        const maxDpr = window.innerWidth <= 1024 ? 0.9 : 1.5;
+        const maxDpr = window.innerWidth <= 1024 ? 1.0 : 1.5;
         this.sceneManager.renderer.setPixelRatio(Math.min(window.devicePixelRatio * quality, maxDpr));
         this.sceneManager.renderer.setSize(window.innerWidth, window.innerHeight);
       },
@@ -80,6 +80,7 @@ export class Game {
 
   public async start(): Promise<void> {
     console.log('[Game] Initializing 3D Magic Academy Vertical Slice...');
+    this.mainMenu.setStartupLoadingStatus('Preparando la música y el primer cuadro de la introducción…');
     const musicPreparation = this.audioManager.prepareMusic().then(() => true, (error: unknown) => {
       console.warn('[Game] Could not prepare Wukong music before the intro:', error);
       return false;
@@ -459,6 +460,9 @@ export class Game {
     this.isPaused = false;
     document.getElementById('pause-screen')?.classList.add('hidden');
     this.hud.showGameplayHUD();
+    // Grass is downloaded and instanced after the first playable frame, in
+    // small sector batches, so it cannot hold the menu or transition hostage.
+    void this.level01.loadGrassInBackground();
   }
 
   private async retryIntroMedia(): Promise<void> {
@@ -510,7 +514,10 @@ export class Game {
     if (!this.isPaused) {
       this.update(delta, animationDelta);
     }
-    this.sceneManager.render();
+    // HTML video owns the Loading, Intro, MenuIdle and StartingGame screens.
+    // Redrawing an empty/covered WebGL scene at 60 Hz competes with video
+    // decoding on phones; render continuously only after gameplay begins.
+    if (this.menuState === 'Playing') this.sceneManager.render();
 
     // Calculate FPS
     this.frameCount++;

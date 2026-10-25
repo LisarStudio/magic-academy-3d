@@ -54,13 +54,22 @@ export class MainMenu {
   constructor(callbacks: MainMenuCallbacks) {
     this.callbacks = callbacks;
     const base = import.meta.env.BASE_URL;
+    const mobileMedia = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+    const introPath = mobileMedia
+      ? 'assets/cinematics/optimized/wukong-intro-mobile.mp4'
+      : 'assets/cinematics/wukong-intro.mp4';
+    const idlePath = mobileMedia
+      ? 'assets/cinematics/optimized/wukong-menu-idle-mobile.mp4'
+      : 'assets/cinematics/wukong-menu-idle.mp4';
     this.introVideo.setAttribute('fetchpriority', 'high');
-    this.introVideo.src = `${base}assets/cinematics/wukong-intro.mp4`;
+    this.introVideo.src = `${base}${introPath}`;
     this.idleVideo.preload = 'none';
-    this.idleVideo.src = `${base}assets/cinematics/wukong-menu-idle.mp4`;
+    this.idleVideo.src = `${base}${idlePath}`;
     this.idleVideo.loop = true;
     this.startVideo.preload = 'none';
     this.startVideo.src = `${base}assets/cinematics/wukong-start.mp4`;
+    this.introVideo.addEventListener('progress', () => this.updateIntroProgress());
+    this.introVideo.addEventListener('loadedmetadata', () => this.updateIntroProgress());
     this.loadPreferences();
     this.bindEvents();
     this.startIntroButton.addEventListener('click', () => void this.playIntro(true));
@@ -78,9 +87,32 @@ export class MainMenu {
     const percent = document.getElementById('loading-percent')!;
     const status = document.getElementById('loading-status')!;
     const ratio = total > 0 ? Math.max(0, Math.min(1, loaded / total)) : 0;
+    bar.classList.remove('loading-progress-indeterminate');
     bar.style.width = `${Math.round(ratio * 100)}%`;
     percent.textContent = total > 0 ? `${Math.round(ratio * 100)}%` : 'Cargando…';
     if (asset) status.textContent = `Cargando ${this.friendlyAssetName(asset)}…`;
+  }
+
+  public setStartupLoadingStatus(message: string): void {
+    document.getElementById('loading-status')!.textContent = message;
+    const progress = document.getElementById('loading-progress')!;
+    progress.style.width = '';
+    progress.classList.add('loading-progress-indeterminate');
+    document.getElementById('loading-percent')!.textContent = 'Preparando…';
+  }
+
+  private updateIntroProgress(): void {
+    if (this.state !== 'Loading') return;
+    const video = this.introVideo;
+    const duration = video.duration;
+    if (!Number.isFinite(duration) || duration <= 0 || video.buffered.length === 0) return;
+    const buffered = video.buffered.end(video.buffered.length - 1);
+    const percent = Math.round(Math.max(0, Math.min(1, buffered / duration)) * 100);
+    const bar = document.getElementById('loading-progress')!;
+    bar.classList.remove('loading-progress-indeterminate');
+    bar.style.width = `${percent}%`;
+    document.getElementById('loading-status')!.textContent = 'Preparando la introducción…';
+    document.getElementById('loading-percent')!.textContent = `${percent}% del video disponible`;
   }
 
   public prepareIntroVideo(): Promise<void> {
@@ -156,7 +188,9 @@ export class MainMenu {
     this.loadingPanel.classList.remove('hidden');
     document.getElementById('loading-status')!.textContent = 'Todo está listo. Pulsa Comenzar para iniciar la aventura con música.';
     document.getElementById('loading-percent')!.textContent = 'Listo';
-    document.getElementById('loading-progress')!.style.width = '100%';
+    const progress = document.getElementById('loading-progress')!;
+    progress.classList.remove('loading-progress-indeterminate');
+    progress.style.width = '100%';
     document.getElementById('btn-retry-loading')!.classList.add('hidden');
     this.startIntroButton.classList.remove('hidden');
     this.setState('Loading');
@@ -233,7 +267,9 @@ export class MainMenu {
     this.mainMenu.classList.add('hidden');
     document.getElementById('loading-status')!.textContent = message;
     document.getElementById('loading-percent')!.textContent = 'No se pudo completar la carga';
-    document.getElementById('loading-progress')!.style.width = '0';
+    const progress = document.getElementById('loading-progress')!;
+    progress.classList.remove('loading-progress-indeterminate');
+    progress.style.width = '0';
     document.getElementById('btn-retry-loading')!.classList.remove('hidden');
     this.startIntroButton.classList.add('hidden');
     this.setState('Loading');
