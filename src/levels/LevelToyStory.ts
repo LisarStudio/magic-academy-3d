@@ -383,11 +383,16 @@ export class LevelToyStory {
     // Add key visual hints
     this.spawnKeysInWorld();
 
-    // This compiles the whole level as a side effect. Keep it for desktop, but
-    // never block a phone's main thread on a shader warmup before first play.
-    if (!isLowPowerDevice()) {
-      KeyPickupSequence.precompileShaders(this.sceneManager.renderer, scene, this.sceneManager.camera);
-    }
+    // Warm only the key/reward materials against the real light configuration.
+    // Do this before gameplay on every device so first collection never pays
+    // shader compilation or GPU resource creation costs.
+    const pickupWarmups = await Promise.allSettled([
+      KeyPickupSequence.precompileShaders(this.sceneManager.renderer, this.sceneManager.camera, scene),
+      this.powerOrbSystem.precompileShaders(this.sceneManager.renderer, this.sceneManager.camera, scene),
+    ]);
+    pickupWarmups.forEach((result) => {
+      if (result.status === 'rejected') console.warn('[Level] Pickup shader warmup failed; cached emissive fallback remains active.', result.reason);
+    });
 
     this.checkpointManager.respawnPlayer(this.player);
     // Visual dressing is optional and loads while the player views the intro/menu.
@@ -2133,9 +2138,15 @@ export class LevelToyStory {
     const tooth2 = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.06), keyMat);
     tooth2.position.set(0.10, -0.42, 0);
 
-    const keyLight = new THREE.PointLight(emissiveColor, 3.5, 5.5);
-    keyLight.position.set(0, 0, 0);
-    keyGroup.add(keyLight);
+    // Keep the key visibly luminous without adding a PointLight per key.
+    // Changing the scene light count while collecting recompiles shader
+    // variants on some WebGL drivers and caused multi-second pickup stalls.
+    const glow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.075, 8, 6),
+      new THREE.MeshBasicMaterial({ color: emissiveColor, toneMapped: false })
+    );
+    glow.name = 'key_emissive_glow';
+    keyGroup.add(glow);
 
     keyGroup.add(ring, shaft, tooth1, tooth2);
     scene.add(keyGroup);

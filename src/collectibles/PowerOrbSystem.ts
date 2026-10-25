@@ -10,6 +10,12 @@ export interface StaffUpgradeInfo {
 
 /** Separate collectible currency and persistent upgrade track for the sacred staff. */
 export class PowerOrbSystem {
+  private static readonly coreGeometry = new THREE.IcosahedronGeometry(0.23, 1);
+  private static readonly haloGeometry = new THREE.TorusGeometry(0.31, 0.035, 6, 20);
+  private static readonly coreMaterial = new THREE.MeshStandardMaterial({
+    color: 0x6ff5ff, emissive: 0x12cfee, emissiveIntensity: 2.2, metalness: 0.55, roughness: 0.24
+  });
+  private static readonly haloMaterial = new THREE.MeshBasicMaterial({ color: 0xffdf78, toneMapped: false });
   private readonly scene: THREE.Scene;
   private readonly onChange: (count: number) => void;
   private readonly pickups: Array<{ mesh: THREE.Group; value: number; phase: number; baseY: number }> = [];
@@ -23,24 +29,30 @@ export class PowerOrbSystem {
     this.onChange = onChange;
   }
 
+  public async precompileShaders(renderer: THREE.WebGLRenderer, camera: THREE.Camera, targetScene: THREE.Scene): Promise<void> {
+    const warmGroup = new THREE.Group();
+    warmGroup.add(
+      new THREE.Mesh(PowerOrbSystem.coreGeometry, PowerOrbSystem.coreMaterial),
+      new THREE.Mesh(PowerOrbSystem.haloGeometry, PowerOrbSystem.haloMaterial)
+    );
+    try {
+      await renderer.compileAsync(warmGroup, camera, targetScene);
+    } finally {
+      warmGroup.clear();
+    }
+  }
+
   public spawn(position: THREE.Vector3, value = 15): void {
     const root = new THREE.Group();
     root.name = 'wukong_power_orb_pickup';
     root.position.copy(position).add(new THREE.Vector3(0, 0.7, 0));
-    const gold = new THREE.MeshStandardMaterial({
-      color: 0x6ff5ff,
-      emissive: 0x12cfee,
-      emissiveIntensity: 2.2,
-      metalness: 0.55,
-      roughness: 0.24,
-    });
-    const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.23, 1), gold);
+    const core = new THREE.Mesh(PowerOrbSystem.coreGeometry, PowerOrbSystem.coreMaterial);
     core.name = 'power_orb_core';
     core.castShadow = false;
     root.add(core);
     const halo = new THREE.Mesh(
-      new THREE.TorusGeometry(0.31, 0.035, 6, 20),
-      new THREE.MeshBasicMaterial({ color: 0xffdf78, toneMapped: false })
+      PowerOrbSystem.haloGeometry,
+      PowerOrbSystem.haloMaterial
     );
     halo.rotation.x = Math.PI / 2;
     root.add(halo);
@@ -56,12 +68,6 @@ export class PowerOrbSystem {
       if (pickup.mesh.position.distanceTo(playerPosition) > 1.45) continue;
       this.count += pickup.value;
       this.scene.remove(pickup.mesh);
-      pickup.mesh.traverse((object) => {
-        if (!(object instanceof THREE.Mesh)) return;
-        object.geometry.dispose();
-        const materials = Array.isArray(object.material) ? object.material : [object.material];
-        materials.forEach((material) => material.dispose());
-      });
       this.pickups.splice(i, 1);
       this.onChange(this.count);
     }
