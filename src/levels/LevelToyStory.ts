@@ -82,6 +82,7 @@ export class LevelToyStory {
   private grassQuality = 0.85;
   private structureColliderSyncElapsed = 0;
   private centralTempleObject: THREE.Object3D | null = null;
+  private centralTempleWalkableFloor: { minX: number; maxX: number; minZ: number; maxZ: number; y: number } | null = null;
   private structureColliderCandidates: Array<{ root: THREE.Object3D; center: THREE.Vector3; radius: number; active: boolean }> = [];
   private cloudsUniforms: any = null;
   private lampMoths: LampMothSystem | null = null;
@@ -592,6 +593,12 @@ export class LevelToyStory {
     const inverseRoot = asset.matrixWorld.clone().invert();
     const collisionRoot = new THREE.Group();
     collisionRoot.name = name;
+    // Proxies are authored in the asset's local space below. Preserve the
+    // placed asset transform on their parent or the collision shell is left at
+    // the origin, detached from the visible temple.
+    collisionRoot.matrixAutoUpdate = false;
+    collisionRoot.matrix.copy(asset.matrixWorld);
+    collisionRoot.matrixWorldNeedsUpdate = true;
     const collisionMaterial = new THREE.MeshBasicMaterial({
       side: THREE.DoubleSide,
       colorWrite: false,
@@ -614,6 +621,7 @@ export class LevelToyStory {
       colliderCount++;
     });
     this.sceneManager.scene.add(collisionRoot);
+    collisionRoot.updateMatrixWorld(true);
     this.structureColliderCandidates.push({
       root: collisionRoot, center: bounds.getCenter(new THREE.Vector3()), radius: activationRadius, active: false
     });
@@ -692,8 +700,6 @@ export class LevelToyStory {
       map, color: 0xc9c4bc, roughness: 0.34, metalness: 0.12,
       clearcoat: 0.22, clearcoatRoughness: 0.4
     });
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(21.8, 0.22, 21.8), floorMaterial);
-    floor.name = 'central_temple_stone_floor';
     // The outdoor terrain is y=0 here. Keep the walkable temple surface within
     // the player's step height and put the collider's top at the same y as the
     // visible mosaic, avoiding the old 46 cm floor lip that hid Wukong's legs.
@@ -712,23 +718,65 @@ export class LevelToyStory {
         .sort((a, b) => Math.abs(a.point.y - topY) - Math.abs(b.point.y - topY))[0];
       if (floorHit) topY = floorHit.point.y + 0.012;
     }
-    floor.position.set(0, topY - 0.11, -40);
+    let floorWidth = 16;
+    let floorDepth = 16;
+    let floorCenterX = 0;
+    let floorCenterZ = -40;
+    const floorFootprint = new THREE.Box3().makeEmpty();
+    if (temple) {
+      // Measure only vertices on the actual walkable deck plane. The previous
+      // fixed 21.8 m square ignored the model's footprint and covered portions
+      // of the approach stairs and surrounding terrain.
+      const vertex = new THREE.Vector3();
+      temple.updateMatrixWorld(true);
+      temple.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        const positions = mesh.isMesh ? mesh.geometry?.getAttribute('position') : undefined;
+        if (!positions) return;
+        for (let i = 0; i < positions.count; i++) {
+          vertex.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
+          if (Math.abs(vertex.y - topY) > 0.12) continue;
+          if (Math.abs(vertex.x) > 11.8 || Math.abs(vertex.z + 40) > 11.8) continue;
+          floorFootprint.expandByPoint(vertex);
+        }
+      });
+      if (!floorFootprint.isEmpty()) {
+        const size = floorFootprint.getSize(new THREE.Vector3());
+        const center = floorFootprint.getCenter(new THREE.Vector3());
+        // Stay a small margin inside the authored edge so no new tile lip is
+        // visible beyond the temple's own stone base.
+        floorWidth = Math.max(4, size.x - 0.24);
+        floorDepth = Math.max(4, size.z - 0.24);
+        floorCenterX = center.x;
+        floorCenterZ = center.z;
+      }
+    }
+    this.centralTempleWalkableFloor = {
+      minX: floorCenterX - floorWidth * 0.5,
+      maxX: floorCenterX + floorWidth * 0.5,
+      minZ: floorCenterZ - floorDepth * 0.5,
+      maxZ: floorCenterZ + floorDepth * 0.5,
+      y: topY
+    };
+    console.info(`[Temple floor] Deck-aligned surface ${floorWidth.toFixed(2)} x ${floorDepth.toFixed(2)} m at y=${topY.toFixed(3)}.`);
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(floorWidth, 0.08, floorDepth), floorMaterial);
+    floor.name = 'central_temple_stone_floor';
+    floor.position.set(floorCenterX, topY - 0.04, floorCenterZ);
     floor.receiveShadow = true;
     this.sceneManager.scene.add(floor);
     this.levelColliders.push(floor);
 
     const scene = this.sceneManager.scene;
-    const bronze = new THREE.MeshStandardMaterial({ color: 0xb27635, roughness: 0.48, metalness: 0.52 });
-    const borderY = topY + 0.015;
-    const borderA = new THREE.Mesh(new THREE.BoxGeometry(21.9, 0.05, 0.16), bronze);
-    const borderB = borderA.clone();
-    borderA.position.set(0, borderY, -40 - 10.82);
-    borderB.position.set(0, borderY, -40 + 10.82);
-    const borderC = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.05, 21.9), bronze);
-    const borderD = borderC.clone();
-    borderC.position.set(-10.82, borderY, -40);
-    borderD.position.set(10.82, borderY, -40);
-    scene.add(borderA, borderB, borderC, borderD);
+    // Existing temple coins were initially placed on terrain before the GLB
+    // finished loading. Lift only those whose XZ coordinates are on this deck.
+    for (const item of this.collectibleSystem.collectibles) {
+      if (item.type !== 'COIN' || item.isCollected) continue;
+      const pos = item.mesh.position;
+      if (pos.x >= this.centralTempleWalkableFloor.minX && pos.x <= this.centralTempleWalkableFloor.maxX &&
+          pos.z >= this.centralTempleWalkableFloor.minZ && pos.z <= this.centralTempleWalkableFloor.maxZ) {
+        pos.y = topY + 0.6;
+      }
+    }
 
     // Recessed-looking stone medallion with an actual yin-yang S curve, not a
     // flat image. Its top sits only a few millimeters above the tiled floor.
@@ -755,6 +803,7 @@ export class LevelToyStory {
     yinStone.position.set(0, topY + 0.004, -40);
     scene.add(yinStone);
     const dotGeometry = new THREE.CircleGeometry(0.48, 24);
+    const bronze = new THREE.MeshStandardMaterial({ color: 0xb27635, roughness: 0.48, metalness: 0.52 });
     const dotLight = new THREE.Mesh(dotGeometry, new THREE.MeshStandardMaterial({ color: 0xe4d7bd, roughness: 0.55 }));
     const dotDark = new THREE.Mesh(dotGeometry, new THREE.MeshStandardMaterial({ color: 0x282a32, roughness: 0.55 }));
     dotLight.rotation.x = dotDark.rotation.x = -Math.PI / 2;
