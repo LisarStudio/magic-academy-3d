@@ -97,7 +97,9 @@ export class AudioManager {
       this.setMusicSource('intro');
       this.bgmAudio.loop = true;
       await this.waitForMediaReady(this.bgmAudio);
-      this.bgmAudio.currentTime = 0;
+      // A mobile Comenzar tap can start playback before the background
+      // preflight finishes. Never rewind that live intro when it becomes ready.
+      if (this.bgmAudio.paused) this.bgmAudio.currentTime = 0;
       this.preparedGameplayTracks.add('intro');
       this.musicPrepared = true;
       // Keep the intro's first-frame network lane clear. The alternate game
@@ -114,9 +116,10 @@ export class AudioManager {
   }
 
   public async startIntroMusic(): Promise<boolean> {
-    if (!this.musicPrepared) return false;
     this.musicMode = 'intro';
     this.bgmAudio.loop = true;
+    // Allow the Comenzar tap to initiate the stream on mobile even when the
+    // browser deferred the earlier preload. play() itself waits for its buffer.
     if (this.currentMusicTrack !== 'intro') this.setMusicSource('intro');
     if (!this.bgmAudio.paused && this.currentMusicTrack === 'intro') return true;
 

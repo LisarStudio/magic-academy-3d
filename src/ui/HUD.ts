@@ -33,6 +33,8 @@ export class HUD {
   private bossHealthPanelEl: HTMLElement;
   private bossHealthFillEl: HTMLElement;
   private bossHealthValueEl: HTMLElement;
+  private lifeCountEl: HTMLElement | null = null;
+  private dodgeWarningEl: HTMLElement | null = null;
 
   private dialogueBubbleEl: HTMLElement;
   private dialogueSpeakerEl: HTMLElement;
@@ -92,6 +94,8 @@ export class HUD {
     this.gekkoQuestBadgeEl = document.getElementById('gekko-quest-complete');
 
     this.hpBarFillEl = document.getElementById('hp-bar-fill')!;
+    this.lifeCountEl = document.getElementById('life-count');
+    this.dodgeWarningEl = document.getElementById('dodge-warning');
     this.mpBarFillEl = document.getElementById('mp-bar-fill')!;
     this.slotSpell1El = document.getElementById('slot-spell-1')!;
     this.slotSpell2El = document.getElementById('slot-spell-2')!;
@@ -292,6 +296,18 @@ export class HUD {
 
     const hpTextEl = document.getElementById('hp-text');
     if (hpTextEl) hpTextEl.textContent = `${safeHp} / ${maxHp}`;
+  }
+
+  public setLives(lives: number): void {
+    if (!this.lifeCountEl) return;
+    this.lifeCountEl.innerHTML = Array.from({ length: 3 }, (_, index) =>
+      `<span class="${index >= lives ? 'lost-life' : ''}" aria-hidden="true">♥</span>`
+    ).join(' ');
+    this.lifeCountEl.setAttribute('aria-label', `Vidas restantes: ${lives}`);
+  }
+
+  public showDodgeWarning(active: boolean): void {
+    this.dodgeWarningEl?.classList.toggle('hidden', !active);
   }
 
   public setMana(mp: number, maxMp = 100): void {

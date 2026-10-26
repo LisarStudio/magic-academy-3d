@@ -21,9 +21,13 @@ export class PlayerController {
   public runSpeed = 9.5;
   public jumpForce = 8.0;
   public gravity = -20.0;
+  private dodgeCooldown = 0;
+  private dodgeInvulnerability = 0;
+  private readonly dodgeDirection = new THREE.Vector3();
 
   public health = 100;
   public maxHealth = 100;
+  public lives = 3;
   public mana = 100;
   public maxMana = 100;
   public manaRegenRate = 12.0; // Mana per second
@@ -276,6 +280,8 @@ export class PlayerController {
 
   public isInvulnerable = false;
   public onRespawn?: () => void;
+  public onLivesChange?: (lives: number) => void;
+  public onGameOver?: () => void;
 
   public takeDamage(amount: number, respawnPos?: THREE.Vector3): void {
     if (this.isInvulnerable || this.isControlsLocked || this.isMovementLocked) {
@@ -286,7 +292,18 @@ export class PlayerController {
     this.onHealthChange?.(this.health, this.maxHealth);
 
     if (this.health <= 0) {
-      // Respawn
+      this.lives = Math.max(0, this.lives - 1);
+      this.onLivesChange?.(this.lives);
+      if (this.lives === 0) {
+        this.health = 0;
+        this.onHealthChange?.(this.health, this.maxHealth);
+        this.isControlsLocked = true;
+        this.isMovementLocked = true;
+        this.velocity.set(0, 0, 0);
+        this.onGameOver?.();
+        return;
+      }
+      // Keep the existing checkpoint respawn, now consuming one of three lives.
       this.health = this.maxHealth;
       this.mana = this.maxMana;
       this.onHealthChange?.(this.health, this.maxHealth);
@@ -321,14 +338,38 @@ export class PlayerController {
     // ── Fail-Safe Control Recovery ──────────────────────────────────────────
     // If controls are locked but NO cinematic or pickup sequence is active, force-unlock!
     const level = (window as any).gameInstance?.level01;
+    const isGameOver = (window as any).gameInstance?.isGameOver?.() === true;
     const isCinematic = level?.isCinematicPlaying;
     const isOneShot = (this.animationController as any)?.isPlayingOneShot;
 
-    if (this.isControlsLocked && !isCinematic && !isOneShot) {
+    if (this.isControlsLocked && !isCinematic && !isOneShot && !isGameOver) {
       console.warn('[PlayerController] 🔓 Safety Recovery: Clearing stuck control lock flag for gameplay!');
       this.isControlsLocked = false;
       this.isMovementLocked = false;
       this.isAttacking = false;
+    }
+
+    this.dodgeCooldown = Math.max(0, this.dodgeCooldown - delta);
+    if (this.dodgeInvulnerability > 0) {
+      this.dodgeInvulnerability = Math.max(0, this.dodgeInvulnerability - delta);
+      if (this.dodgeInvulnerability === 0) this.isInvulnerable = false;
+    }
+    const nearbyBossWindup = !this.isControlsLocked && !this.isMovementLocked && !this.isAttacking &&
+      (level?.enemies as Array<{ isAttackWindup?: boolean; getPosition?: () => THREE.Vector3 }> | undefined)?.some(enemy =>
+        enemy.isAttackWindup && enemy.getPosition && enemy.getPosition().distanceToSquared(this.mesh.position) < 36
+      ) === true;
+    (window as any).gameInstance?.hud?.showDodgeWarning?.(nearbyBossWindup);
+    // The same backward input works with S/Down and the existing mobile stick.
+    if (nearbyBossWindup && input.moveBackward && this.dodgeCooldown <= 0) {
+      this.dodgeCooldown = 1.15;
+      this.dodgeInvulnerability = 0.48;
+      this.isInvulnerable = true;
+      this.dodgeDirection.set(0, 0, -1).applyQuaternion(this.mesh.quaternion).setY(0).normalize();
+      this.velocity.x = this.dodgeDirection.x * 7.2;
+      this.velocity.z = this.dodgeDirection.z * 7.2;
+      this.animationController.playBackwardDodge(() => {
+        if (!this.isControlsLocked && !this.isAttacking) this.animationController.playState(this.isGrounded ? 'Idle' : 'Fall', 0.14);
+      });
     }
 
     // ── Enforce Strict Staff Weapon Visibility and WOOD/NOWOOD Animation Sync ──

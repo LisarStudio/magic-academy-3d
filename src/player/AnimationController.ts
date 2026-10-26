@@ -35,6 +35,10 @@ export class AnimationController {
   // Armed/Unarmed state
   public isArmed = false;
   private isPlayingOneShot = false;
+  private oneShotAction: THREE.AnimationAction | null = null;
+  private oneShotMarkerTime = -1;
+  private oneShotOnMarker: (() => void) | null = null;
+  private oneShotMarkerFired = false;
 
   constructor(modelOrGroup: THREE.Object3D, clips: THREE.AnimationClip[] = []) {
     if (clips && clips.length > 0) {
@@ -56,24 +60,7 @@ export class AnimationController {
     console.log('[AnimCtrl] Registering clips:', clips.map((c) => `${c.name} (${c.tracks.length}t, ${c.duration.toFixed(1)}s)`).join(' | '));
 
     for (const clip of clips) {
-      const action = this.mixer.clipAction(clip);
-
-      // One-shot animations
-      if (clip.name === 'TakeItem' || clip.name === 'CastSpell' || clip.name === 'Wukong_NoWood_Kick' || clip.name === 'Idle_Kick' || clip.name === 'Wukong_NoWood_DoubleJump' || clip.name === 'Wukong_NoWood_HardLanding') {
-        action.setLoop(THREE.LoopOnce, 1);
-        action.clampWhenFinished = true;
-      }
-      if (clip.name === 'Idle_Unarmed' || clip.name === 'Idle_Armed') {
-        action.setLoop(THREE.LoopOnce, 1);
-        action.clampWhenFinished = true;
-      }
-      // Jump is one-shot
-      if (clip.name.includes('Jump')) {
-        action.setLoop(THREE.LoopOnce, 1);
-        action.clampWhenFinished = true;
-      }
-
-      this.allActions.set(clip.name, action);
+      this.registerClip(clip);
     }
 
     this.mixer.addEventListener('finished', (event) => {
@@ -89,6 +76,66 @@ export class AnimationController {
 
     // Start playing Idle_Unarmed
     this.playState('Idle');
+  }
+
+  private registerClip(clip: THREE.AnimationClip): void {
+    if (!this.mixer || this.allActions.has(clip.name)) return;
+    const action = this.mixer.clipAction(clip);
+    if (['TakeItem', 'CastSpell', 'Wukong_NoWood_Kick', 'Idle_Kick', 'Wukong_NoWood_DoubleJump', 'Wukong_NoWood_HardLanding', 'Atack_Jump', 'Dodge_Back', 'Swing_To_Land', 'Swing_To_Land2', 'Climbing', 'Climbing_To_Top', 'Continue'].includes(clip.name) || clip.name.includes('Jump') || clip.name.startsWith('Idle_')) {
+      action.setLoop(THREE.LoopOnce, 1);
+      action.clampWhenFinished = true;
+    }
+    this.allActions.set(clip.name, action);
+  }
+
+  /** Register optional FBX clips when their background loading finishes. */
+  public addClips(clips: THREE.AnimationClip[]): void {
+    for (const clip of clips) this.registerClip(clip);
+  }
+
+  public hasClip(name: string): boolean { return this.allActions.has(name); }
+  public getClipDuration(name: string): number { return this.allActions.get(name)?.getClip().duration ?? 1.2; }
+
+  /** Run a prepared one-shot action without changing gameplay-specific logic. */
+  public playOneShot(name: string, onComplete: () => void, speed = 1, markerFraction = -1, onMarker?: () => void): void {
+    const action = this.allActions.get(name);
+    if (!action || !this.mixer) { onComplete(); return; }
+    if (this.currentAction && this.currentAction !== action) this.currentAction.fadeOut(0.1);
+    this.idleCyclePhase = null;
+    this.isPlayingOneShot = true;
+    this.oneShotAction = action;
+    this.oneShotMarkerTime = markerFraction >= 0 ? action.getClip().duration * markerFraction : -1;
+    this.oneShotOnMarker = onMarker ?? null;
+    this.oneShotMarkerFired = false;
+    action.reset().setLoop(THREE.LoopOnce, 1).setEffectiveTimeScale(speed).setEffectiveWeight(1).fadeIn(0.08).play();
+    action.clampWhenFinished = true;
+    this.currentAction = action;
+    this.currentState = name as AnimationState;
+    const onFinished = (event: { action: THREE.AnimationAction }) => {
+      if (event.action !== action) return;
+      this.mixer?.removeEventListener('finished', onFinished as any);
+      if (this.oneShotAction !== action) return;
+      if (!this.oneShotMarkerFired && this.oneShotOnMarker) this.oneShotOnMarker();
+      this.oneShotAction = null;
+      this.oneShotOnMarker = null;
+      this.oneShotMarkerTime = -1;
+      this.isPlayingOneShot = false;
+      onComplete();
+    };
+    this.mixer.addEventListener('finished', onFinished as any);
+  }
+
+  public playAirAttack(onImpact: () => void, onComplete: () => void): void {
+    if (!this.hasClip('Atack_Jump')) {
+      onImpact();
+      onComplete();
+      return;
+    }
+    this.playOneShot('Atack_Jump', onComplete, 1, 0.42, onImpact);
+  }
+
+  public playBackwardDodge(onComplete: () => void): void {
+    this.playOneShot('Dodge_Back', onComplete, 1.15);
   }
 
   /**
@@ -463,6 +510,10 @@ export class AnimationController {
   public update(delta: number): void {
     if (this.mixer) {
       this.mixer.update(delta);
+      if (this.oneShotAction && !this.oneShotMarkerFired && this.oneShotMarkerTime >= 0 && this.oneShotAction.time >= this.oneShotMarkerTime) {
+        this.oneShotMarkerFired = true;
+        this.oneShotOnMarker?.();
+      }
 
       // Audit & enforce 1.0 scale on bones to guarantee zero bone scaling deformation
       if (this.characterRoot) {

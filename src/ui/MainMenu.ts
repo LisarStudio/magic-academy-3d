@@ -109,6 +109,25 @@ export class MainMenu {
     document.getElementById('loading-percent')!.textContent = 'Preparando…';
   }
 
+  /** Mobile browsers may defer video downloads until a user gesture. Offer the
+   * gesture immediately so startup never waits on a preload that Safari/iOS
+   * is allowed to postpone indefinitely. The actual cinematic still starts
+   * only after both the music and its first decoded frame are ready. */
+  public showMobileIntroGate(): void {
+    if (this.state !== 'Loading') return;
+    this.loadingPanel.classList.remove('hidden');
+    this.loadingPanel.classList.remove('is-dismissing');
+    this.mainMenu.classList.add('hidden');
+    this.startIntroButton.textContent = 'Comenzar';
+    this.startIntroButton.classList.remove('hidden');
+    document.getElementById('btn-retry-loading')!.classList.add('hidden');
+    document.getElementById('loading-status')!.textContent = 'Toca Comenzar para preparar y reproducir la introducción.';
+    document.getElementById('loading-percent')!.textContent = 'Listo para iniciar';
+    const progress = document.getElementById('loading-progress')!;
+    progress.classList.add('loading-progress-indeterminate');
+    progress.style.width = '';
+  }
+
   private updateIntroProgress(): void {
     if (this.state !== 'Loading') return;
     const video = this.introVideo;
@@ -141,7 +160,9 @@ export class MainMenu {
     if (video) {
       const poster = `${base}assets/ui/wukong-loading-poster.webp?v=${__APP_VERSION__}`;
       video.poster = poster;
-      screen.style.backgroundImage = `url("${poster}")`;
+      // Let the transformed video element display its own poster, so its fallback
+      // framing matches the live animation and never puts Wukong back under the UI.
+      screen.style.backgroundImage = 'none';
       video.setAttribute('fetchpriority', 'low');
       if (!video.src.includes('wukong-loading-background-optimized.mp4')) {
         video.src = `${base}assets/ui/wukong-loading-background-optimized.mp4?v=${__APP_VERSION__}`;
@@ -224,6 +245,15 @@ export class MainMenu {
     tip.textContent = this.loadingTips[this.loadingTipIndex];
   }
 
+  private loadOfficialMenuLogo(): void {
+    const logo = document.querySelector<HTMLImageElement>('.wukong-logo');
+    const path = logo?.dataset.menuLogo;
+    if (!logo || !path || logo.src) return;
+    logo.fetchPriority = 'low';
+    logo.src = `${import.meta.env.BASE_URL}${path}?v=${__APP_VERSION__}`;
+    delete logo.dataset.menuLogo;
+  }
+
   private friendlyAssetName(url: string): string {
     const name = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'recursos');
     if (/wukong|player/i.test(name)) return 'a Wukong';
@@ -267,17 +297,19 @@ export class MainMenu {
     this.introFallbackStarted = false;
     this.startIntroButton.classList.add('hidden');
     this.mainMenu.classList.add('hidden');
-    if (this.introVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-      throw new Error(`Intro frame was not prepared before playback (readyState=${this.introVideo.readyState}).`);
-    }
     this.introVideo.currentTime = 0;
     this.introVideo.onended = () => void this.enterMenuIdle();
     this.introVideo.onerror = () => this.handleIntroMediaError();
     this.introVideo.classList.add('is-visible');
     this.setState('Intro');
+    // Calling play() from the Comenzar gesture also starts the media request on
+    // mobile Safari, where preload="auto" is only a hint and may be ignored.
     await this.introVideo.play();
     await this.waitForVideoFrame(this.introVideo);
+    this.loadingPanel.classList.add('is-dismissing');
+    await this.waitForOpacityTransition(this.loadingPanel);
     this.loadingPanel.classList.add('hidden');
+    this.loadingPanel.classList.remove('is-dismissing');
   }
 
   private showIntroStartPrompt(): void {
@@ -286,6 +318,7 @@ export class MainMenu {
     this.introVideo.classList.add('is-visible');
     this.mainMenu.classList.add('hidden');
     this.loadingPanel.classList.remove('hidden');
+    this.loadingPanel.classList.remove('is-dismissing');
     document.getElementById('loading-status')!.textContent = 'Todo está listo. Pulsa Comenzar para iniciar la aventura con música.';
     document.getElementById('loading-percent')!.textContent = 'Listo';
     const progress = document.getElementById('loading-progress')!;
@@ -304,10 +337,9 @@ export class MainMenu {
     this.showLoadingError('No se pudo cargar la intro. Revisa la conexión e inténtalo otra vez.', () => {
       this.introFallbackStarted = false;
       this.introVideo.load();
-      void this.prepareIntroVideo().then(() => this.playIntro(true)).catch((error: unknown) => {
-        console.error('[MainMenu] Intro retry failed:', this.describeVideoFailure(this.introVideo, error));
-        this.showLoadingError('La intro sigue sin estar disponible. Comprueba el recurso e inténtalo de nuevo.', () => void this.playIntro(true));
-      });
+      // Keep Retry's tap as the gesture that calls play(); do not await a
+      // preload that mobile browsers may defer until that same gesture.
+      void this.playIntro(true);
     });
   }
 
@@ -319,6 +351,7 @@ export class MainMenu {
       await this.waitForVideoFrame(this.idleVideo);
       this.idleVideo.classList.add('is-visible');
       this.introVideo.classList.remove('is-visible');
+      this.loadOfficialMenuLogo();
       this.mainMenu.classList.remove('hidden');
       this.setState('MenuIdle');
       this.refreshContinueButton();
@@ -334,7 +367,7 @@ export class MainMenu {
       }, 800);
     } catch (error) {
       console.error('[MainMenu] Menu-idle playback failed:', this.describeVideoFailure(this.idleVideo, error));
-      this.showLoadingError('No se pudo reproducir el fondo animado del men?. Reintenta para volver a cargarlo.', () => void this.retryMenuIdleVideo());
+      this.showLoadingError('No se pudo reproducir el fondo animado del menú. Reintenta para volver a cargarlo.', () => void this.retryMenuIdleVideo());
     }
   }
 
@@ -347,23 +380,25 @@ export class MainMenu {
       await this.waitForVideoFrame(this.idleVideo);
       this.idleVideo.classList.add('is-visible');
       this.introVideo.classList.remove('is-visible');
+      this.loadOfficialMenuLogo();
       this.loadingPanel.classList.add('hidden');
       this.mainMenu.classList.remove('hidden');
       this.setState('MenuIdle');
       this.refreshContinueButton();
       void this.prepareStartVideo().catch((retryError: unknown) => {
         console.error('[MainMenu] Start-video retry failed:', this.describeVideoFailure(this.startVideo, retryError));
-        this.showDialogError('No se pudo preparar la transici?n. Reintenta para volver a cargarla.', () => void this.retryStartTransition('new'));
+        this.showDialogError('No se pudo preparar la transición. Reintenta para volver a cargarla.', () => void this.retryStartTransition('new'));
       });
     } catch (retryError) {
       console.error('[MainMenu] Menu-idle retry failed:', this.describeVideoFailure(this.idleVideo, retryError));
-      this.showLoadingError('El fondo animado sigue sin estar disponible. Revisa el recurso e int?ntalo de nuevo.', () => void this.retryMenuIdleVideo());
+      this.showLoadingError('El fondo animado sigue sin estar disponible. Revisa el recurso e inténtalo de nuevo.', () => void this.retryMenuIdleVideo());
     }
   }
 
   public showLoadingError(message: string, retry: () => void = () => window.location.reload()): void {
     this.loadingRetry = retry;
     this.loadingPanel.classList.remove('hidden');
+    this.loadingPanel.classList.remove('is-dismissing');
     this.mainMenu.classList.add('hidden');
     document.getElementById('loading-status')!.textContent = message;
     document.getElementById('loading-percent')!.textContent = 'No se pudo completar la carga';

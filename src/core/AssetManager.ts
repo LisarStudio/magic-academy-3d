@@ -14,6 +14,7 @@ export class AssetManager {
   private fbxLoader = new FBXLoader(this.loadingManager);
   private gltfLoader = new GLTFLoader(this.loadingManager);
   public onProgress?: (loaded: number, total: number, url: string) => void;
+  private playerTranslationScale = 0.01;
 
   private async withAssetTimeout<T>(load: Promise<T>, url: string): Promise<T> {
     let timeoutId = 0;
@@ -286,6 +287,8 @@ export class AssetManager {
         }
       }
 
+      this.playerTranslationScale = translationScaleFactor;
+
       // Print skeleton bone names for debugging
       const boneNames: string[] = [];
       playerModel.traverse((child) => {
@@ -461,6 +464,36 @@ export class AssetManager {
       console.error('[AssetManager] Failed to load player model:', err);
       return { model: this.createProceduralPlayer(), clips: [] };
     }
+  }
+
+  /** Load the larger optional traversal/combat clips after the first playable frame. */
+  public async loadSupplementalPlayerClips(targetRoot: THREE.Object3D): Promise<THREE.AnimationClip[]> {
+    const specs: Array<[string, string]> = [
+      ['atack_jump.fbx', 'Atack_Jump'],
+      ['esquivar_paso_atras.fbx', 'Dodge_Back'],
+      ['Swing To Land.fbx', 'Swing_To_Land'],
+      ['Swing To Land2.fbx', 'Swing_To_Land2'],
+      ['Climbing.fbx', 'Climbing'],
+      ['Climbing To Top.fbx', 'Climbing_To_Top'],
+      ['continue.fbx', 'Continue']
+    ];
+    const clips: THREE.AnimationClip[] = [];
+    for (const [file, name] of specs) {
+      // Yield between FBX parsing/retarget passes to avoid one long main-thread stall.
+      await new Promise<void>(resolve => {
+        const ric = (window as any).requestIdleCallback as ((cb: () => void, options?: { timeout: number }) => number) | undefined;
+        if (ric) ric(resolve, { timeout: 2500 });
+        else window.setTimeout(resolve, 350);
+      });
+      const clip = await this.loadAndRetargetClip(
+        `${import.meta.env.BASE_URL}assets/characters/wukong/${encodeURIComponent(file)}?v=20261026-supplemental`,
+        name,
+        targetRoot,
+        this.playerTranslationScale
+      );
+      if (clip && clip.tracks.length) clips.push(clip);
+    }
+    return clips;
   }
 
 

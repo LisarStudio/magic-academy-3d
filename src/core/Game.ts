@@ -51,6 +51,10 @@ export class Game {
   private performanceSampleElapsed = 0;
   private performanceAdjustCooldown = 0;
   private fastFrameSeconds = 0;
+  private gameOverActive = false;
+  private gameOverElapsed = 0;
+  private gameOverSpot: THREE.SpotLight | null = null;
+  private gameOverTarget = new THREE.Object3D();
 
   constructor(canvas: HTMLCanvasElement) {
     this.sceneManager = new SceneManager(canvas);
@@ -106,6 +110,26 @@ export class Game {
     // previously kept the blue backdrop onscreen during the whole preparation.
     this.lastFrameTime = performance.now();
     requestAnimationFrame((t) => this.loop(t));
+    const mobileMedia = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+    if (mobileMedia) {
+      // iOS/Safari may ignore preload=auto until a tap. Waiting for loadeddata
+      // before offering a button deadlocks the very gesture that starts loading.
+      this.mainMenu.showMobileIntroGate();
+      void Promise.all([musicPreparation, introVideoPreparation]).then(([musicReady, videoReady]) => {
+        if (musicReady && videoReady) {
+          const status = document.getElementById('loading-status');
+          if (status) status.textContent = 'La música y la introducción están listas. Toca Comenzar.';
+          const percent = document.getElementById('loading-percent');
+          if (percent) percent.textContent = 'Listo';
+          const progress = document.getElementById('loading-progress');
+          if (progress) {
+            progress.classList.remove('loading-progress-indeterminate');
+            progress.style.width = '100%';
+          }
+        }
+      });
+      return;
+    }
     const [musicReady, videoReady] = await Promise.all([musicPreparation, introVideoPreparation]);
     if (musicReady && videoReady) {
       // Present the intro's first frame before the heavier model and animation
@@ -114,8 +138,8 @@ export class Game {
       await this.mainMenu.playIntro();
     } else {
       const message = !videoReady
-        ? 'No se pudo preparar el v?deo de intro. Comprueba la conexi?n y vuelve a intentarlo.'
-        : 'No se pudo preparar la m?sica de la aventura. Comprueba la conexi?n y vuelve a intentarlo.';
+        ? 'No se pudo preparar el vídeo de intro. Comprueba la conexión y vuelve a intentarlo.'
+        : 'No se pudo preparar la música de la aventura. Comprueba la conexión y vuelve a intentarlo.';
       this.mainMenu.showLoadingError(message, () => void this.retryIntroMedia());
     }
 
@@ -133,6 +157,8 @@ export class Game {
     this.player = new PlayerController(playerData.model as THREE.Group, this.animationController);
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
+    this.player.onLivesChange = (lives) => this.hud.setLives(lives);
+    this.player.onGameOver = () => this.enterGameOver();
     this.inputManager.canInteract = () => this.canUseGameplayActions();
     this.inputManager.canAttack = () => this.canUseGameplayActions();
 
@@ -199,6 +225,7 @@ export class Game {
 
     // 6. Bind Player & HUD Status Callbacks
     this.player.onHealthChange = (hp, maxHp) => this.hud.setHealth(hp, maxHp);
+    this.hud.setLives(this.player.lives);
     this.hud.mobileControls = new MobileTouchControls(this.inputManager);
     this.hud.equipmentViewer = new EquipmentViewer(this.player, this.level01);
 
@@ -218,6 +245,10 @@ export class Game {
     // 7. Bind Input Actions
     this.inputManager.onLeftClick = () => {
       if (!this.canUseGameplayActions()) return;
+      if (!this.player.isGrounded) {
+        this.performAirAttack();
+        return;
+      }
 
       if (!this.player.isArmed()) {
         // Unarmed: Execute martial arts kick attack
@@ -296,6 +327,10 @@ export class Game {
     this.inputManager.onKick = () => {
       console.log('[Game] onKick callback triggered. HasStaff:', this.player.hasStaff, 'isControlsLocked:', this.player.isControlsLocked, 'isAttacking:', this.player.isAttacking);
       if (this.canUseGameplayActions()) {
+        if (!this.player.isGrounded) {
+          this.performAirAttack();
+          return;
+        }
         this.player.isAttacking = true;
         this.player.isMovementLocked = true;
         this.player.isControlsLocked = true;
@@ -415,6 +450,7 @@ export class Game {
         this.audioManager.resume();
       }
       if (this.menuState !== 'Playing') return;
+      if (this.gameOverActive) return;
       if (this.level01?.stateFlags?.levelCompleted) return; // Don't pause if dead/won
       
       this.isPaused = !isLocked;
@@ -433,6 +469,8 @@ export class Game {
     const btnContinue = document.getElementById('btn-victory-continue');
     const btnResume = document.getElementById('btn-resume');
     document.getElementById('btn-retry-in-game-loading')?.addEventListener('click', () => window.location.reload());
+    document.getElementById('btn-life-continue')?.addEventListener('click', () => this.continueAfterGameOver());
+    document.getElementById('btn-life-abandon')?.addEventListener('click', () => this.abandonAfterGameOver());
     this.inputManager.onPauseToggle = () => {
       if (this.menuState === 'Playing') this.togglePause();
     };
@@ -466,6 +504,12 @@ export class Game {
     this.audioManager.resume();
     this.audioManager.startGameplayMusic();
     this.inputManager.resetInputs();
+    this.gameOverActive = false;
+    if (mode === 'new') {
+      this.player.lives = 3;
+      this.hud.setLives(3);
+      document.getElementById('game-over-screen')?.classList.add('hidden');
+    }
 
     if (mode === 'continue') {
       this.loadGame();
@@ -488,12 +532,101 @@ export class Game {
     // Grass is downloaded and instanced after the first playable frame, in
     // small sector batches, so it cannot hold the menu or transition hostage.
     void this.level01.loadGrassInBackground();
+    // These optional, larger FBX clips are parsed and retargeted one at a time
+    // after play starts, so they don't delay mobile startup or the first frame.
+    void this.assetManager.loadSupplementalPlayerClips(this.player.mesh)
+      .then((clips) => this.animationController.addClips(clips))
+      .catch((error) => console.warn('[Game] Some optional Wukong animations could not be prepared:', error));
+  }
+
+  private performAirAttack(): void {
+    if (!this.canUseGameplayActions() || !this.player || this.player.isAttacking) return;
+    this.player.isAttacking = true;
+    this.audioManager.playAttackGrunt();
+    this.animationController.playAirAttack(() => {
+      const origin = this.player.mesh.position;
+      const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.mesh.quaternion);
+      for (const enemy of this.level01.enemies) {
+        if (!enemy.isAlive() || !enemy.isBossVulnerable) continue;
+        const target = enemy.getPosition();
+        const toTarget = target.clone().sub(origin);
+        const distance = toTarget.length();
+        toTarget.y = 0;
+        if (distance < 2.8 && (toTarget.lengthSq() < 0.001 || forward.dot(toTarget.normalize()) > 0.05)) {
+          enemy.takeHit(origin, this.player.isArmed() ? this.level01.getStaffDamage(1) : 1);
+          this.audioManager.playHitImpact();
+          this.spellSystem.createImpactParticles(target.add(new THREE.Vector3(0, 0.5, 0)), 0xffc45c);
+        }
+      }
+    }, () => {
+      this.player.isAttacking = false;
+      this.animationController.playState(this.player.isGrounded ? 'Idle' : 'Fall', 0.14);
+    });
+  }
+
+  private enterGameOver(): void {
+    if (this.gameOverActive) return;
+    this.gameOverActive = true;
+    this.gameOverElapsed = 0;
+    this.inputManager.exitPointerLock();
+    this.player.velocity.set(0, 0, 0);
+    this.player.isControlsLocked = true;
+    this.player.isMovementLocked = true;
+    document.getElementById('game-over-screen')?.classList.remove('hidden');
+    this.gameOverTarget.position.copy(this.player.mesh.position).add(new THREE.Vector3(0, 1, 0));
+    this.sceneManager.scene.add(this.gameOverTarget);
+    this.gameOverSpot = new THREE.SpotLight(0xffe0a4, 24, 24, Math.PI / 5, 0.62, 1.5);
+    this.gameOverSpot.position.copy(this.player.mesh.position).add(new THREE.Vector3(0, 8, 1));
+    this.gameOverSpot.target = this.gameOverTarget;
+    this.gameOverSpot.castShadow = false;
+    this.sceneManager.scene.add(this.gameOverSpot);
+    this.sceneManager.scene.add(this.gameOverSpot.target);
+    this.animationController.playOneShot('Continue', () => {}, 1);
+  }
+
+  private continueAfterGameOver(): void {
+    if (!this.gameOverActive) return;
+    this.gameOverActive = false;
+    this.gameOverSpot?.removeFromParent();
+    this.gameOverSpot = null;
+    this.gameOverTarget.removeFromParent();
+    this.player.lives = 3;
+    this.player.health = this.player.maxHealth;
+    this.player.mana = this.player.maxMana;
+    this.player.mesh.position.copy(this.checkpointManager.getActiveCheckpointPosition());
+    this.player.velocity.set(0, 0, 0);
+    this.player.onLivesChange?.(3);
+    this.player.onHealthChange?.(this.player.health, this.player.maxHealth);
+    this.player.onManaChange?.(this.player.mana, this.player.maxMana);
+    this.player.isControlsLocked = false;
+    this.player.isMovementLocked = false;
+    this.player.isAttacking = false;
+    this.player.forceIdle();
+    document.getElementById('game-over-screen')?.classList.add('hidden');
+    this.cameraController.setTarget(this.player.mesh);
+    this.cameraController.snapBehindTarget(false);
+  }
+
+  private abandonAfterGameOver(): void {
+    const screen = document.getElementById('game-over-screen');
+    if (!screen) { window.location.reload(); return; }
+    screen.style.transition = 'opacity 800ms ease';
+    requestAnimationFrame(() => { screen.style.opacity = '0'; });
+    screen.addEventListener('transitionend', () => window.location.reload(), { once: true });
+    window.setTimeout(() => window.location.reload(), 950);
   }
 
   private async retryIntroMedia(): Promise<void> {
     try {
-      await this.audioManager.prepareMusic();
-      await this.mainMenu.prepareIntroVideo();
+      const mobileMedia = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+      if (mobileMedia) {
+        // The retry tap is needed by iOS media policy; let play() initiate both
+        // streams first, while the existing preload continues in the background.
+        void this.audioManager.prepareMusic().catch((error: unknown) => console.warn('[Game] Music retry preload failed:', error));
+        await this.mainMenu.playIntro(true);
+        return;
+      }
+      await Promise.all([this.audioManager.prepareMusic(), this.mainMenu.prepareIntroVideo()]);
       await this.mainMenu.playIntro(true);
     } catch (error) {
       console.error('[Game] Intro media retry failed:', error);
@@ -597,7 +730,15 @@ export class Game {
     if (this.menuState !== 'Playing') return;
     this.inputManager.beginFrame();
     // Update Game Components
-    if (this.cinematicCamera.isActive()) {
+    if (this.gameOverActive) {
+      this.player.update(delta, this.inputManager, this.cameraController, animationDelta);
+      this.gameOverElapsed += delta;
+      const center = this.player.mesh.position.clone().add(new THREE.Vector3(0, 1, 0));
+      const angle = (this.gameOverElapsed / 12) * Math.PI * 2;
+      this.sceneManager.camera.position.set(center.x + Math.sin(angle) * 6.2, center.y + 2.2 + Math.sin(angle * 0.5) * 0.25, center.z + Math.cos(angle) * 6.2);
+      this.sceneManager.camera.lookAt(center);
+      if (this.gameOverSpot) this.gameOverSpot.position.set(center.x, center.y + 8, center.z + 1);
+    } else if (this.cinematicCamera.isActive()) {
       this.cinematicCamera.update(delta);
       // Still update player animations during cinematics
       this.player.update(delta, this.inputManager, this.cameraController, animationDelta);
@@ -635,13 +776,16 @@ export class Game {
       !this.player.isControlsLocked && !this.player.isMovementLocked && !this.player.isAttacking;
   }
 
+  public isGameOver(): boolean { return this.gameOverActive; }
+
   public saveGame(): void {
     const saveData = {
-      version: 3,
+      version: 4,
       levelId: 'magic-academy-3d',
       playerPos: { x: this.player.mesh.position.x, y: this.player.mesh.position.y, z: this.player.mesh.position.z },
       playerRotY: this.player.mesh.rotation.y,
       health: this.player.health,
+      lives: this.player.lives,
       maxHealth: this.player.maxHealth,
       mana: this.player.mana,
       maxMana: this.player.maxMana,
@@ -676,7 +820,9 @@ export class Game {
     }
     try {
       const data = JSON.parse(raw);
-      if (data.version !== undefined && data.version !== 1 && data.version !== 2 && data.version !== 3) throw new Error('Versión de partida no compatible.');
+      if (data.version !== undefined && data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4) throw new Error('Versión de partida no compatible.');
+      if (Number.isFinite(data.lives)) this.player.lives = THREE.MathUtils.clamp(Math.floor(data.lives), 1, 3);
+      this.hud.setLives(this.player.lives);
       if (data.playerPos) {
         this.player.mesh.position.set(data.playerPos.x, data.playerPos.y, data.playerPos.z);
       }

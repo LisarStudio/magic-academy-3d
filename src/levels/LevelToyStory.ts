@@ -24,6 +24,7 @@ import { KeyPickupSequence, type KeyData } from '../player/KeyPickupSequence';
 import { RunicPortal, PortalManager } from '../world/RunicPortal';
 import { DayNightCycle } from '../world/DayNightCycle';
 import { LampMothSystem } from '../world/LampMothSystem';
+import { ConstellationSystem } from '../world/ConstellationSystem';
 import { VolcanicDragonRun } from './VolcanicDragonRun';
 import { PowerOrbSystem, type StaffUpgradeInfo } from '../collectibles/PowerOrbSystem';
 
@@ -71,6 +72,7 @@ export class LevelToyStory {
   public isLavaVaultOpen = false;
   private lavaVaultHatch!: THREE.Mesh;
   private curiosityCryptMouth!: THREE.Group;
+  private curiosityCryptTrail!: THREE.Group;
   private grassUniforms: any = null;
   private grassSectors: THREE.InstancedMesh[] = [];
   private terrainGroundMaterial: THREE.MeshStandardMaterial | null = null;
@@ -79,9 +81,11 @@ export class LevelToyStory {
   private grassCullElapsed = 0;
   private grassQuality = 0.85;
   private structureColliderSyncElapsed = 0;
+  private centralTempleObject: THREE.Object3D | null = null;
   private structureColliderCandidates: Array<{ root: THREE.Object3D; center: THREE.Vector3; radius: number; active: boolean }> = [];
   private cloudsUniforms: any = null;
   private lampMoths: LampMothSystem | null = null;
+  private constellationSystem: ConstellationSystem | null = null;
   private lavaUniforms: { uTime: { value: number } } | null = null;
   private lavaEmberUniforms: { uTime: { value: number } } | null = null;
   private lavaLight: THREE.PointLight | null = null;
@@ -98,6 +102,15 @@ export class LevelToyStory {
   private readonly curiosityCryptRoomEntry = new THREE.Vector3(-9.8, -5.82, -40);
   private isInsideCuriosityCrypt = false;
   private curiosityCryptTransitioning = false;
+  private canopyTrial: { base: THREE.Vector3; top: THREE.Vector3; landing: THREE.Vector3; vineCurve: THREE.QuadraticBezierCurve3 } | null = null;
+  private canopyTutorialShown = false;
+  private canopyAtTop = false;
+  private canopyRewardClaimed = false;
+  private canopyRewardHint: THREE.Object3D | null = null;
+  private canopyTraversal: 'climb' | 'top' | 'swing' | null = null;
+  private canopyTraversalCurve: THREE.QuadraticBezierCurve3 | null = null;
+  private canopyTraversalElapsed = 0;
+  private canopyTraversalDuration = 1.2;
   private leverTarget = Math.PI / 4;
   private readonly secretLavaCenter = new THREE.Vector2(66, -105);
   private secretLavaY = -11.2;
@@ -396,6 +409,7 @@ export class LevelToyStory {
       this.cloudsUniforms,
       { cycleDuration: 240.0, startPhase: 0.05, renderer: this.sceneManager.renderer }
     );
+    this.constellationSystem = new ConstellationSystem(scene);
 
     // Add key visual hints
     this.spawnKeysInWorld();
@@ -428,7 +442,9 @@ export class LevelToyStory {
     const loader = new GLTFLoader(loadingManager);
     const [pavilionResult, templeResult, lionResult, lampResult] = await Promise.allSettled([
       loader.loadAsync(`${base}chinese-pavilion.glb${version}`),
-      loader.loadAsync(`${base}wukong-chinese-temple.glb${version}`),
+      // Restored PBR maps exported from the supplied Blender source; the legacy
+      // GLB had materials but zero image textures and rendered almost white.
+      loader.loadAsync(`${base}wukong-chinese-temple-textured.glb?v=temple-pbr-1`),
       loader.loadAsync(`${base}wukong-porcelain-lion.glb${version}`),
       loader.loadAsync(`${base}wukong-red-lamp.glb${version}`),
     ]);
@@ -487,6 +503,7 @@ export class LevelToyStory {
       // The source asset's open entrance faces opposite the spawn-facing
       // perimeter, so rotate the visual temple to match its actual access.
       const routeTemple = placeAsset(temple, 'chinese_temple_gekko_route', 24, 0, -40, Math.PI);
+      this.centralTempleObject = routeTemple;
       this.addTempleCollision(routeTemple);
       this.addTempleStoneFloor(routeTemple);
     } else {
@@ -494,18 +511,40 @@ export class LevelToyStory {
     }
 
     if (lionResult.status === 'fulfilled') {
-      const guardians = placeAsset(lionResult.value.scene, 'chinese_porcelain_guardian_pair', 7.6, 0, -21.7);
+      // Flank the stair approach and turn the pair outward toward the player.
+      const guardians = placeAsset(lionResult.value.scene, 'chinese_porcelain_guardian_pair', 7.0, 0, -25.9, Math.PI);
       this.addStructureMeshCollision(guardians, 'porcelain_guardian_collision', 10);
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese Porcelain Lion asset.', lionResult.reason);
     }
 
     if (lampResult.status === 'fulfilled') {
-      const lamps = placeAsset(lampResult.value.scene, 'chinese_red_lamp_entry_pair', 3.8, 0, -26.8);
-      // The supplied asset is a paired hanging lantern prop. Lift its group
-      // under the entry eave instead of leaving it at character/ground level.
+      const lampZ = -30.2;
+      const lampGround = this.getTerrainHeight(0, lampZ);
+      const lamps = placeAsset(lampResult.value.scene, 'chinese_red_lamp_entry_pair', 3.8, 0, lampZ);
+      // Hang the paired lamps beneath the eave and add visible cords that meet
+      // the underside of the roof. The asset remains at its authored scale.
       lamps.position.y += 4.8;
-      const anchors = [new THREE.Vector3(-2.25, 5.1, -26.8), new THREE.Vector3(2.25, 5.1, -26.8)];
+      const anchors = [new THREE.Vector3(-2.25, lampGround + 5.1, lampZ), new THREE.Vector3(2.25, lampGround + 5.1, lampZ)];
+      lamps.updateMatrixWorld(true);
+      const lanternBounds = new THREE.Box3().setFromObject(lamps);
+      const lampTop = lanternBounds.max.y + 0.035;
+      for (const anchor of anchors) {
+        const ray = new THREE.Raycaster(new THREE.Vector3(anchor.x, lampGround + 40, anchor.z), new THREE.Vector3(0, -1, 0), 0, 40);
+        const roofHit = this.centralTempleObject
+          ? ray.intersectObject(this.centralTempleObject, true).find(hit => hit.point.y > lampTop)
+          : undefined;
+        const roofY = roofHit?.point.y ?? lampTop + 1.8;
+        const cordLength = Math.max(0.18, roofY - lampTop);
+        const cord = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.025, 0.025, cordLength, 6),
+          new THREE.MeshStandardMaterial({ color: 0x6b3824, roughness: 0.9 })
+        );
+        cord.name = 'lantern_roof_hanging_cord';
+        cord.position.set(anchor.x, lampTop + cordLength * 0.5, anchor.z);
+        cord.castShadow = false;
+        scene.add(cord);
+      }
       anchors.forEach((position) => {
         const light = new THREE.PointLight(0xffaa58, 0.9, 7, 2);
         light.position.copy(position);
@@ -513,7 +552,7 @@ export class LevelToyStory {
         scene.add(light);
         this.dayNightCycle?.registerNightLight(light);
       });
-      const mobile = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0;
+      const mobile = navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches;
       this.lampMoths = new LampMothSystem(scene, anchors, mobile);
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese red lamp asset.', lampResult.reason);
@@ -1409,6 +1448,7 @@ export class LevelToyStory {
 
     // 6. Ancient Ruins & Landmarks (Expanded Map)
     this.buildAncientRuinsAndLandmarks();
+    this.buildCanopyTrial();
 
     // Configure collision objects in controllers
     this.cameraController.setCollisionObjects(this.levelColliders);
@@ -1619,6 +1659,23 @@ export class LevelToyStory {
     // interaction at the hatch transfers into the existing underground room;
     // this avoids leaving the entrance buried beneath the temple terrain.
     this.curiosityCryptSurface.y = this.getTerrainHeight(this.curiosityCryptSurface.x, this.curiosityCryptSurface.z);
+    // A small, ground-hugging rune trail makes the already separate west-field
+    // crypt entrance discoverable after the pavilion lever is activated.
+    this.curiosityCryptTrail = new THREE.Group();
+    this.curiosityCryptTrail.name = 'curiosity_crypt_wayfinding_runes';
+    const trailMaterial = new THREE.MeshBasicMaterial({ color: 0x54e5df, toneMapped: false });
+    for (let i = 1; i <= 5; i++) {
+      const t = i / 6;
+      const x = THREE.MathUtils.lerp(-55, this.curiosityCryptSurface.x, t);
+      const z = THREE.MathUtils.lerp(-75, this.curiosityCryptSurface.z, t);
+      const rune = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.035, 6, 18), trailMaterial);
+      rune.rotation.x = Math.PI / 2;
+      rune.position.set(x, this.getTerrainHeight(x, z) + 0.07, z);
+      rune.name = `crypt_wayfinder_${i}`;
+      this.curiosityCryptTrail.add(rune);
+    }
+    this.curiosityCryptTrail.visible = false;
+    scene.add(this.curiosityCryptTrail);
     this.hatchPivot = new THREE.Group();
     this.hatchPivot.name = 'curiosity_hatch_hinge';
     this.hatchPivot.position.set(this.curiosityCryptSurface.x, this.curiosityCryptSurface.y + 0.4, this.curiosityCryptSurface.z);
@@ -1651,6 +1708,9 @@ export class LevelToyStory {
     mouthRing.rotation.x = Math.PI / 2;
     mouthRing.position.y = 0.045;
     this.curiosityCryptMouth.add(mouthRing);
+    const entranceGlow = new THREE.PointLight(0x42deda, 2.2, 8, 2);
+    entranceGlow.position.y = 1.0;
+    this.curiosityCryptMouth.add(entranceGlow);
     this.curiosityCryptMouth.visible = false;
     scene.add(this.curiosityCryptMouth);
 
@@ -1716,6 +1776,156 @@ export class LevelToyStory {
     scene.add(this.curiosityChest.mesh);
     this.chests.push(this.curiosityChest);
     this.levelColliders.push(this.curiosityChest.mesh);
+  }
+
+  /** Optional canopy route in the western field, well away from the central temple. */
+  private buildCanopyTrial(): void {
+    const scene = this.sceneManager.scene;
+    const base = new THREE.Vector3(-72, this.getTerrainHeight(-72, -88), -88);
+    const top = new THREE.Vector3(-70.8, base.y + 4.18, -87.2);
+    const landing = new THREE.Vector3(-62.2, this.getTerrainHeight(-62.2, -80.5) + 0.38, -80.5);
+    const bark = new THREE.MeshStandardMaterial({ color: 0x52331f, roughness: 0.94 });
+    const leaf = new THREE.MeshStandardMaterial({ color: 0x367b48, roughness: 0.9, emissive: 0x10210d, emissiveIntensity: 0.18 });
+    const stone = new THREE.MeshStandardMaterial({ color: 0x626574, roughness: 0.88 });
+    const tree = new THREE.Group();
+    tree.name = 'west_canopy_climbing_tree';
+    tree.position.copy(base);
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.9, 5.8, 10), bark);
+    trunk.name = 'canopy_tree_trunk';
+    trunk.position.y = 2.9;
+    trunk.castShadow = true;
+    trunk.receiveShadow = true;
+    tree.add(trunk);
+    for (let i = 0; i < 5; i++) {
+      const crown = new THREE.Mesh(new THREE.DodecahedronGeometry(1.2 + (i % 2) * 0.22, 1), leaf);
+      crown.position.set(Math.sin(i * 1.25) * 1.25, 5.45 + (i % 3) * 0.62, Math.cos(i * 1.25) * 1.0);
+      crown.castShadow = true;
+      tree.add(crown);
+    }
+    const branch = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, 2.5, 7), bark);
+    branch.position.set(0.95, 4.45, 0);
+    branch.rotation.z = Math.PI / 2.8;
+    tree.add(branch);
+    scene.add(tree);
+
+    const topPlatform = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.45, 2.6), bark);
+    topPlatform.name = 'canopy_branch_landing';
+    topPlatform.position.set(top.x, top.y - 0.22, top.z);
+    topPlatform.castShadow = topPlatform.receiveShadow = true;
+    scene.add(topPlatform);
+    this.levelColliders.push(topPlatform);
+
+    const trunkCollider = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.83, 1.0, 5.8, 10),
+      new THREE.MeshBasicMaterial({ colorWrite: false, transparent: true, opacity: 0 })
+    );
+    trunkCollider.name = 'canopy_tree_trunk_collision';
+    trunkCollider.position.copy(base).add(new THREE.Vector3(0, 2.9, 0));
+    scene.add(trunkCollider);
+    this.levelColliders.push(trunkCollider);
+
+    const landingPlatform = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.55, 3.0), stone);
+    landingPlatform.name = 'canopy_vine_landing_stone';
+    landingPlatform.position.set(landing.x, landing.y - 0.26, landing.z);
+    landingPlatform.castShadow = landingPlatform.receiveShadow = true;
+    scene.add(landingPlatform);
+    this.levelColliders.push(landingPlatform);
+
+    const control = new THREE.Vector3((top.x + landing.x) * 0.5, Math.max(top.y, landing.y) + 4.0, (top.z + landing.z) * 0.5);
+    const vineCurve = new THREE.QuadraticBezierCurve3(top.clone().add(new THREE.Vector3(0, 1.35, 0)), control, landing.clone().add(new THREE.Vector3(0, 3.8, 0)));
+    const vine = new THREE.Mesh(new THREE.TubeGeometry(vineCurve, 20, 0.045, 6, false), new THREE.MeshStandardMaterial({ color: 0x3d6733, roughness: 0.98 }));
+    vine.name = 'canopy_swinging_vine';
+    vine.castShadow = false;
+    scene.add(vine);
+    const vineGlow = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.045, 7, 24), new THREE.MeshBasicMaterial({ color: 0xffdc78, toneMapped: false }));
+    vineGlow.position.copy(top).add(new THREE.Vector3(0, 1.15, 0));
+    vineGlow.rotation.x = Math.PI / 2;
+    scene.add(vineGlow);
+    this.canopyRewardHint = new THREE.Mesh(new THREE.OctahedronGeometry(0.3, 0), new THREE.MeshStandardMaterial({ color: 0x6ff5ff, emissive: 0x12cfee, emissiveIntensity: 1.8 }));
+    this.canopyRewardHint.name = 'canopy_route_reward_hint';
+    this.canopyRewardHint.position.copy(landing).add(new THREE.Vector3(0, 1.05, 0));
+    scene.add(this.canopyRewardHint);
+    this.canopyTrial = {
+      base,
+      top,
+      landing,
+      vineCurve: new THREE.QuadraticBezierCurve3(top.clone(), control, landing.clone()),
+    };
+  }
+
+  private updateCanopyTrial(delta: number, playerPos: THREE.Vector3): void {
+    const route = this.canopyTrial;
+    if (!route) return;
+    if (this.canopyTraversal) {
+      this.canopyTraversalElapsed += delta;
+      const progress = THREE.MathUtils.clamp(this.canopyTraversalElapsed / this.canopyTraversalDuration, 0, 1);
+      if (this.canopyTraversalCurve) this.player.mesh.position.copy(this.canopyTraversalCurve.getPoint(progress));
+      this.player.velocity.set(0, 0, 0);
+      this.player.isGrounded = this.canopyTraversal === 'swing' ? progress >= 1 : false;
+      return;
+    }
+
+    const horizontal = (point: THREE.Vector3) => Math.hypot(playerPos.x - point.x, playerPos.z - point.z);
+    const distBase = horizontal(route.base);
+    const distTop = horizontal(route.top);
+    if (!this.canopyTutorialShown && distBase < 17) {
+      this.canopyTutorialShown = true;
+      this.cameraController.panToward(route.top.clone().add(new THREE.Vector3(0, 3, 0)), 1.8);
+      this.subtitleSystem.show('Ruta de las lianas', 'Acércate al tronco y pulsa Acción para trepar. Desde la rama, pulsa Acción para balancearte hasta la roca y alcanzar el tesoro.');
+    }
+    if (this.player.isControlsLocked || this.player.isMovementLocked || this.isCinematicPlaying) return;
+    const hud = (window as any).gameInstance?.hud;
+    if (!this.canopyAtTop && distBase < 2.5 && Math.abs(playerPos.y - route.base.y) < 1.5) {
+      hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Trepar al árbol · Acción' : 'Trepar al árbol [E]');
+      if (!this.inputManager.consumeInteractPress()) return;
+      this.player.isControlsLocked = this.player.isMovementLocked = true;
+      this.player.velocity.set(0, 0, 0);
+      this.player.mesh.rotation.y = Math.atan2(route.base.x - playerPos.x, route.base.z - playerPos.z);
+      this.canopyTraversal = 'climb';
+      this.canopyTraversalElapsed = 0;
+      this.canopyTraversalDuration = this.player.animationController.getClipDuration('Climbing');
+      this.canopyTraversalCurve = new THREE.QuadraticBezierCurve3(
+        this.player.mesh.position.clone(),
+        route.base.clone().add(new THREE.Vector3(0, 2.2, 0.25)),
+        route.top.clone()
+      );
+      this.player.animationController.playOneShot('Climbing', () => {
+        this.player.mesh.position.copy(route.top);
+        this.canopyTraversal = 'top';
+        this.canopyTraversalCurve = null;
+        this.player.animationController.playOneShot('Climbing_To_Top', () => {
+          this.canopyAtTop = true;
+          this.canopyTraversal = null;
+          this.player.isGrounded = true;
+          this.player.isControlsLocked = this.player.isMovementLocked = false;
+          this.player.animationController.playState('Idle', 0.18);
+        });
+      });
+      return;
+    }
+    if (this.canopyAtTop && !this.canopyRewardClaimed && distTop < 3.2) {
+      hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Balancearse por la liana · Acción' : 'Balancearse por la liana [E]');
+      if (!this.inputManager.consumeInteractPress()) return;
+      this.player.isControlsLocked = this.player.isMovementLocked = true;
+      this.player.velocity.set(0, 0, 0);
+      const clipName = route.top.distanceTo(route.landing) > 10 || Math.abs(route.landing.y - route.top.y) > 3.5 ? 'Swing_To_Land2' : 'Swing_To_Land';
+      this.canopyTraversal = 'swing';
+      this.canopyTraversalElapsed = 0;
+      this.canopyTraversalDuration = this.player.animationController.getClipDuration(clipName);
+      this.canopyTraversalCurve = route.vineCurve;
+      this.player.animationController.playOneShot(clipName, () => {
+        this.player.mesh.position.copy(route.landing);
+        this.player.isGrounded = true;
+        this.player.isControlsLocked = this.player.isMovementLocked = false;
+        this.canopyTraversal = null;
+        this.canopyTraversalCurve = null;
+        this.canopyRewardClaimed = true;
+        if (this.canopyRewardHint) this.canopyRewardHint.visible = false;
+        this.player.animationController.playState('Idle', 0.18);
+        this.powerOrbSystem?.spawn(route.landing.clone().add(new THREE.Vector3(0, 0.3, 0)), 20);
+        this.subtitleSystem.show('Hallazgo de la copa', 'Has encontrado una Esfera de Poder. La liana te lleva de vuelta al terreno seguro.');
+      });
+    }
   }
 
   private buildAncientRuinsAndLandmarks(): void {
@@ -2789,10 +2999,12 @@ export class LevelToyStory {
     this.syncStructureColliders(delta, playerPos);
     const interactionHud = (window as any).gameInstance?.hud;
     interactionHud?.beginInteractionFrame();
+    this.updateCanopyTrial(delta, playerPos);
     // Tick Dynamic Day/Night Cycle
     if (this.dayNightCycle) {
       this.dayNightCycle.update(delta, playerPos);
     }
+    this.constellationSystem?.update(delta, playerPos, this.dayNightCycle?.phase ?? 0);
 
     if (this.grassUniforms) {
       this.grassUniforms.uTime.value = performance.now() / 1000.0;
@@ -2867,6 +3079,7 @@ export class LevelToyStory {
       this.hatchPivot.rotation.x = -this.hatchOpenProgress * Math.PI * 0.5;
       if (this.curiosityCryptMouth) this.curiosityCryptMouth.visible = this.hatchOpenProgress > 0.28;
     }
+    if (this.curiosityCryptTrail) this.curiosityCryptTrail.visible = this.isLavaVaultOpen && !this.curiosityChestOpen;
     if (this.dragonLeverStick) {
       this.dragonLeverStick.rotation.x = THREE.MathUtils.damp(this.dragonLeverStick.rotation.x, this.leverTarget, 9, delta);
     }

@@ -65,6 +65,7 @@ export class EnemyController {
   public get isBossVulnerable(): boolean {
     return this.id !== 'crab_boss' || (this.state === 'STUNNED' && this.bossAttackPhase === 'RECOVERY');
   }
+  public get isAttackWindup(): boolean { return this.id === 'crab_boss' && this.bossAttackPhase === 'TELEGRAPH'; }
 
   // Shared Master GLTF Template & Texture Pool
   private static masterTemplate: THREE.Object3D | null = null;

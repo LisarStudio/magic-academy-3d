@@ -19,21 +19,19 @@ export class LampMothSystem {
   private readonly interval = 1 / 30;
 
   constructor(scene: THREE.Scene, anchors: THREE.Vector3[], mobile: boolean) {
-    const perAnchor = mobile ? 2 : 4;
+    const perAnchor = mobile ? 3 : 5;
     const count = anchors.length * perAnchor;
-    const bodyGeometry = new THREE.SphereGeometry(0.025, 6, 5);
-    const wingGeometry = new THREE.SphereGeometry(0.042, 6, 4);
-    const bodyMaterial = new THREE.MeshStandardMaterial({
-      color: 0x453326,
-      roughness: 0.9,
-      emissive: 0x1c1008,
-      emissiveIntensity: 0.5,
+    const bodyGeometry = new THREE.SphereGeometry(0.038, 6, 5);
+    const wingGeometry = new THREE.SphereGeometry(0.065, 6, 4);
+    const bodyMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffbd57,
+      toneMapped: false,
     });
-    const wingMaterial = new THREE.MeshStandardMaterial({
-      color: 0xffdda0,
-      roughness: 0.8,
-      emissive: 0x9b5b20,
-      emissiveIntensity: 0.45,
+    const wingMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffe2a0,
+      transparent: true,
+      opacity: 0.86,
+      toneMapped: false,
       side: THREE.DoubleSide,
     });
 
@@ -53,8 +51,8 @@ export class LampMothSystem {
           anchor: anchor.clone(),
           phase: anchorIndex * 1.37 + i * 2.41,
           speed: 0.62 + ((i * 13 + anchorIndex * 7) % 9) * 0.045,
-          radius: 0.28 + (i % 3) * 0.13,
-          height: 0.25 + (i % 2) * 0.22,
+          radius: 0.42 + (i % 3) * 0.16,
+          height: 0.32 + (i % 2) * 0.28,
         });
       }
     });

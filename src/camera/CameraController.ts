@@ -21,6 +21,7 @@ export class CameraController {
   private currentDistance = 5.5;
   private overviewRemaining = 0;
   private readonly overviewDuration = 4.2;
+  private scriptedPan: { fromYaw: number; toYaw: number; fromPitch: number; toPitch: number; elapsed: number; duration: number } | null = null;
 
   // Auto-recenter
   private idleTimer = 0;
@@ -86,6 +87,27 @@ export class CameraController {
     this.isManual = false;
   }
 
+  /** Smoothly glance toward a nearby landmark for a one-time traversal tutorial. */
+  public panToward(point: THREE.Vector3, duration = 1.5): void {
+    if (!this.target) return;
+    const dx = point.x - this.target.position.x;
+    const dy = point.y - (this.target.position.y + this.heightOffset);
+    const dz = point.z - this.target.position.z;
+    const toYaw = Math.atan2(-dx, -dz);
+    const fromYaw = this.yaw;
+    let diff = toYaw - fromYaw;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    this.scriptedPan = {
+      fromYaw,
+      toYaw: fromYaw + diff,
+      fromPitch: this.pitch,
+      toPitch: THREE.MathUtils.clamp(Math.atan2(dy, Math.hypot(dx, dz)), this.minPitch, this.maxPitch),
+      elapsed: 0,
+      duration: Math.max(0.2, duration),
+    };
+  }
+
   public setCollisionObjects(objects: THREE.Object3D[]): void {
     // Only store major solid structural meshes (filter out small sub-children)
     this.collisionObjects = objects.filter(o => o.type === 'Mesh' && (o as THREE.Mesh).geometry);
@@ -111,12 +133,22 @@ export class CameraController {
     }
 
     if (this.isManual) {
+      this.scriptedPan = null;
       this.yaw   -= mouseDelta.x * sensitivity;
       this.pitch -= mouseDelta.y * sensitivity;
       this.pitch  = THREE.MathUtils.clamp(this.pitch, this.minPitch, this.maxPitch);
       this.idleTimer = 0;
     } else {
       this.idleTimer += delta;
+      if (this.scriptedPan) {
+        const pan = this.scriptedPan;
+        pan.elapsed = Math.min(pan.duration, pan.elapsed + delta);
+        const progress = pan.elapsed / pan.duration;
+        const eased = progress * progress * (3 - 2 * progress);
+        this.yaw = THREE.MathUtils.lerp(pan.fromYaw, pan.toYaw, eased);
+        this.pitch = THREE.MathUtils.lerp(pan.fromPitch, pan.toPitch, eased);
+        if (pan.elapsed >= pan.duration) this.scriptedPan = null;
+      }
     }
 
     // ── 2. Passive recenter ──────────────────────────────────────────
