@@ -438,14 +438,15 @@ export class LevelToyStory {
   private async loadIntroEnvironmentAssets(): Promise<void> {
     const base = import.meta.env.BASE_URL + 'assets/environment/';
     const version = `?v=${__APP_VERSION__}`;
+    const mobileTextures = isLowPowerDevice();
     const loadingManager = new THREE.LoadingManager();
     loadingManager.onProgress = (url, loaded, total) => this.onResourceProgress?.(loaded, total, url);
     const loader = new GLTFLoader(loadingManager);
     const [pavilionResult, templeResult, lionResult, lampResult] = await Promise.allSettled([
-      loader.loadAsync(`${base}chinese-pavilion.glb${version}`),
+      loader.loadAsync(`${base}${mobileTextures ? 'chinese-pavilion-mobile.glb' : 'chinese-pavilion.glb'}${version}`),
       // Restored PBR maps exported from the supplied Blender source; the legacy
       // GLB had materials but zero image textures and rendered almost white.
-      loader.loadAsync(`${base}wukong-chinese-temple-textured.glb?v=temple-pbr-1`),
+      loader.loadAsync(`${base}${mobileTextures ? 'wukong-chinese-temple-mobile.glb' : 'wukong-chinese-temple-textured.glb'}?v=temple-pbr-2`),
       loader.loadAsync(`${base}wukong-porcelain-lion.glb${version}`),
       loader.loadAsync(`${base}wukong-red-lamp.glb${version}`),
     ]);
@@ -1123,7 +1124,7 @@ export class LevelToyStory {
     // instancing keeps the distribution compact on the GPU.
     // Source clumps contain many fine blades already. A wider mobile sampling
     // interval retains the carpet while reducing instance preparation and draws.
-    const spacing = isMobile ? 0.72 : 0.56;
+    const spacing = isMobile ? 0.84 : 0.56;
     // Offset the X grid so the normal spawn point lies near a cell center,
     // rather than exactly on a seam that would activate two full-detail tiles.
     const xSectorOrigin = -90;
@@ -3081,8 +3082,8 @@ export class LevelToyStory {
       const isMobile = isLowPowerDevice();
       const qualityIndex = this.grassQuality === 0.65 ? 0 : this.grassQuality === 1 ? 2 : 1;
       const detailDistances = isMobile ? [2, 3, 4] : [4, 5, 7];
-      const midDistances = isMobile ? [10, 14, 20] : [14, 20, 30];
-      const farDistances = isMobile ? [26, 38, 52] : [48, 65, 90];
+      const midDistances = isMobile ? [8, 10, 12] : [14, 20, 30];
+      const farDistances = isMobile ? [20, 26, 34] : [48, 65, 90];
       const detailedDistance = detailDistances[qualityIndex];
       const lodDistance = midDistances[qualityIndex];
       const farDistance = farDistances[qualityIndex];
@@ -3107,7 +3108,9 @@ export class LevelToyStory {
           const targetGeometry = distance <= detailedDistance && useFullDetail
             ? sector.userData.grassFullGeometry
             : distance <= lodDistance
-              ? (qualityIndex === 2
+              ? (isMobile
+                ? (distance <= 5 ? sector.userData.grassMediumGeometry : sector.userData.grassLowGeometry)
+                : qualityIndex === 2
                 ? sector.userData.grassLodGeometry
                 : qualityIndex === 1
                   ? sector.userData.grassMediumGeometry

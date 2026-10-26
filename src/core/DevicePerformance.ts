@@ -11,9 +11,12 @@ export function isLowPowerDevice(): boolean {
 }
 
 export function renderPixelRatio(quality = 1): number {
-  // Keep the framebuffer close to 1080p on dense displays. The game uses
-  // dynamic resolution feedback during play to spend extra pixels only when
-  // the device has frame-time headroom.
-  const cap = isLowPowerDevice() ? 0.78 : 1.25;
-  return Math.max(0.6, Math.min(window.devicePixelRatio * quality, cap));
+  // Cap very dense displays, but never render mobile below CSS-pixel density
+  // by default. Previously the 0.78 cap made every phone visibly soft, while
+  // multiplying DPR by the render scale before clamping prevented dynamic
+  // resolution from reacting until the scale was already unusably low.
+  const lowPower = isLowPowerDevice();
+  const cap = lowPower ? 1.25 : 1.5;
+  const deviceRatio = Math.min(window.devicePixelRatio || 1, cap);
+  return Math.max(lowPower ? 0.65 : 0.7, deviceRatio * quality);
 }
