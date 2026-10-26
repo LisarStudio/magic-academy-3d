@@ -535,7 +535,14 @@ export class Game {
     // These optional, larger FBX clips are parsed and retargeted one at a time
     // after play starts, so they don't delay mobile startup or the first frame.
     void this.assetManager.loadSupplementalPlayerClips(this.player.mesh)
-      .then((clips) => this.animationController.addClips(clips))
+      .then((clips) => {
+        this.animationController.addClips(clips);
+        // The camera and choice panel start as soon as the last life is lost.
+        // If Continue was still being decoded, play it when it becomes ready.
+        if (this.gameOverActive && this.animationController.hasClip('Continue')) {
+          this.animationController.playOneShot('Continue', () => {}, 1);
+        }
+      })
       .catch((error) => console.warn('[Game] Some optional Wukong animations could not be prepared:', error));
   }
 
@@ -581,7 +588,11 @@ export class Game {
     this.gameOverSpot.castShadow = false;
     this.sceneManager.scene.add(this.gameOverSpot);
     this.sceneManager.scene.add(this.gameOverSpot.target);
-    this.animationController.playOneShot('Continue', () => {}, 1);
+    if (this.animationController.hasClip('Continue')) {
+      this.animationController.playOneShot('Continue', () => {}, 1);
+    } else {
+      this.animationController.playState('Idle', 0.2);
+    }
   }
 
   private continueAfterGameOver(): void {
@@ -703,8 +714,9 @@ export class Game {
     if (this.performanceSampleElapsed < 1 || this.performanceAdjustCooldown > 0) return;
     this.performanceSampleElapsed = 0;
 
-    if (this.frameTimeAverageMs > 19 && this.renderScale > 0.68) {
-      this.renderScale = Math.max(0.68, this.renderScale - 0.08);
+    const minRenderScale = isLowPowerDevice() ? 0.84 : 0.68;
+    if (this.frameTimeAverageMs > 19 && this.renderScale > minRenderScale) {
+      this.renderScale = Math.max(minRenderScale, this.renderScale - (isLowPowerDevice() ? 0.04 : 0.08));
       this.fastFrameSeconds = 0;
       this.performanceAdjustCooldown = 1.5;
       this.applyRenderResolution();

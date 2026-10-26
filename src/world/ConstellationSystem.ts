@@ -3,14 +3,17 @@ import * as THREE from 'three';
 /** A single lightweight constellation that fades in, traces its lines, then fades away. */
 export class ConstellationSystem {
   private readonly group = new THREE.Group();
+  private readonly camera: THREE.Camera;
   private readonly stars: THREE.Points;
   private readonly lines: THREE.LineSegments;
   private elapsed = 0;
   private nextChange = 8;
   private activeIndex = -1;
   private opacity = 0;
-  private readonly starMaterial = new THREE.PointsMaterial({ color: 0xbcecff, size: 0.85, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
-  private readonly lineMaterial = new THREE.LineBasicMaterial({ color: 0x8dd9ff, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
+  private readonly lookDirection = new THREE.Vector3();
+  private readonly skyOffset = new THREE.Vector3(0, 3.2, 0);
+  private readonly starMaterial = new THREE.PointsMaterial({ color: 0xc9edff, size: 7, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
+  private readonly lineMaterial = new THREE.LineBasicMaterial({ color: 0x9be3ff, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
   private readonly shapes = [
     // Cassiopeia's recognisable W.
     [[-4, 1], [-2, -1], [0, 1.4], [2, -1], [4, 1]],
@@ -19,7 +22,8 @@ export class ConstellationSystem {
     [[-3, 0], [-1.2, 1.8], [0, 0], [1.2, 1.8], [3, 0], [1.2, -1.8], [-1.2, -1.8], [-3, 0]],
   ];
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, camera: THREE.Camera) {
+    this.camera = camera;
     this.group.name = 'night_constellations';
     this.group.visible = false;
     this.group.frustumCulled = false;
@@ -32,6 +36,7 @@ export class ConstellationSystem {
   }
 
   update(delta: number, playerPosition: THREE.Vector3, phase: number): void {
+    void playerPosition;
     const night = phase < 0.24 || phase > 0.95;
     this.group.visible = night;
     if (!night) { this.opacity = 0; this.setOpacity(0); return; }
@@ -51,9 +56,12 @@ export class ConstellationSystem {
     const lineCount = this.lines.geometry.getAttribute('position').count;
     const trace = THREE.MathUtils.smoothstep(this.elapsed, 0.15, 2.7);
     this.lines.geometry.setDrawRange(0, Math.ceil(lineCount * trace));
-    this.group.position.set(playerPosition.x + 2, playerPosition.y + 29, playerPosition.z - 48);
-    this.group.rotation.y = Math.sin(this.elapsed * 0.08) * 0.035;
-    this.group.rotation.z = Math.sin(this.elapsed * 0.12) * 0.025;
+    // Keep the constellation in the camera's sky view. A fixed point 29 m
+    // above the player was outside the camera frustum for the gameplay pitch.
+    this.camera.getWorldDirection(this.lookDirection);
+    this.group.position.copy(this.camera.position).addScaledVector(this.lookDirection, 28).add(this.skyOffset);
+    this.group.quaternion.copy(this.camera.quaternion);
+    this.group.rotateZ(Math.sin(this.elapsed * 0.12) * 0.018);
   }
 
   private selectShape(index: number): void {

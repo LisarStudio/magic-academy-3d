@@ -82,7 +82,6 @@ export class LevelToyStory {
   private grassQuality = 0.85;
   private structureColliderSyncElapsed = 0;
   private centralTempleObject: THREE.Object3D | null = null;
-  private centralTempleWalkableFloor: { minX: number; maxX: number; minZ: number; maxZ: number; y: number } | null = null;
   private structureColliderCandidates: Array<{ root: THREE.Object3D; center: THREE.Vector3; radius: number; active: boolean }> = [];
   private cloudsUniforms: any = null;
   private lampMoths: LampMothSystem | null = null;
@@ -103,10 +102,13 @@ export class LevelToyStory {
   private readonly curiosityCryptRoomEntry = new THREE.Vector3(-9.8, -5.82, -40);
   private isInsideCuriosityCrypt = false;
   private curiosityCryptTransitioning = false;
-  private canopyTrial: { base: THREE.Vector3; top: THREE.Vector3; landing: THREE.Vector3; vineCurve: THREE.QuadraticBezierCurve3 } | null = null;
+  private canopyTrial: { base: THREE.Vector3; top: THREE.Vector3; middle: THREE.Vector3; landing: THREE.Vector3; firstPath: THREE.QuadraticBezierCurve3; secondPath: THREE.QuadraticBezierCurve3 } | null = null;
   private canopyTutorialShown = false;
   private canopyAtTop = false;
+  private canopyAtMid = false;
   private canopyRewardClaimed = false;
+  private canopyChest: TreasureChest | null = null;
+  private canopyChestOpen = false;
   private canopyRewardHint: THREE.Object3D | null = null;
   private canopyTraversal: 'climb' | 'top' | 'swing' | null = null;
   private canopyTraversalCurve: THREE.QuadraticBezierCurve3 | null = null;
@@ -410,7 +412,7 @@ export class LevelToyStory {
       this.cloudsUniforms,
       { cycleDuration: 240.0, startPhase: 0.05, renderer: this.sceneManager.renderer }
     );
-    this.constellationSystem = new ConstellationSystem(scene);
+    this.constellationSystem = new ConstellationSystem(scene, this.cameraController.camera);
 
     // Add key visual hints
     this.spawnKeysInWorld();
@@ -481,7 +483,10 @@ export class LevelToyStory {
       asset.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
           child.castShadow = false;
-          child.receiveShadow = true;
+          // Detailed static GLBs already carry authored texture shading.
+          // Receiving the real-time shadow over every submesh adds avoidable
+          // fragment work when the temple or pavilion fills the camera view.
+          child.receiveShadow = false;
         }
       });
       scene.add(asset);
@@ -513,9 +518,36 @@ export class LevelToyStory {
     }
 
     if (lionResult.status === 'fulfilled') {
-      // Flank the stair approach and turn the pair outward toward the player.
-      const guardians = placeAsset(lionResult.value.scene, 'chinese_porcelain_guardian_pair', 7.0, 0, -25.9, Math.PI);
-      this.addStructureMeshCollision(guardians, 'porcelain_guardian_collision', 10);
+      // Place the two authored statues at the actual stair-side markers. Move
+      // each model node independently so their authored spacing cannot collapse
+      // into a single cluster when the source is scaled.
+      const guardians = placeAsset(lionResult.value.scene, 'chinese_porcelain_guardian_pair', 7.0, 0, -27.1, Math.PI);
+      guardians.updateMatrixWorld(true);
+      const lionNodes = ['Chinese Porcelain Lion.001', 'Chinese Porcelain Lion.002']
+        .map((name) => guardians.getObjectByName(name)).filter((node): node is THREE.Object3D => !!node);
+      const ground = this.getTerrainHeight(0, -27.1);
+      lionNodes.forEach((node, index) => {
+        const bounds = new THREE.Box3().setFromObject(node);
+        const current = bounds.getCenter(new THREE.Vector3());
+        const target = new THREE.Vector3(index === 0 ? -9.2 : 9.2, ground + (bounds.max.y - bounds.min.y) * 0.5, -27.1);
+        if (node.parent) node.position.add(node.parent.worldToLocal(target).sub(node.parent.worldToLocal(current)));
+        const worldYaw = Math.atan2(-target.x, -21.5 - target.z);
+        node.rotation.y = worldYaw - guardians.rotation.y;
+        node.traverse((part) => { if ((part as THREE.Mesh).isMesh) (part as THREE.Mesh).castShadow = false; });
+      });
+      guardians.updateMatrixWorld(true);
+      const lionBounds = new THREE.Box3().setFromObject(guardians);
+      const lionColliders = new THREE.Group();
+      lionColliders.name = 'porcelain_guardian_low_cost_colliders';
+      const invisible = new THREE.MeshBasicMaterial({ visible: false });
+      for (const lionX of [-9.2, 9.2]) {
+        const blocker = new THREE.Mesh(new THREE.CylinderGeometry(0.98, 1.08, 2.15, 8), invisible);
+        blocker.position.set(lionX, ground + 1.075, -27.1);
+        blocker.name = 'porcelain_guardian_blocker';
+        lionColliders.add(blocker);
+      }
+      this.sceneManager.scene.add(lionColliders);
+      this.structureColliderCandidates.push({ root: lionColliders, center: lionBounds.getCenter(new THREE.Vector3()), radius: 14, active: false });
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese Porcelain Lion asset.', lionResult.reason);
     }
@@ -524,26 +556,36 @@ export class LevelToyStory {
       const lampZ = -30.2;
       const lampGround = this.getTerrainHeight(0, lampZ);
       const lamps = placeAsset(lampResult.value.scene, 'chinese_red_lamp_entry_pair', 3.8, 0, lampZ);
-      // Hang the paired lamps beneath the eave and add visible cords that meet
-      // the underside of the roof. The asset remains at its authored scale.
       lamps.position.y += 4.8;
-      const anchors = [new THREE.Vector3(-2.25, lampGround + 5.1, lampZ), new THREE.Vector3(2.25, lampGround + 5.1, lampZ)];
       lamps.updateMatrixWorld(true);
-      const lanternBounds = new THREE.Box3().setFromObject(lamps);
-      const lampTop = lanternBounds.max.y + 0.035;
-      for (const anchor of anchors) {
+      const anchors: THREE.Vector3[] = [];
+      const lampNodes = ['lantern', 'lantern.001'].map((name) => lamps.getObjectByName(name)).filter((node): node is THREE.Object3D => !!node);
+      lampNodes.forEach((node, index) => {
+        const bounds = new THREE.Box3().setFromObject(node);
+        const current = bounds.getCenter(new THREE.Vector3());
+        const target = new THREE.Vector3(index === 0 ? -3.15 : 3.15, current.y, lampZ);
+        if (node.parent) node.position.add(node.parent.worldToLocal(target).sub(node.parent.worldToLocal(current)));
+      });
+      lamps.updateMatrixWorld(true);
+      for (const node of lampNodes) {
+        const bounds = new THREE.Box3().setFromObject(node);
+        const center = bounds.getCenter(new THREE.Vector3());
+        const anchor = new THREE.Vector3(center.x, bounds.max.y, center.z);
+        anchors.push(center.clone());
+        const lampTop = bounds.max.y + 0.035;
         const ray = new THREE.Raycaster(new THREE.Vector3(anchor.x, lampGround + 40, anchor.z), new THREE.Vector3(0, -1, 0), 0, 40);
         const roofHit = this.centralTempleObject
           ? ray.intersectObject(this.centralTempleObject, true).find(hit => hit.point.y > lampTop)
           : undefined;
-        const roofY = roofHit?.point.y ?? lampTop + 1.8;
-        const cordLength = Math.max(0.18, roofY - lampTop);
+        const fallbackRoofY = lampGround + 8.5;
+        const roofY = roofHit && roofHit.point.y > lampTop + 0.3 ? roofHit.point.y : Math.max(lampTop + 0.5, fallbackRoofY);
+        const cordLength = Math.max(0.18, roofY - lampTop - 0.06);
         const cord = new THREE.Mesh(
           new THREE.CylinderGeometry(0.025, 0.025, cordLength, 6),
           new THREE.MeshStandardMaterial({ color: 0x6b3824, roughness: 0.9 })
         );
         cord.name = 'lantern_roof_hanging_cord';
-        cord.position.set(anchor.x, lampTop + cordLength * 0.5, anchor.z);
+        cord.position.set(center.x, lampTop + cordLength * 0.5, center.z);
         cord.castShadow = false;
         scene.add(cord);
       }
@@ -572,61 +614,103 @@ export class LevelToyStory {
 
   }
 
-  /** Use the actual visible geometry as collision, activated only nearby. */
+  /** Use a small set of architectural proxies instead of per-frame raycasts
+   * against the 100k-triangle pavilion render mesh. */
   private addPavilionCollision(asset: THREE.Object3D): void {
     const bounds = new THREE.Box3().setFromObject(asset);
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    const y = this.getTerrainHeight(center.x, center.z);
+    const root = new THREE.Group();
+    root.name = 'pavilion_low_cost_collision';
+    const invisible = new THREE.MeshBasicMaterial({ visible: false });
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(size.x * 0.82, 0.18, size.z * 0.82), invisible);
+    deck.position.set(center.x, y + 0.09, center.z);
+    root.add(deck);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, Math.min(5.2, size.y * 0.74), 6), invisible);
+      pillar.position.set(center.x + sx * size.x * 0.36, y + Math.min(5.2, size.y * 0.74) * 0.5, center.z + sz * size.z * 0.36);
+      root.add(pillar);
+    }
+    this.sceneManager.scene.add(root);
     this.structureColliderCandidates.push({
-      root: asset, center: bounds.getCenter(new THREE.Vector3()), radius: 20, active: false
+      root, center, radius: 20, active: false
     });
   }
 
   private addTempleCollision(asset: THREE.Object3D): void {
-    this.addStructureMeshCollision(asset, 'central_temple_double_sided_collision', 34);
+    asset.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(asset);
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    const ground = this.getTerrainHeight(0, -40);
+    const proxy = new THREE.Group();
+    proxy.name = 'central_temple_open_entrance_collision';
+    const material = new THREE.MeshBasicMaterial({ visible: false });
+    const wallHeight = 7.5;
+    const thickness = 0.45;
+    const addWall = (name: string, sx: number, sz: number, x: number, z: number) => {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(sx, wallHeight, sz), material);
+      wall.name = name;
+      wall.position.set(x, ground + wallHeight * 0.5, z);
+      proxy.add(wall);
+    };
+    const halfW = Math.min(10.6, size.x * 0.44);
+    const halfD = Math.min(10.6, size.z * 0.44);
+    // The front is the +Z elevation. Keep a 4.6 m passage aligned with the
+    // architectural doorway and leave the stairs unobstructed.
+    const frontZ = center.z + halfD - 0.1;
+    const openingHalf = 2.3;
+    addWall('temple_west_wall', thickness, size.z * 0.78, center.x - halfW, center.z);
+    addWall('temple_east_wall', thickness, size.z * 0.78, center.x + halfW, center.z);
+    addWall('temple_rear_wall', size.x * 0.78, thickness, center.x, center.z - halfD);
+    addWall('temple_front_wall_left', halfW - openingHalf, thickness, center.x - (halfW + openingHalf) * 0.5, frontZ);
+    addWall('temple_front_wall_right', halfW - openingHalf, thickness, center.x + (halfW + openingHalf) * 0.5, frontZ);
+    this.sceneManager.scene.add(proxy);
+    this.structureColliderCandidates.push({ root: proxy, center, radius: 34, active: false });
+    this.openTempleEntrance(asset);
   }
 
-  private addStructureMeshCollision(asset: THREE.Object3D, name: string, activationRadius: number): void {
-    const bounds = new THREE.Box3().setFromObject(asset);
-    // The imported temple meshes are authored single-sided. Raycaster ignores
-    // their back faces, which let Wukong run out through a wall from inside and
-    // then prevented re-entry. Build invisible, double-sided collision copies
-    // of the actual architecture so both directions use the same solid shell.
+  /** Remove only the lower triangles of the south/front door leaf, preserving
+   * the surrounding textured timber and the upper façade. */
+  private openTempleEntrance(asset: THREE.Object3D): void {
     asset.updateMatrixWorld(true);
-    const inverseRoot = asset.matrixWorld.clone().invert();
-    const collisionRoot = new THREE.Group();
-    collisionRoot.name = name;
-    // Proxies are authored in the asset's local space below. Preserve the
-    // placed asset transform on their parent or the collision shell is left at
-    // the origin, detached from the visible temple.
-    collisionRoot.matrixAutoUpdate = false;
-    collisionRoot.matrix.copy(asset.matrixWorld);
-    collisionRoot.matrixWorldNeedsUpdate = true;
-    const collisionMaterial = new THREE.MeshBasicMaterial({
-      side: THREE.DoubleSide,
-      colorWrite: false,
-      depthWrite: false,
-      transparent: true,
-      opacity: 0,
-    });
-    let colliderCount = 0;
+    const inverseAssetWorld = asset.matrixWorld.clone().invert();
     asset.traverse((object) => {
-      const source = object as THREE.Mesh;
-      if (!source.isMesh || !source.geometry) return;
-      const proxy = new THREE.Mesh(source.geometry, collisionMaterial);
-      proxy.name = source.name || `temple_surface_${colliderCount}`;
-      proxy.matrixAutoUpdate = false;
-      proxy.matrix.copy(inverseRoot).multiply(source.matrixWorld);
-      proxy.frustumCulled = false;
-      proxy.castShadow = false;
-      proxy.receiveShadow = false;
-      collisionRoot.add(proxy);
-      colliderCount++;
+      const mesh = object as THREE.Mesh;
+      const geometry = mesh.isMesh ? mesh.geometry : undefined;
+      const position = geometry?.getAttribute('position');
+      const index = geometry?.getIndex();
+      if (!geometry || !position || !index || geometry.userData.openTempleDoorCut) return;
+      const sourceGroups = geometry.groups.length ? geometry.groups.map((group) => ({ ...group })) : [{ start: 0, count: index.count, materialIndex: 0 }];
+      const output: number[] = [];
+      const groups: Array<{ start: number; count: number; materialIndex: number }> = [];
+      const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+      // Imported models can have nested mesh transforms. Evaluate each face in
+      // the temple root's local coordinates so the cut remains aligned to the
+      // real doorway after the model's scale, origin and rotation are applied.
+      const geometryToTemple = inverseAssetWorld.clone().multiply(mesh.matrixWorld);
+      for (const group of sourceGroups) {
+        const start = output.length;
+        const end = group.start + group.count;
+        for (let i = group.start; i + 2 < end; i += 3) {
+          const ia = index.getX(i), ib = index.getX(i + 1), ic = index.getX(i + 2);
+          a.fromBufferAttribute(position, ia).applyMatrix4(geometryToTemple);
+          b.fromBufferAttribute(position, ib).applyMatrix4(geometryToTemple);
+          c.fromBufferAttribute(position, ic).applyMatrix4(geometryToTemple);
+          const x = (a.x + b.x + c.x) / 3, y = (a.y + b.y + c.y) / 3, z = (a.z + b.z + c.z) / 3;
+          const doorway = Math.abs(x) < 1.55 && y < 3.55 && y > 0.02 && z < -5.2 && z > -6.2;
+          if (!doorway) output.push(ia, ib, ic);
+        }
+        const count = output.length - start;
+        if (count) groups.push({ start, count, materialIndex: group.materialIndex ?? 0 });
+      }
+      geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(output), 1));
+      geometry.clearGroups();
+      groups.forEach((group) => geometry.addGroup(group.start, group.count, group.materialIndex));
+      geometry.userData.openTempleDoorCut = true;
+      geometry.computeBoundingSphere();
     });
-    this.sceneManager.scene.add(collisionRoot);
-    collisionRoot.updateMatrixWorld(true);
-    this.structureColliderCandidates.push({
-      root: collisionRoot, center: bounds.getCenter(new THREE.Vector3()), radius: activationRadius, active: false
-    });
-    console.info(`[Collision] Built ${colliderCount} double-sided colliders for ${name}.`);
   }
 
   private alignStaffChestToPavilionTable(pavilion: THREE.Object3D, x: number, z: number): void {
@@ -667,14 +751,7 @@ export class LevelToyStory {
       changed = true;
     }
     if (changed) {
-      const cameraStructureMeshes: THREE.Mesh[] = [];
-      for (const candidate of this.structureColliderCandidates) {
-        if (!candidate.active) continue;
-        candidate.root.traverse((object) => {
-          if ((object as THREE.Mesh).isMesh) cameraStructureMeshes.push(object as THREE.Mesh);
-        });
-      }
-      this.cameraController.setCollisionObjects([...this.levelColliders, ...cameraStructureMeshes]);
+      this.cameraController.setCollisionObjects(this.levelColliders);
     }
   }
 
@@ -752,14 +829,6 @@ export class LevelToyStory {
         floorCenterZ = center.z;
       }
     }
-    this.centralTempleWalkableFloor = {
-      minX: floorCenterX - floorWidth * 0.5,
-      maxX: floorCenterX + floorWidth * 0.5,
-      minZ: floorCenterZ - floorDepth * 0.5,
-      maxZ: floorCenterZ + floorDepth * 0.5,
-      y: topY
-    };
-    console.info(`[Temple floor] Deck-aligned surface ${floorWidth.toFixed(2)} x ${floorDepth.toFixed(2)} m at y=${topY.toFixed(3)}.`);
     const floor = new THREE.Mesh(new THREE.BoxGeometry(floorWidth, 0.08, floorDepth), floorMaterial);
     floor.name = 'central_temple_stone_floor';
     floor.position.set(floorCenterX, topY - 0.04, floorCenterZ);
@@ -768,14 +837,14 @@ export class LevelToyStory {
     this.levelColliders.push(floor);
 
     const scene = this.sceneManager.scene;
-    // Existing temple coins were initially placed on terrain before the GLB
-    // finished loading. Lift only those whose XZ coordinates are on this deck.
+    // Existing interior/entry coins are spawned on terrain before the GLB
+    // resolves. Put the temple route row on top of the real deck, including
+    // edge coins that sit over the plinth and were outside the inset tile box.
     for (const item of this.collectibleSystem.collectibles) {
       if (item.type !== 'COIN' || item.isCollected) continue;
       const pos = item.mesh.position;
-      if (pos.x >= this.centralTempleWalkableFloor.minX && pos.x <= this.centralTempleWalkableFloor.maxX &&
-          pos.z >= this.centralTempleWalkableFloor.minZ && pos.z <= this.centralTempleWalkableFloor.maxZ) {
-        pos.y = topY + 0.6;
+      if (Math.abs(pos.x) <= 9.4 && pos.z >= -49 && pos.z <= -31) {
+        pos.y = topY + 0.52;
       }
     }
 
@@ -1237,7 +1306,10 @@ export class LevelToyStory {
     worldFloor.position.set(0, 0, 0);
     worldFloor.receiveShadow = true;
     scene.add(worldFloor);
-    this.levelColliders.push(worldFloor);
+    // PlayerController uses this same terrain-height function when no built
+    // surface is hit. Raycasting the render mesh (8,192 triangles) on every
+    // ground check and every airborne wall probe caused avoidable CPU spikes.
+    // Keep it visual; temple floors, steps and ramps remain explicit colliders.
 
     // ═══════════════════════════════════════════════════════════════════════════════
     // Grass It! mesh variants are instanced from the original exported GLB after async asset loading.
@@ -1833,7 +1905,8 @@ export class LevelToyStory {
     const scene = this.sceneManager.scene;
     const base = new THREE.Vector3(-72, this.getTerrainHeight(-72, -88), -88);
     const top = new THREE.Vector3(-70.8, base.y + 4.18, -87.2);
-    const landing = new THREE.Vector3(-62.2, this.getTerrainHeight(-62.2, -80.5) + 0.38, -80.5);
+    const middle = new THREE.Vector3(-66.4, this.getTerrainHeight(-66.4, -84.5) + 0.62, -84.5);
+    const landing = new THREE.Vector3(-57.6, this.getTerrainHeight(-57.6, -76.8) + 0.38, -76.8);
     const bark = new THREE.MeshStandardMaterial({ color: 0x52331f, roughness: 0.94 });
     const leaf = new THREE.MeshStandardMaterial({ color: 0x367b48, roughness: 0.9, emissive: 0x10210d, emissiveIntensity: 0.18 });
     const stone = new THREE.MeshStandardMaterial({ color: 0x626574, roughness: 0.88 });
@@ -1858,75 +1931,104 @@ export class LevelToyStory {
     tree.add(branch);
     scene.add(tree);
 
-    const topPlatform = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.45, 2.6), bark);
-    topPlatform.name = 'canopy_branch_landing';
-    topPlatform.position.set(top.x, top.y - 0.22, top.z);
-    topPlatform.castShadow = topPlatform.receiveShadow = true;
-    scene.add(topPlatform);
-    this.levelColliders.push(topPlatform);
-
-    const trunkCollider = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.83, 1.0, 5.8, 10),
-      new THREE.MeshBasicMaterial({ colorWrite: false, transparent: true, opacity: 0 })
-    );
+    const trunkCollider = new THREE.Mesh(new THREE.CylinderGeometry(0.83, 1.0, 5.8, 10), new THREE.MeshBasicMaterial({ colorWrite: false }));
     trunkCollider.name = 'canopy_tree_trunk_collision';
     trunkCollider.position.copy(base).add(new THREE.Vector3(0, 2.9, 0));
     scene.add(trunkCollider);
     this.levelColliders.push(trunkCollider);
 
-    const landingPlatform = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.55, 3.0), stone);
-    landingPlatform.name = 'canopy_vine_landing_stone';
-    landingPlatform.position.set(landing.x, landing.y - 0.26, landing.z);
-    landingPlatform.castShadow = landingPlatform.receiveShadow = true;
-    scene.add(landingPlatform);
-    this.levelColliders.push(landingPlatform);
+    const makeLanding = (position: THREE.Vector3, name: string, width: number, depth: number) => {
+      const platform = new THREE.Mesh(new THREE.BoxGeometry(width, 0.55, depth), stone);
+      platform.name = name;
+      platform.position.set(position.x, position.y - 0.275, position.z);
+      platform.castShadow = platform.receiveShadow = true;
+      scene.add(platform);
+      this.levelColliders.push(platform);
+    };
+    makeLanding(top, 'canopy_tree_top_landing', 2.8, 2.6);
+    makeLanding(middle, 'canopy_middle_landing', 2.8, 2.6);
+    makeLanding(landing, 'canopy_secret_chest_landing', 3.4, 3.1);
 
-    const control = new THREE.Vector3((top.x + landing.x) * 0.5, Math.max(top.y, landing.y) + 4.0, (top.z + landing.z) * 0.5);
-    const vineCurve = new THREE.QuadraticBezierCurve3(top.clone().add(new THREE.Vector3(0, 1.35, 0)), control, landing.clone().add(new THREE.Vector3(0, 3.8, 0)));
-    const vine = new THREE.Mesh(new THREE.TubeGeometry(vineCurve, 20, 0.045, 6, false), new THREE.MeshStandardMaterial({ color: 0x3d6733, roughness: 0.98 }));
-    vine.name = 'canopy_swinging_vine';
-    vine.castShadow = false;
-    scene.add(vine);
-    const vineGlow = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.045, 7, 24), new THREE.MeshBasicMaterial({ color: 0xffdc78, toneMapped: false }));
-    vineGlow.position.copy(top).add(new THREE.Vector3(0, 1.15, 0));
-    vineGlow.rotation.x = Math.PI / 2;
-    scene.add(vineGlow);
+    const makeVine = (from: THREE.Vector3, to: THREE.Vector3, name: string, lift: number) => {
+      const control = new THREE.Vector3((from.x + to.x) * 0.5, Math.max(from.y, to.y) + lift, (from.z + to.z) * 0.5);
+      const curve = new THREE.QuadraticBezierCurve3(from.clone(), control, to.clone());
+      const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 20, 0.065, 6, false), new THREE.MeshStandardMaterial({ color: 0x467a37, roughness: 0.95 }));
+      mesh.name = name;
+      mesh.castShadow = false;
+      scene.add(mesh);
+      return curve;
+    };
+    makeVine(top.clone().add(new THREE.Vector3(0, 1.35, 0)), middle.clone().add(new THREE.Vector3(0, 2.2, 0)), 'canopy_vine_swing_one', 3.2);
+    makeVine(middle.clone().add(new THREE.Vector3(0, 2.1, 0)), landing.clone().add(new THREE.Vector3(0, 2.7, 0)), 'canopy_vine_swing_two', 2.8);
+    const firstPath = new THREE.QuadraticBezierCurve3(
+      top.clone(),
+      new THREE.Vector3((top.x + middle.x) * 0.5, Math.max(top.y, middle.y) + 2.4, (top.z + middle.z) * 0.5),
+      middle.clone()
+    );
+    const secondPath = new THREE.QuadraticBezierCurve3(
+      middle.clone(),
+      new THREE.Vector3((middle.x + landing.x) * 0.5, Math.max(middle.y, landing.y) + 2.8, (middle.z + landing.z) * 0.5),
+      landing.clone()
+    );
+    const vineGlowMaterial = new THREE.MeshBasicMaterial({ color: 0xffdc78, toneMapped: false });
+    [top, middle].forEach((point, index) => {
+      const marker = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.045, 7, 24), vineGlowMaterial);
+      marker.name = 'canopy_vine_grab_marker_' + index;
+      marker.position.copy(point).add(new THREE.Vector3(0, 1.15, 0));
+      marker.rotation.x = Math.PI / 2;
+      scene.add(marker);
+    });
+
+    this.canopyChest = new TreasureChest(landing.clone(), Math.PI);
+    this.canopyChest.mesh.name = 'canopy_secret_key_chest';
+    scene.add(this.canopyChest.mesh);
+    this.levelColliders.push(this.canopyChest.mesh);
+    this.chests.push(this.canopyChest);
     this.canopyRewardHint = new THREE.Mesh(new THREE.OctahedronGeometry(0.3, 0), new THREE.MeshStandardMaterial({ color: 0x6ff5ff, emissive: 0x12cfee, emissiveIntensity: 1.8 }));
     this.canopyRewardHint.name = 'canopy_route_reward_hint';
-    this.canopyRewardHint.position.copy(landing).add(new THREE.Vector3(0, 1.05, 0));
+    this.canopyRewardHint.position.copy(landing).add(new THREE.Vector3(0, 1.35, 0));
     scene.add(this.canopyRewardHint);
-    this.canopyTrial = {
-      base,
-      top,
-      landing,
-      vineCurve: new THREE.QuadraticBezierCurve3(top.clone(), control, landing.clone()),
-    };
+    this.canopyTrial = { base, top, middle, landing, firstPath, secondPath };
   }
 
   private updateCanopyTrial(delta: number, playerPos: THREE.Vector3): void {
     const route = this.canopyTrial;
     if (!route) return;
     if (this.canopyTraversal) {
+      this.player.velocity.set(0, 0, 0);
+      if (this.canopyTraversal === 'top') {
+        // Hold Wukong on the small upper platform while Climbing_To_Top
+        // finishes; don't let gravity pull him down between animation frames.
+        this.player.mesh.position.copy(route.top);
+        this.player.isGrounded = true;
+        return;
+      }
       this.canopyTraversalElapsed += delta;
       const progress = THREE.MathUtils.clamp(this.canopyTraversalElapsed / this.canopyTraversalDuration, 0, 1);
       if (this.canopyTraversalCurve) this.player.mesh.position.copy(this.canopyTraversalCurve.getPoint(progress));
-      this.player.velocity.set(0, 0, 0);
-      this.player.isGrounded = this.canopyTraversal === 'swing' ? progress >= 1 : false;
+      this.player.isGrounded = this.canopyTraversal === 'swing' && progress >= 1;
       return;
     }
 
     const horizontal = (point: THREE.Vector3) => Math.hypot(playerPos.x - point.x, playerPos.z - point.z);
     const distBase = horizontal(route.base);
     const distTop = horizontal(route.top);
+    const distMiddle = horizontal(route.middle);
     if (!this.canopyTutorialShown && distBase < 17) {
       this.canopyTutorialShown = true;
       this.cameraController.panToward(route.top.clone().add(new THREE.Vector3(0, 3, 0)), 1.8);
-      this.subtitleSystem.show('Ruta de las lianas', 'Acércate al tronco y pulsa Acción para trepar. Desde la rama, pulsa Acción para balancearte hasta la roca y alcanzar el tesoro.');
+      this.subtitleSystem.show('Ruta de las lianas', 'Trepa al \u00e1rbol con Acci\u00f3n. Cruza de una plataforma a la otra balance\u00e1ndote desde los dos anclajes de liana.');
     }
     if (this.player.isControlsLocked || this.player.isMovementLocked || this.isCinematicPlaying) return;
     const hud = (window as any).gameInstance?.hud;
-    if (!this.canopyAtTop && distBase < 2.5 && Math.abs(playerPos.y - route.base.y) < 1.5) {
-      hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Trepar al árbol · Acción' : 'Trepar al árbol [E]');
+    if (!this.canopyAtTop && !this.canopyAtMid && distBase < 2.5 && Math.abs(playerPos.y - route.base.y) < 1.5) {
+      // Supplemental FBX clips load after first gameplay. Never lock the
+      // player or teleport through the route if they have not finished yet.
+      const canClimb = this.player.animationController.hasClip('Climbing') && this.player.animationController.hasClip('Climbing_To_Top');
+      hud?.showInteractionPrompt(canClimb
+        ? (hud?.isTouchDevice?.() ? 'Trepar al \u00e1rbol \u00b7 Acci\u00f3n' : 'Trepar al \u00e1rbol [E]')
+        : 'Preparando animaci\u00f3n de escalada');
+      if (!canClimb) return;
       if (!this.inputManager.consumeInteractPress()) return;
       this.player.isControlsLocked = this.player.isMovementLocked = true;
       this.player.velocity.set(0, 0, 0);
@@ -1934,11 +2036,7 @@ export class LevelToyStory {
       this.canopyTraversal = 'climb';
       this.canopyTraversalElapsed = 0;
       this.canopyTraversalDuration = this.player.animationController.getClipDuration('Climbing');
-      this.canopyTraversalCurve = new THREE.QuadraticBezierCurve3(
-        this.player.mesh.position.clone(),
-        route.base.clone().add(new THREE.Vector3(0, 2.2, 0.25)),
-        route.top.clone()
-      );
+      this.canopyTraversalCurve = new THREE.QuadraticBezierCurve3(this.player.mesh.position.clone(), route.base.clone().add(new THREE.Vector3(0, 2.2, 0.25)), route.top.clone());
       this.player.animationController.playOneShot('Climbing', () => {
         this.player.mesh.position.copy(route.top);
         this.canopyTraversal = 'top';
@@ -1953,28 +2051,70 @@ export class LevelToyStory {
       });
       return;
     }
-    if (this.canopyAtTop && !this.canopyRewardClaimed && distTop < 3.2) {
-      hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Balancearse por la liana · Acción' : 'Balancearse por la liana [E]');
-      if (!this.inputManager.consumeInteractPress()) return;
+
+    const swingTo = (curve: THREE.QuadraticBezierCurve3, target: THREE.Vector3, clipName: string, next: 'middle' | 'landing') => {
       this.player.isControlsLocked = this.player.isMovementLocked = true;
       this.player.velocity.set(0, 0, 0);
-      const clipName = route.top.distanceTo(route.landing) > 10 || Math.abs(route.landing.y - route.top.y) > 3.5 ? 'Swing_To_Land2' : 'Swing_To_Land';
+      this.player.mesh.rotation.y = Math.atan2(target.x - playerPos.x, target.z - playerPos.z);
       this.canopyTraversal = 'swing';
       this.canopyTraversalElapsed = 0;
       this.canopyTraversalDuration = this.player.animationController.getClipDuration(clipName);
-      this.canopyTraversalCurve = route.vineCurve;
+      this.canopyTraversalCurve = curve;
       this.player.animationController.playOneShot(clipName, () => {
-        this.player.mesh.position.copy(route.landing);
+        this.player.mesh.position.copy(target);
         this.player.isGrounded = true;
         this.player.isControlsLocked = this.player.isMovementLocked = false;
         this.canopyTraversal = null;
         this.canopyTraversalCurve = null;
-        this.canopyRewardClaimed = true;
-        if (this.canopyRewardHint) this.canopyRewardHint.visible = false;
+        if (next === 'middle') {
+          this.canopyAtTop = false;
+          this.canopyAtMid = true;
+          this.subtitleSystem.show('Primera traves\u00eda', 'Has llegado a la plataforma intermedia. Contin\u00faa por la segunda liana hacia el cofre secreto.');
+        } else {
+          this.canopyAtMid = false;
+          this.canopyRewardClaimed = true;
+          this.subtitleSystem.show('Cofre de la copa', 'La segunda traves\u00eda te ha llevado a un cofre secreto. Pulsa Acci\u00f3n para abrirlo.');
+        }
         this.player.animationController.playState('Idle', 0.18);
-        this.powerOrbSystem?.spawn(route.landing.clone().add(new THREE.Vector3(0, 0.3, 0)), 20);
-        this.subtitleSystem.show('Hallazgo de la copa', 'Has encontrado una Esfera de Poder. La liana te lleva de vuelta al terreno seguro.');
       });
+    };
+
+    if (this.canopyAtTop && distTop < 3.2) {
+      const canSwing = this.player.animationController.hasClip('Swing_To_Land');
+      hud?.showInteractionPrompt(canSwing
+        ? (hud?.isTouchDevice?.() ? 'Cruzar a la plataforma \u00b7 Acci\u00f3n' : 'Cruzar a la plataforma [E]')
+        : 'Preparando animaci\u00f3n de liana');
+      if (!canSwing) return;
+      if (this.inputManager.consumeInteractPress()) swingTo(route.firstPath, route.middle, 'Swing_To_Land', 'middle');
+      return;
+    }
+    if (this.canopyAtMid && distMiddle < 3.2) {
+      const clip = route.middle.distanceTo(route.landing) > 8 ? 'Swing_To_Land2' : 'Swing_To_Land';
+      const canSwing = this.player.animationController.hasClip(clip);
+      hud?.showInteractionPrompt(canSwing
+        ? (hud?.isTouchDevice?.() ? 'Balancearse a la otra orilla \u00b7 Acci\u00f3n' : 'Balancearse a la otra orilla [E]')
+        : 'Preparando animaci\u00f3n de liana');
+      if (!canSwing) return;
+      if (this.inputManager.consumeInteractPress()) {
+        swingTo(route.secondPath, route.landing, clip, 'landing');
+      }
+      return;
+    }
+    if (this.canopyRewardClaimed && this.canopyChest && !this.canopyChestOpen && this.canopyChest.mesh.position.distanceTo(playerPos) < 2.7) {
+      hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Abrir cofre secreto \u00b7 Acci\u00f3n' : 'Abrir cofre secreto [E]');
+      if (!this.inputManager.consumeInteractPress()) return;
+      this.canopyChestOpen = this.canopyChest.isUnlocked = true;
+      this.canopyChest.unlock(this.audioManager, this.collectibleSystem, () => {
+        if (!this.collectedKeys.key4_curiosity && !this.curiosityKeySpawned) {
+          this.curiosityKeySpawned = true;
+          this.spawn3DKey('key4_curiosity', this.canopyChest!.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0)));
+          this.subtitleSystem.show('Llave de la Curiosidad', 'Has encontrado una ruta secreta y la llave de su cofre.');
+        } else {
+          this.powerOrbSystem?.spawn(this.canopyChest!.mesh.position, 30);
+          this.subtitleSystem.show('Cofre secreto', 'El cofre contiene una Esfera de Poder.');
+        }
+      });
+      if (this.canopyRewardHint) this.canopyRewardHint.visible = false;
     }
   }
 

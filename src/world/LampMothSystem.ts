@@ -19,10 +19,10 @@ export class LampMothSystem {
   private readonly interval = 1 / 30;
 
   constructor(scene: THREE.Scene, anchors: THREE.Vector3[], mobile: boolean) {
-    const perAnchor = mobile ? 3 : 5;
+    const perAnchor = mobile ? 5 : 7;
     const count = anchors.length * perAnchor;
-    const bodyGeometry = new THREE.SphereGeometry(0.038, 6, 5);
-    const wingGeometry = new THREE.SphereGeometry(0.065, 6, 4);
+    const bodyGeometry = new THREE.SphereGeometry(0.05, 6, 5);
+    const wingGeometry = new THREE.SphereGeometry(0.09, 6, 4);
     const bodyMaterial = new THREE.MeshBasicMaterial({
       color: 0xffbd57,
       toneMapped: false,
