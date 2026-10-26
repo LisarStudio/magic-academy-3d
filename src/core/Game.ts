@@ -44,6 +44,13 @@ export class Game {
   private lastFpsCalcTime = 0;
   private currentFps = 60;
   private isPaused = false;
+  private renderQuality = 0.85;
+  private gameplayPrepared = false;
+  private frameTimeAverageMs = 16.67;
+  private renderScale = 1;
+  private performanceSampleElapsed = 0;
+  private performanceAdjustCooldown = 0;
+  private fastFrameSeconds = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.sceneManager = new SceneManager(canvas);
@@ -61,19 +68,23 @@ export class Game {
         this.inputManager.resetInputs();
         if (!this.hud.isTouchDevice()) this.inputManager.requestPointerLock();
       },
-      onTransitionComplete: (mode) => {
+      onTransitionComplete: async (mode) => {
+        this.mainMenu.setInGameLoadingIndeterminate('Cargando a Wukong…');
+        await this.prepareGameplay();
         this.beginGameplay(mode);
         this.sceneManager.render();
       },
       onPreferences: ({ music, effects, quality }) => {
         this.audioManager.setMusicVolume(music);
         this.audioManager.setSFXVolume(effects);
-        this.sceneManager.renderer.setPixelRatio(renderPixelRatio(quality));
+        this.renderQuality = quality;
+        this.level01?.setGrassQuality(quality);
+        this.applyRenderResolution();
         this.sceneManager.renderer.setSize(window.innerWidth, window.innerHeight);
       },
       onSelect: () => this.audioManager.playMenuSelect()
     });
-    this.assetManager.onProgress = (loaded, total, url) => this.mainMenu.setLoadingProgress(loaded, total, url);
+    this.assetManager.onProgress = (loaded, total, url) => this.mainMenu.setInGameLoadingProgress(loaded, total, url, 'Cargando a Wukong');
 
     this.initUIListeners();
   }
@@ -108,6 +119,11 @@ export class Game {
       this.mainMenu.showLoadingError(message, () => void this.retryIntroMedia());
     }
 
+    // Gameplay resources are loaded only after the start cinematic, under the in-game loading UI.
+  }
+
+  private async prepareGameplay(): Promise<void> {
+    if (this.gameplayPrepared) return;
     // 1. Load Player Model (GLB or Procedural Fallback)
     const playerData = await this.assetManager.loadPlayerModel();
     this.sceneManager.scene.add(playerData.model);
@@ -150,8 +166,10 @@ export class Game {
       this.checkpointManager,
       this.collectibleSystem,
       this.subtitleSystem,
-      this.audioManager
+      this.audioManager,
+      (loaded, total, url) => this.mainMenu.setInGameLoadingProgress(loaded, total, url, 'Cargando el templo')
     );
+    this.level01.setGrassQuality(this.renderQuality);
 
     await this.level01.init();
 
@@ -407,14 +425,14 @@ export class Game {
         pauseScreen?.classList.add('hidden');
       }
     };
-
-    this.mainMenu.setGameplayReady(true);
+    this.gameplayPrepared = true;
   }
 
   private initUIListeners(): void {
     const btnReplay = document.getElementById('btn-replay');
     const btnContinue = document.getElementById('btn-victory-continue');
     const btnResume = document.getElementById('btn-resume');
+    document.getElementById('btn-retry-in-game-loading')?.addEventListener('click', () => window.location.reload());
     this.inputManager.onPauseToggle = () => {
       if (this.menuState === 'Playing') this.togglePause();
     };
@@ -516,6 +534,7 @@ export class Game {
     // tens of seconds on a throttled device and outlive its timeline.
     const animationDelta = Math.min(0.5, elapsed);
     this.lastFrameTime = currentTime;
+    this.updateAdaptiveResolution(elapsed);
     this.hud.mobileControls?.setGameplayEnabled(this.menuState === 'Playing' && !this.isPaused);
 
     if (!this.isPaused) {
@@ -535,6 +554,43 @@ export class Game {
     }
 
     requestAnimationFrame((t) => this.loop(t));
+  }
+
+  /**
+   * Adjusts only the drawing resolution when real play-mode frame times fall
+   * behind budget. Scene content and animation quality stay intact; this is a
+   * best-effort safety net, not a promise that every device can sustain 60 FPS.
+   */
+  private updateAdaptiveResolution(elapsed: number): void {
+    if (this.menuState !== 'Playing' || elapsed <= 0) return;
+    const frameMs = Math.min(250, elapsed * 1000);
+    this.frameTimeAverageMs += (frameMs - this.frameTimeAverageMs) * 0.06;
+    this.performanceSampleElapsed += elapsed;
+    this.performanceAdjustCooldown = Math.max(0, this.performanceAdjustCooldown - elapsed);
+    if (this.performanceSampleElapsed < 1 || this.performanceAdjustCooldown > 0) return;
+    this.performanceSampleElapsed = 0;
+
+    if (this.frameTimeAverageMs > 19 && this.renderScale > 0.68) {
+      this.renderScale = Math.max(0.68, this.renderScale - 0.08);
+      this.fastFrameSeconds = 0;
+      this.performanceAdjustCooldown = 1.5;
+      this.applyRenderResolution();
+      console.info(`[Performance] Frame time ${this.frameTimeAverageMs.toFixed(1)} ms; lowering render resolution to ${this.renderScale.toFixed(2)}x.`);
+    } else if (this.frameTimeAverageMs < 15.5 && this.renderScale < 1) {
+      this.fastFrameSeconds += 1;
+      if (this.fastFrameSeconds >= 5) {
+        this.renderScale = Math.min(1, this.renderScale + 0.04);
+        this.fastFrameSeconds = 0;
+        this.performanceAdjustCooldown = 1.5;
+        this.applyRenderResolution();
+      }
+    } else {
+      this.fastFrameSeconds = 0;
+    }
+  }
+
+  private applyRenderResolution(): void {
+    this.sceneManager.renderer.setPixelRatio(renderPixelRatio(this.renderQuality * this.renderScale));
   }
 
   private update(delta: number, animationDelta: number): void {

@@ -11,6 +11,9 @@ export function isLowPowerDevice(): boolean {
 }
 
 export function renderPixelRatio(quality = 1): number {
-  const cap = isLowPowerDevice() ? 0.85 : 1.5;
+  // Keep the framebuffer close to 1080p on dense displays. The game uses
+  // dynamic resolution feedback during play to spend extra pixels only when
+  // the device has frame-time headroom.
+  const cap = isLowPowerDevice() ? 0.78 : 1.25;
   return Math.max(0.6, Math.min(window.devicePixelRatio * quality, cap));
 }

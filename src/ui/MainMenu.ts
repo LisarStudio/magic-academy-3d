@@ -13,7 +13,7 @@ interface MainMenuCallbacks {
   onStateChange: (state: MenuState) => void;
   onStartIntroMusic: () => Promise<boolean>;
   onBeginTransition: (mode: StartMode) => void;
-  onTransitionComplete: (mode: StartMode) => void;
+  onTransitionComplete: (mode: StartMode) => Promise<void> | void;
   onPreferences: (preferences: MenuPreferences) => void;
   onSelect: () => void;
 }
@@ -47,7 +47,15 @@ export class MainMenu {
   private transitionStarted = false;
   private startVideoReady = false;
   private startVideoPreparation: Promise<void> | null = null;
-  private gameplayReady = false;
+  private loadingTipTimer = 0;
+  private loadingTipIndex = 0;
+  private readonly loadingTips = [
+    'Pulsa Acción junto al cofre para recoger el Báculo.',
+    'Golpe ataca; con el Báculo usarás nuevos movimientos.',
+    'Esquiva el ataque anunciado del cangrejo y contraataca.',
+    'Encuentra llaves para abrir cerraduras antiguas.',
+    'Ayuda a Gekko para conseguir monedas.'
+  ];
   private introStartPending = false;
   private introFallbackStarted = false;
 
@@ -62,12 +70,12 @@ export class MainMenu {
       ? 'assets/cinematics/optimized/wukong-menu-idle-mobile.mp4'
       : 'assets/cinematics/wukong-menu-idle.mp4';
     this.introVideo.setAttribute('fetchpriority', 'high');
-    this.introVideo.src = `${base}${introPath}`;
+    this.introVideo.src = `${base}${introPath}?v=${__APP_VERSION__}`;
     this.idleVideo.preload = 'none';
-    this.idleVideo.src = `${base}${idlePath}`;
+    this.idleVideo.src = `${base}${idlePath}?v=${__APP_VERSION__}`;
     this.idleVideo.loop = true;
     this.startVideo.preload = 'none';
-    this.startVideo.src = `${base}assets/cinematics/wukong-start.mp4`;
+    this.startVideo.src = `${base}assets/cinematics/wukong-start.mp4?v=${__APP_VERSION__}`;
     this.introVideo.addEventListener('progress', () => this.updateIntroProgress());
     this.introVideo.addEventListener('loadedmetadata', () => this.updateIntroProgress());
     this.loadPreferences();
@@ -119,9 +127,101 @@ export class MainMenu {
     return this.waitForVideoData(this.introVideo, 'La_leyenda_de_Wukong_Intro');
   }
 
-  public setGameplayReady(ready: boolean): void {
-    this.gameplayReady = ready;
-    this.refreshContinueButton();
+  public showInGameLoading(): void {
+    const screen = document.getElementById('in-game-loading');
+    if (!screen) return;
+    document.getElementById('btn-retry-in-game-loading')?.classList.add('hidden');
+    const video = document.getElementById('in-game-loading-video') as HTMLVideoElement | null;
+    const base = import.meta.env.BASE_URL;
+    screen.querySelectorAll<HTMLImageElement>('img[data-loading-src]').forEach((image) => {
+      image.fetchPriority = 'low';
+      image.src = `${base}${image.dataset.loadingSrc}?v=${__APP_VERSION__}`;
+      delete image.dataset.loadingSrc;
+    });
+    if (video) {
+      const poster = `${base}assets/ui/wukong-loading-poster.webp?v=${__APP_VERSION__}`;
+      video.poster = poster;
+      screen.style.backgroundImage = `url("${poster}")`;
+      video.setAttribute('fetchpriority', 'low');
+      if (!video.src.includes('wukong-loading-background-optimized.mp4')) {
+        video.src = `${base}assets/ui/wukong-loading-background-optimized.mp4?v=${__APP_VERSION__}`;
+        video.load();
+      }
+      void video.play().catch(() => { /* Keep the Blender-rendered poster visible. */ });
+    }
+    this.setInGameLoadingIndeterminate('Preparando a Wukong y el reino…');
+    this.loadingTipIndex = Math.floor(Math.random() * this.loadingTips.length);
+    this.updateLoadingTip();
+    window.clearInterval(this.loadingTipTimer);
+    this.loadingTipTimer = window.setInterval(() => this.updateLoadingTip(), 5000);
+    screen.classList.remove('hidden');
+    screen.classList.add('is-visible');
+  }
+
+  public setInGameLoadingProgress(loaded: number, total: number, asset?: string, phase = 'Cargando recursos'): void {
+    const bar = document.getElementById('in-game-loading-progress');
+    const label = document.getElementById('in-game-loading-status');
+    const count = document.getElementById('in-game-loading-count');
+    if (!bar || !label || !count) return;
+    if (total <= 0) {
+      this.setInGameLoadingIndeterminate(phase);
+      return;
+    }
+    const ratio = Math.max(0, Math.min(1, loaded / total));
+    bar.classList.remove('is-indeterminate');
+    bar.style.width = `${Math.round(ratio * 100)}%`;
+    bar.parentElement?.parentElement?.setAttribute('aria-valuenow', `${Math.round(ratio * 100)}`);
+    label.textContent = asset ? `${phase}: ${this.friendlyAssetName(asset)}` : phase;
+    count.textContent = `${loaded} de ${total} recursos`;
+  }
+
+  public setInGameLoadingIndeterminate(message: string): void {
+    const bar = document.getElementById('in-game-loading-progress');
+    if (bar) {
+      bar.classList.add('is-indeterminate');
+      bar.style.width = '';
+    }
+    bar?.parentElement?.parentElement?.removeAttribute('aria-valuenow');
+    const label = document.getElementById('in-game-loading-status');
+    if (label) label.textContent = message;
+    const count = document.getElementById('in-game-loading-count');
+    if (count) count.textContent = 'Preparando la partida…';
+  }
+
+  public async completeInGameLoading(): Promise<void> {
+    const bar = document.getElementById('in-game-loading-progress');
+    if (bar) {
+      bar.classList.remove('is-indeterminate');
+      bar.style.width = '100%';
+    }
+    bar?.parentElement?.parentElement?.setAttribute('aria-valuenow', '100');
+    const label = document.getElementById('in-game-loading-status');
+    if (label) label.textContent = 'Partida lista';
+    const count = document.getElementById('in-game-loading-count');
+    if (count) count.textContent = 'Recursos esenciales preparados';
+    const screen = document.getElementById('in-game-loading');
+    if (!screen) return;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    screen.classList.remove('is-visible');
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 280));
+    screen.classList.add('hidden');
+    window.clearInterval(this.loadingTipTimer);
+    (document.getElementById('in-game-loading-video') as HTMLVideoElement | null)?.pause();
+  }
+
+  public failInGameLoading(message: string): void {
+    const status = document.getElementById('in-game-loading-status');
+    if (status) status.textContent = message;
+    document.getElementById('btn-retry-in-game-loading')?.classList.remove('hidden');
+    window.clearInterval(this.loadingTipTimer);
+  }
+
+  private updateLoadingTip(): void {
+    const tip = document.getElementById('in-game-loading-tip');
+    if (!tip) return;
+    const offset = 1 + Math.floor(Math.random() * (this.loadingTips.length - 1));
+    this.loadingTipIndex = (this.loadingTipIndex + offset) % this.loadingTips.length;
+    tip.textContent = this.loadingTips[this.loadingTipIndex];
   }
 
   private friendlyAssetName(url: string): string {
@@ -361,7 +461,7 @@ export class MainMenu {
 
   private requestStart(mode: StartMode): void {
     if (this.state !== 'MenuIdle' || this.transitionStarted) return;
-    if (!this.gameplayReady || !this.startVideoReady) return;
+    if (!this.startVideoReady) return;
     if (mode === 'continue') {
       if (!this.hasValidSave()) { this.refreshContinueButton(); return; }
       this.beginTransition('continue');
@@ -564,35 +664,36 @@ export class MainMenu {
     }
   }
 
-  private finishTransition(): void {
+  private async finishTransition(): Promise<void> {
     if (!this.transitionStarted || this.state !== 'StartingGame') return;
     this.transitionStarted = false;
     try {
-      this.callbacks.onTransitionComplete(this.startMode);
+      this.showInGameLoading();
+      await this.callbacks.onTransitionComplete(this.startMode);
     } catch (error) {
       console.error('[MainMenu] Could not enter gameplay after the transition:', error);
-      this.transitionStarted = true;
-      this.recoverStartTransition('No se pudo iniciar el nivel. Reintenta para volver al juego.');
+      this.failInGameLoading('No se pudo preparar la partida. Reintenta para volver a intentarlo.');
       return;
     }
 
-    this.setState('Playing');
-    document.getElementById('start-screen')!.classList.add('hidden');
     this.introVideo.pause();
     this.idleVideo.pause();
     this.introVideo.classList.remove('is-visible');
     this.idleVideo.classList.remove('is-visible');
     const backdrop = document.getElementById('cinematic-backdrop');
-    // The fixed backdrop sits above the WebGL canvas. Make it transparent as the
-    // final video frame fades so the already-rendered gameplay appears beneath it.
+    // First expose the already-rendered game beneath the transition frame while
+    // the branded loading video/logo still covers the screen. Only remove the
+    // loading overlay after the cinematic layer is gone, preventing a black gap.
     backdrop?.classList.add('is-ending');
     if (backdrop) backdrop.style.background = 'transparent';
     this.startVideo.classList.remove('is-visible');
-    void this.waitForOpacityTransition(this.startVideo).then(() => {
-      this.startVideo.pause();
-      backdrop?.classList.add('hidden');
-      backdrop?.classList.remove('is-ending');
-    });
+    await this.waitForOpacityTransition(this.startVideo);
+    this.startVideo.pause();
+    backdrop?.classList.add('hidden');
+    backdrop?.classList.remove('is-ending');
+    await this.completeInGameLoading();
+    this.setState('Playing');
+    document.getElementById('start-screen')!.classList.add('hidden');
   }
 
   private hasValidSave(): boolean {
@@ -611,14 +712,14 @@ export class MainMenu {
 
   private refreshContinueButton(): void {
     const canContinue = this.hasValidSave();
-    const canStart = this.gameplayReady && this.startVideoReady;
+    const canStart = this.startVideoReady;
     this.continueButton.disabled = !canContinue || !canStart;
     this.newGameButton.disabled = !canStart;
     this.continueButton.classList.toggle('menu-button-primary', canContinue);
     this.newGameButton.classList.toggle('menu-button-primary', !canContinue);
     const loadingStatus = document.getElementById('menu-loading-status');
     if (loadingStatus) {
-      loadingStatus.textContent = !this.gameplayReady ? 'Preparando el nivel…' : !this.startVideoReady ? 'Preparando la transición…' : '';
+      loadingStatus.textContent = !this.startVideoReady ? 'Preparando la transición…' : '';
       loadingStatus.classList.toggle('hidden', this.state !== 'MenuIdle' || canStart);
     }
   }

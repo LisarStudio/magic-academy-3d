@@ -500,6 +500,7 @@ export class PlayerController {
     // 4. Wall Collision — Raycast in movement direction before applying position
     const horizontalVel = new THREE.Vector3(this.velocity.x, 0, this.velocity.z);
     const horizontalSpeed = horizontalVel.length();
+    let stepUpTargetY: number | null = null;
 
     if (horizontalSpeed > 0.1 && this.colliders.length > 0) {
       const moveAmount = horizontalSpeed * delta;
@@ -517,12 +518,31 @@ export class PlayerController {
         const hitObject = wallHits[0].object;
         const objName = (hitObject.name || '').toLowerCase();
         const isStairStep = objName.includes('step') || objName.includes('stair') || objName.includes('ramp');
+        let canClimbActualStep = false;
+        const wallNormal = wallHits[0].face?.normal?.clone() || new THREE.Vector3(0, 0, 1);
+        wallNormal.transformDirection(hitObject.matrixWorld);
+        if (!isStairStep && this.isGrounded && Math.abs(wallNormal.y) < 0.35) {
+          // Imported temple risers don't necessarily have useful names. Probe
+          // the walkable top just ahead; climb only if it is genuinely within
+          // the same 45 cm step limit used by the grounding solver.
+          const ahead = this.mesh.position.clone().addScaledVector(moveNorm, this.PLAYER_RADIUS + moveAmount + 0.08);
+          ahead.y += 0.62;
+          this.groundRaycaster.set(ahead, PlayerController.DOWN_DIR);
+          this.groundRaycaster.far = 1.12;
+          const support = this.groundRaycaster.intersectObjects(this.colliders, true)
+            .find((hit) => {
+              if (isPlayerChild(hit.object) || !hit.face) return false;
+              const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+              return normal.y >= 0.4 && hit.point.y > this.mesh.position.y + 0.025 && hit.point.y <= this.mesh.position.y + 0.45;
+            });
+          if (support) {
+            stepUpTargetY = support.point.y;
+            canClimbActualStep = true;
+          }
+        }
 
-        // Ignore stair steps so Wukong glides up them smoothly
-        if (!isStairStep) {
-          const wallNormal = wallHits[0].face?.normal?.clone() || new THREE.Vector3(0, 0, 1);
-          wallNormal.transformDirection(hitObject.matrixWorld);
-
+        // Ignore named steps and unnamed risers only when a walkable top was found.
+        if (!isStairStep && !canClimbActualStep) {
           // Only treat as a wall if it is a steep vertical surface (abs(normal.y) < 0.35)
           if (Math.abs(wallNormal.y) < 0.35) {
             wallNormal.y = 0;
@@ -542,24 +562,16 @@ export class PlayerController {
         }
       }
 
-      // Auto-step climbing: Cast low ray at foot/knee height to detect steps up to 0.45m
-      const lowRayOrigin = this.mesh.position.clone().add(new THREE.Vector3(0, 0.15, 0));
-      this.wallRaycaster.set(lowRayOrigin, moveNorm);
-      this.wallRaycaster.far = this.PLAYER_RADIUS + 0.3;
-      const rawStepHits = this.wallRaycaster.intersectObjects(this.colliders, true);
-      const stepHits = rawStepHits.filter(h => !isPlayerChild(h.object));
-      if (stepHits.length > 0 && stepHits[0].distance <= this.PLAYER_RADIUS + 0.3) {
-        const stepPt = stepHits[0].point;
-        const stepHeight = stepPt.y - this.mesh.position.y;
-        if (stepHeight > 0.05 && stepHeight <= 0.45 && this.isGrounded) {
-          this.mesh.position.y += stepHeight * 0.4; // Smoothly step up
-        }
-      }
     }
 
     // Apply final position
     this.mesh.position.x += this.velocity.x * delta;
-    this.mesh.position.y += this.velocity.y * delta;
+    if (stepUpTargetY !== null && this.isGrounded) {
+      this.mesh.position.y = stepUpTargetY;
+      this.velocity.y = 0;
+    } else {
+      this.mesh.position.y += this.velocity.y * delta;
+    }
     this.mesh.position.z += this.velocity.z * delta;
 
     // Post-movement ground re-snap for smooth slope and ramp traversal
@@ -634,8 +646,11 @@ export class PlayerController {
     this.visualModel.position.y = THREE.MathUtils.lerp(this.visualModel.position.y, targetVisualY, delta * 12.0);
 
     // 5. Select Animation State — always use Run for any movement (Walk = Run at lower speed)
-    if (!this.isGrounded && !this.isAttacking && this.velocity.y < -1.0) {
-      this.animationController.playState('Fall', 0.18);
+    // Blend into the supplied air-fall clip as soon as the jump passes its apex.
+    // Waiting for -1 m/s skipped most short jumps and made the fall pose appear
+    // only during long drops.
+    if (!this.isGrounded && !this.isAttacking && this.velocity.y < -0.15) {
+      this.animationController.playState('Fall', 0.12);
     } else if (this.isGrounded && !this.isAttacking) {
       if (isMoving) {
         this.animationController.playState(isSprinting ? 'Sprint' : 'Run');

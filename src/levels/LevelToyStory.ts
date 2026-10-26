@@ -37,6 +37,7 @@ export class LevelToyStory {
   private collectibleSystem: CollectibleSystem;
   private subtitleSystem: SubtitleSystem;
   private audioManager: AudioManager;
+  private onResourceProgress?: (loaded: number, total: number, url: string) => void;
   public dayNightCycle!: DayNightCycle;
 
   public levelColliders: THREE.Object3D[] = [];
@@ -72,10 +73,11 @@ export class LevelToyStory {
   private curiosityCryptMouth!: THREE.Group;
   private grassUniforms: any = null;
   private grassSectors: THREE.InstancedMesh[] = [];
-  private grassLodSectors: THREE.InstancedMesh[] = [];
+  private terrainGroundMaterial: THREE.MeshStandardMaterial | null = null;
   private grassLoadStarted = false;
   private grassLoadPromise: Promise<void> | null = null;
   private grassCullElapsed = 0;
+  private grassQuality = 0.85;
   private structureColliderSyncElapsed = 0;
   private structureColliderCandidates: Array<{ root: THREE.Object3D; center: THREE.Vector3; radius: number; active: boolean }> = [];
   private cloudsUniforms: any = null;
@@ -119,6 +121,12 @@ export class LevelToyStory {
     const lavaDistance = Math.hypot(x - 66, z + 105);
     const basinBlend = 1 - THREE.MathUtils.smoothstep(lavaDistance, 15, 36);
     return THREE.MathUtils.lerp(naturalHeight, -13.2, basinBlend);
+  }
+
+  /** Applies the same quality choice as the renderer to vegetation LOD ranges. */
+  public setGrassQuality(quality: number): void {
+    this.grassQuality = [0.65, 0.85, 1].includes(quality) ? quality : 0.85;
+    this.grassCullElapsed = 0;
   }
 
   // Quest states & Gekko Mission State Machine
@@ -165,7 +173,8 @@ export class LevelToyStory {
     checkpointManager: CheckpointManager,
     collectibleSystem: CollectibleSystem,
     subtitleSystem: SubtitleSystem,
-    audioManager: AudioManager
+    audioManager: AudioManager,
+    onResourceProgress?: (loaded: number, total: number, url: string) => void
   ) {
     this.sceneManager = sceneManager;
     this.cameraController = cameraController;
@@ -176,6 +185,7 @@ export class LevelToyStory {
     this.collectibleSystem = collectibleSystem;
     this.subtitleSystem = subtitleSystem;
     this.audioManager = audioManager;
+    this.onResourceProgress = onResourceProgress;
     this.player.onRespawn = () => queueMicrotask(() => this.handleBossPlayerRespawn());
   }
 
@@ -402,11 +412,9 @@ export class LevelToyStory {
     });
 
     this.checkpointManager.respawnPlayer(this.player);
-    // Visual dressing is optional and loads while the player views the intro/menu.
-    // Slow mobile networks must not keep gameplay disabled for decorative GLBs.
-    void this.loadIntroEnvironmentAssets().catch((error: unknown) => {
-      console.warn('[Level] Optional temple dressing did not load:', error);
-    });
+    // Load the visual identity before play so the in-game loader can report real
+    // resource progress and the first playable frame includes the temple assets.
+    await this.loadIntroEnvironmentAssets();
     // Build the original grass in yielding sector batches after level setup.
     void this.loadGrassInBackground();
   }
@@ -414,12 +422,15 @@ export class LevelToyStory {
   /** Adds the pavilion and a subtle green ground texture as scenery only. */
   private async loadIntroEnvironmentAssets(): Promise<void> {
     const base = import.meta.env.BASE_URL + 'assets/environment/';
-    const loader = new GLTFLoader();
+    const version = `?v=${__APP_VERSION__}`;
+    const loadingManager = new THREE.LoadingManager();
+    loadingManager.onProgress = (url, loaded, total) => this.onResourceProgress?.(loaded, total, url);
+    const loader = new GLTFLoader(loadingManager);
     const [pavilionResult, templeResult, lionResult, lampResult] = await Promise.allSettled([
-      loader.loadAsync(`${base}chinese-pavilion.glb`),
-      loader.loadAsync(`${base}wukong-chinese-temple.glb`),
-      loader.loadAsync(`${base}wukong-porcelain-lion.glb`),
-      loader.loadAsync(`${base}wukong-red-lamp.glb`),
+      loader.loadAsync(`${base}chinese-pavilion.glb${version}`),
+      loader.loadAsync(`${base}wukong-chinese-temple.glb${version}`),
+      loader.loadAsync(`${base}wukong-porcelain-lion.glb${version}`),
+      loader.loadAsync(`${base}wukong-red-lamp.glb${version}`),
     ]);
 
     const terrain = this.sceneManager.scene.getObjectByName('world-terrain') as THREE.Mesh | null;
@@ -477,13 +488,14 @@ export class LevelToyStory {
       // perimeter, so rotate the visual temple to match its actual access.
       const routeTemple = placeAsset(temple, 'chinese_temple_gekko_route', 24, 0, -40, Math.PI);
       this.addTempleCollision(routeTemple);
-      this.addTempleStoneFloor();
+      this.addTempleStoneFloor(routeTemple);
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese Temple asset.', templeResult.reason);
     }
 
     if (lionResult.status === 'fulfilled') {
-      placeAsset(lionResult.value.scene, 'chinese_porcelain_guardian_pair', 7.6, 0, -21.7);
+      const guardians = placeAsset(lionResult.value.scene, 'chinese_porcelain_guardian_pair', 7.6, 0, -21.7);
+      this.addStructureMeshCollision(guardians, 'porcelain_guardian_collision', 10);
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese Porcelain Lion asset.', lionResult.reason);
     }
@@ -528,6 +540,10 @@ export class LevelToyStory {
   }
 
   private addTempleCollision(asset: THREE.Object3D): void {
+    this.addStructureMeshCollision(asset, 'central_temple_double_sided_collision', 34);
+  }
+
+  private addStructureMeshCollision(asset: THREE.Object3D, name: string, activationRadius: number): void {
     const bounds = new THREE.Box3().setFromObject(asset);
     // The imported temple meshes are authored single-sided. Raycaster ignores
     // their back faces, which let Wukong run out through a wall from inside and
@@ -536,7 +552,7 @@ export class LevelToyStory {
     asset.updateMatrixWorld(true);
     const inverseRoot = asset.matrixWorld.clone().invert();
     const collisionRoot = new THREE.Group();
-    collisionRoot.name = 'central_temple_double_sided_collision';
+    collisionRoot.name = name;
     const collisionMaterial = new THREE.MeshBasicMaterial({
       side: THREE.DoubleSide,
       colorWrite: false,
@@ -560,9 +576,9 @@ export class LevelToyStory {
     });
     this.sceneManager.scene.add(collisionRoot);
     this.structureColliderCandidates.push({
-      root: collisionRoot, center: bounds.getCenter(new THREE.Vector3()), radius: 34, active: false
+      root: collisionRoot, center: bounds.getCenter(new THREE.Vector3()), radius: activationRadius, active: false
     });
-    console.info(`[Temple] Built ${colliderCount} double-sided colliders from the existing temple meshes.`);
+    console.info(`[Collision] Built ${colliderCount} double-sided colliders for ${name}.`);
   }
 
   private alignStaffChestToPavilionTable(pavilion: THREE.Object3D, x: number, z: number): void {
@@ -614,7 +630,7 @@ export class LevelToyStory {
     }
   }
 
-  private addTempleStoneFloor(): void {
+  private addTempleStoneFloor(temple?: THREE.Object3D): void {
     const size = 512;
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = size;
@@ -642,7 +658,21 @@ export class LevelToyStory {
     // The outdoor terrain is y=0 here. Keep the walkable temple surface within
     // the player's step height and put the collider's top at the same y as the
     // visible mosaic, avoiding the old 46 cm floor lip that hid Wukong's legs.
-    const topY = this.getTerrainHeight(0, -40) + 0.16;
+    const groundY = this.getTerrainHeight(0, -40);
+    let topY = groundY + 0.16;
+    if (temple) {
+      temple.updateMatrixWorld(true);
+      const floorRay = new THREE.Raycaster(
+        new THREE.Vector3(0, groundY + 8, -40), new THREE.Vector3(0, -1, 0), 0, 10
+      );
+      const floorHit = floorRay.intersectObject(temple, true)
+        .filter((hit) => {
+          if (!hit.face || hit.point.y < groundY - 0.2 || hit.point.y > groundY + 1.5) return false;
+          return hit.face.normal.clone().transformDirection(hit.object.matrixWorld).y > 0.82;
+        })
+        .sort((a, b) => Math.abs(a.point.y - topY) - Math.abs(b.point.y - topY))[0];
+      if (floorHit) topY = floorHit.point.y + 0.012;
+    }
     floor.position.set(0, topY - 0.11, -40);
     floor.receiveShadow = true;
     this.sceneManager.scene.add(floor);
@@ -764,22 +794,21 @@ export class LevelToyStory {
     this.grassLoadStarted = true;
     const base = import.meta.env.BASE_URL + 'assets/environment/';
     const loader = new GLTFLoader();
-    this.grassLoadPromise = loader.loadAsync(`${base}wukong-grass-clumps.glb`)
+    this.grassLoadPromise = loader.loadAsync(`${base}wukong-grass-clumps.glb?v=${__APP_VERSION__}`)
       .then(async (original) => {
         let lodRoot: THREE.Object3D | null = null;
         try {
-          lodRoot = (await loader.loadAsync(`${base}wukong-grass-clumps-lod.glb`)).scene;
+          lodRoot = (await loader.loadAsync(`${base}wukong-grass-clumps-lod.glb?v=${__APP_VERSION__}`)).scene;
         } catch (error) {
           console.warn('[Grass] Optional LOD failed; using the original meshes at every distance.', error);
         }
+        this.applyOriginalGrassGroundTexture(original.scene);
         await this.buildOriginalGrass(original.scene, lodRoot ?? original.scene);
       })
       .catch((error: unknown) => {
         console.error('[Grass] Background load of original Grass It! assets failed; no substitute grass was generated.', error);
         this.grassSectors.forEach((sector) => this.sceneManager.scene.remove(sector));
-        this.grassLodSectors.forEach((sector) => this.sceneManager.scene.remove(sector));
         this.grassSectors = [];
-        this.grassLodSectors = [];
         this.grassUniforms = null;
         this.grassLoadStarted = false;
         this.grassLoadPromise = null;
@@ -787,10 +816,42 @@ export class LevelToyStory {
     return this.grassLoadPromise;
   }
 
+  private applyOriginalGrassGroundTexture(sourceRoot: THREE.Object3D): void {
+    if (!this.terrainGroundMaterial) return;
+    const named = sourceRoot.getObjectByName('Grass_Lush');
+    let sourceMaterial: THREE.Material | undefined;
+    named?.traverse((child) => {
+      if (!sourceMaterial && (child as THREE.Mesh).isMesh) {
+        const material = (child as THREE.Mesh).material;
+        sourceMaterial = Array.isArray(material) ? material[0] : material;
+      }
+    });
+    const sourceTexture = (sourceMaterial as THREE.MeshStandardMaterial | undefined)?.map;
+    if (!sourceTexture) return;
+    const groundTexture = sourceTexture.clone();
+    groundTexture.wrapS = THREE.RepeatWrapping;
+    groundTexture.wrapT = THREE.RepeatWrapping;
+    // The same Blender grass albedo provides a subtle continuous carpet under
+    // the instanced blades, hiding distance-LOD cutoffs without a new asset.
+    groundTexture.repeat.set(150, 150);
+    groundTexture.anisotropy = Math.min(4, this.sceneManager.renderer.capabilities.getMaxAnisotropy());
+    groundTexture.needsUpdate = true;
+    this.terrainGroundMaterial.map = groundTexture;
+    this.terrainGroundMaterial.color.setHex(0x526b32);
+    this.terrainGroundMaterial.needsUpdate = true;
+  }
+
   private async buildOriginalGrass(sourceRoot: THREE.Object3D, lodRoot: THREE.Object3D): Promise<void> {
     const sourceNames = ['Grass_Short', 'Grass_Lush', 'Grass_Tall'] as const;
     const weights = [0.43, 0.43, 0.14];
     const scaleRanges: Array<[number, number]> = [[0.9, 1.0], [0.7, 2.3], [0.8, 1.6]];
+    this.player.visualModel.updateMatrixWorld(true);
+    const characterBounds = new THREE.Box3().setFromObject(this.player.visualModel);
+    const characterHeight = Math.max(0.1, characterBounds.max.y - characterBounds.min.y);
+    // The 1.7 m player scale is measured from the loaded Wukong model. Keep
+    // the original blade silhouette and texture, but cap its tallest tip at
+    // ankle height instead of uniformly shrinking the clump's width.
+    const ankleGrassHeight = Math.min(0.18, characterHeight * 0.105);
     this.grassUniforms = {
       uTime: { value: 0 },
       uPlayerPos: { value: new THREE.Vector3(999, 999, 999) },
@@ -811,6 +872,39 @@ export class LevelToyStory {
         if (!mesh && (child as THREE.Mesh).isMesh) mesh = child as THREE.Mesh;
       });
       return mesh;
+    };
+
+    const makeDistanceGeometry = (source: THREE.BufferGeometry, keepRatio: number): THREE.BufferGeometry => {
+      const geometry = source.clone();
+      const index = source.index;
+      if (!index || index.count < 12) return geometry;
+      const stride = Math.max(2, Math.round(1 / keepRatio));
+      const sourceGroups = source.groups.length
+        ? source.groups
+        : [{ start: 0, count: index.count, materialIndex: 0 }];
+      const selected: number[] = [];
+      const groups: Array<{ start: number; count: number; materialIndex: number }> = [];
+      for (const group of sourceGroups) {
+        const groupStart = selected.length;
+        const end = Math.min(group.start + group.count, index.count);
+        let face = 0;
+        for (let offset = group.start; offset + 2 < end; offset += 3, face++) {
+          // Stagger each material group's samples to retain a distributed
+          // silhouette without running a runtime simplifier.
+          if (face % stride !== (groups.length % stride)) continue;
+          selected.push(index.getX(offset), index.getX(offset + 1), index.getX(offset + 2));
+        }
+        if (selected.length > groupStart) {
+          groups.push({ start: groupStart, count: selected.length - groupStart, materialIndex: group.materialIndex ?? 0 });
+        }
+      }
+      if (selected.length < 3) return geometry;
+      geometry.setIndex(new THREE.BufferAttribute(Uint32Array.from(selected), 1));
+      geometry.clearGroups();
+      if (source.groups.length) groups.forEach((group) => geometry.addGroup(group.start, group.count, group.materialIndex));
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+      return geometry;
     };
 
     const templates = sourceNames.map((name) => {
@@ -850,6 +944,9 @@ export class LevelToyStory {
       lodGeometry.scale(fullSize.x / Math.max(lodSize.x, 0.001), fullSize.y / Math.max(lodSize.y, 0.001), fullSize.z / Math.max(lodSize.z, 0.001));
       lodGeometry.computeBoundingBox();
       lodGeometry.computeBoundingSphere();
+      const lowGeometry = makeDistanceGeometry(lodGeometry, lodSource ? 0.18 : 0.04);
+      const mediumGeometry = makeDistanceGeometry(lodGeometry, lodSource ? 0.45 : 0.08);
+      const farGeometry = makeDistanceGeometry(lodGeometry, lodSource ? 0.035 : 0.01);
 
       const sourceMaterials = Array.isArray(source.material) ? source.material : [source.material];
       const materials = sourceMaterials.map((original) => {
@@ -887,9 +984,13 @@ export class LevelToyStory {
         name,
         geometry,
         lodGeometry,
+        lowGeometry,
+        mediumGeometry,
+        farGeometry,
         material: materials.length === 1 ? materials[0] : materials,
         minScale: scaleRanges[sourceNames.indexOf(name)][0],
         maxScale: scaleRanges[sourceNames.indexOf(name)][1],
+        heightFactor: ankleGrassHeight / Math.max(0.01, height * scaleRanges[sourceNames.indexOf(name)][1]),
       };
     });
 
@@ -934,30 +1035,35 @@ export class LevelToyStory {
     // instancing keeps the distribution compact on the GPU.
     // Source clumps contain many fine blades already. A wider mobile sampling
     // interval retains the carpet while reducing instance preparation and draws.
-    const spacing = isMobile ? 0.58 : 0.42;
-    const sectorsPerAxis = Math.ceil(160 / sectorSize);
+    const spacing = isMobile ? 0.72 : 0.56;
+    // Offset the X grid so the normal spawn point lies near a cell center,
+    // rather than exactly on a seam that would activate two full-detail tiles.
+    const xSectorOrigin = -90;
+    const zSectorOrigin = -120;
+    const sectorsX = Math.ceil(180 / sectorSize);
+    const sectorsZ = Math.ceil(160 / sectorSize);
     let placedTotal = 0;
     const playerAtLoad = this.player.mesh.position;
     const sectorOrder: Array<[number, number]> = [];
-    for (let sx = 0; sx < sectorsPerAxis; sx++) {
-      for (let sz = 0; sz < sectorsPerAxis; sz++) sectorOrder.push([sx, sz]);
+    for (let sx = 0; sx < sectorsX; sx++) {
+      for (let sz = 0; sz < sectorsZ; sz++) sectorOrder.push([sx, sz]);
     }
     const sectorDistanceSq = ([sx, sz]: [number, number]) => {
-      const cx = -80 + sx * sectorSize + sectorSize * 0.5;
-      const cz = -120 + sz * sectorSize + sectorSize * 0.5;
+      const cx = xSectorOrigin + sx * sectorSize + sectorSize * 0.5;
+      const cz = zSectorOrigin + sz * sectorSize + sectorSize * 0.5;
       return (cx - playerAtLoad.x) ** 2 + (cz - playerAtLoad.z) ** 2;
     };
     sectorOrder.sort((a, b) => sectorDistanceSq(a) - sectorDistanceSq(b));
     for (const [sx, sz] of sectorOrder) {
-        const x0 = -80 + sx * sectorSize;
-        const z0 = -120 + sz * sectorSize;
+        const x0 = xSectorOrigin + sx * sectorSize;
+        const z0 = zSectorOrigin + sz * sectorSize;
         const matrices = templates.map(() => [] as THREE.Matrix4[]);
         const steps = Math.ceil(sectorSize / spacing);
         for (let gx = 0; gx < steps; gx++) {
           for (let gz = 0; gz < steps; gz++) {
           const x = x0 + (gx + 0.12 + random() * 0.76) * spacing;
           const z = z0 + (gz + 0.12 + random() * 0.76) * spacing;
-          if (x > 80 || z > 40 || excluded(x, z)) continue;
+          if (x < -80 || x > 80 || z > 40 || excluded(x, z)) continue;
           const roll = random();
           const variant = roll < weights[0] ? 0 : roll < weights[0] + weights[1] ? 1 : 2;
           const groundY = this.getTerrainHeight(x, z);
@@ -970,7 +1076,7 @@ export class LevelToyStory {
           const scale = THREE.MathUtils.lerp(template.minScale, template.maxScale, random());
           dummy.position.set(x, groundY + 0.008, z);
           dummy.quaternion.copy(slopeRotation).multiply(yawRotation);
-          dummy.scale.setScalar(scale);
+          dummy.scale.set(scale, scale * template.heightFactor, scale);
           dummy.updateMatrix();
           matrices[variant].push(dummy.matrix.clone());
           }
@@ -985,36 +1091,32 @@ export class LevelToyStory {
           if (!instances.length) return;
           const template = templates[variant];
           const sector = new THREE.InstancedMesh(template.geometry, template.material, instances.length);
-          const lodSector = new THREE.InstancedMesh(template.lodGeometry, template.material, instances.length);
           sector.name = `grassit-${template.name.toLowerCase()}-sector-${sx}-${sz}`;
-          lodSector.name = `${sector.name}-lod`;
           const center = new THREE.Vector2(x0 + sectorSize * 0.5, z0 + sectorSize * 0.5);
           sector.userData.grassCenter = center;
           sector.userData.grassHalfSize = sectorSize * 0.5;
-          sector.userData.grassLod = lodSector;
-          lodSector.userData.grassCenter = center;
-          lodSector.userData.grassHalfSize = sectorSize * 0.5;
+          sector.userData.grassFullGeometry = template.geometry;
+          sector.userData.grassLodGeometry = template.lodGeometry;
+          sector.userData.grassLowGeometry = template.lowGeometry;
+          sector.userData.grassMediumGeometry = template.mediumGeometry;
+          sector.userData.grassFarGeometry = template.farGeometry;
+          sector.boundingSphere = new THREE.Sphere(
+            new THREE.Vector3(x0 + sectorSize * 0.5, 0, z0 + sectorSize * 0.5),
+            Math.hypot(sectorSize * 0.7072, 4.8 + ankleGrassHeight)
+          );
           sector.castShadow = false;
           sector.receiveShadow = false;
-          lodSector.castShadow = false;
-          lodSector.receiveShadow = false;
-          lodSector.visible = false;
           sector.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-          lodSector.instanceMatrix.setUsage(THREE.StaticDrawUsage);
           instances.forEach((matrix, index) => sector.setMatrixAt(index, matrix));
-          instances.forEach((matrix, index) => lodSector.setMatrixAt(index, matrix));
           sector.instanceMatrix.needsUpdate = true;
-          lodSector.instanceMatrix.needsUpdate = true;
           this.sceneManager.scene.add(sector);
-          this.sceneManager.scene.add(lodSector);
           this.grassSectors.push(sector);
-          this.grassLodSectors.push(lodSector);
           placedTotal += instances.length;
         });
         // Give input, camera and rendering a frame between sector batches.
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     }
-    console.info(`[Grass] ${placedTotal} original Grass It! clumps from ${sourceNames.join(', ')} in ${sectorSize}m sectors (${isMobile ? 'mobile' : 'desktop'} spacing ${spacing}m)`);
+    console.info(`[Grass] ${placedTotal} original Grass It! clumps from ${sourceNames.join(', ')} in ${sectorSize}m sectors (${isMobile ? 'mobile' : 'desktop'} spacing ${spacing}m); Wukong ${characterHeight.toFixed(2)}m, grass cap ${ankleGrassHeight.toFixed(2)}m`);
   }
 
   private buildToyStoryLevelGeometry(): void {
@@ -1025,6 +1127,7 @@ export class LevelToyStory {
     stoneTex.repeat.set(4, 4);
     const stoneMat = new THREE.MeshStandardMaterial({ map: stoneTex, roughness: 0.65, bumpScale: 0.04 });
     const groundBaseMat = new THREE.MeshStandardMaterial({ color: 0x526b32, roughness: 0.98 }); // Warm green distant ground LOD
+    this.terrainGroundMaterial = groundBaseMat;
     const sandMat = new THREE.MeshStandardMaterial({ color: 0xc2b280, roughness: 0.85 });  // Arena floor
 
     // 1. Rolling Undulating Terrain Mesh (160 x 160, 64x64 segments)
@@ -2715,14 +2818,19 @@ export class LevelToyStory {
       // topology-reduced copies in the middle distance. The ground material
       // carries coverage beyond the vegetation range.
       const isMobile = isLowPowerDevice();
-      const detailedDistance = isMobile ? 8 : 12;
-      // Keep the source-derived grass carpet across the complete 160 m level.
-      // The previous 72 m mobile cutoff exposed bare terrain across the far
-      // side of the field and made the requested coverage look absent.
-      const lodDistance = 170;
+      const qualityIndex = this.grassQuality === 0.65 ? 0 : this.grassQuality === 1 ? 2 : 1;
+      const detailDistances = isMobile ? [2, 3, 4] : [4, 5, 7];
+      const midDistances = isMobile ? [10, 14, 20] : [14, 20, 30];
+      const farDistances = isMobile ? [26, 38, 52] : [48, 65, 90];
+      const detailedDistance = detailDistances[qualityIndex];
+      const lodDistance = midDistances[qualityIndex];
+      const farDistance = farDistances[qualityIndex];
+      // High keeps the complete Blender LOD close to the player; Medium uses
+      // a fuller topology reduction and Low/mobile uses the lightest variant.
+      // Full source polygons remain exclusive to High desktop.
+      const useFullDetail = !isMobile && qualityIndex === 2;
       for (let i = 0; i < this.grassSectors.length; i++) {
         const sector = this.grassSectors[i];
-        const lodSector = this.grassLodSectors[i];
         const center = sector.userData.grassCenter as THREE.Vector2;
         const dx = playerPos.x - center.x;
         const dz = playerPos.z - center.y;
@@ -2732,8 +2840,20 @@ export class LevelToyStory {
         const edgeX = Math.max(Math.abs(dx) - halfSize, 0);
         const edgeZ = Math.max(Math.abs(dz) - halfSize, 0);
         const distanceSq = edgeX * edgeX + edgeZ * edgeZ;
-        sector.visible = distanceSq <= detailedDistance * detailedDistance;
-        lodSector.visible = !sector.visible && distanceSq <= lodDistance * lodDistance;
+        const distance = Math.sqrt(distanceSq);
+        sector.visible = distance <= farDistance;
+        if (sector.visible) {
+          const targetGeometry = distance <= detailedDistance && useFullDetail
+            ? sector.userData.grassFullGeometry
+            : distance <= lodDistance
+              ? (qualityIndex === 2
+                ? sector.userData.grassLodGeometry
+                : qualityIndex === 1
+                  ? sector.userData.grassMediumGeometry
+                  : sector.userData.grassLowGeometry)
+              : sector.userData.grassFarGeometry;
+          if (sector.geometry !== targetGeometry) sector.geometry = targetGeometry;
+        }
       }
       this.grassCullElapsed = 0.35;
     }
