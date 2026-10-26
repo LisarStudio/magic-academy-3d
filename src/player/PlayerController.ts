@@ -359,8 +359,11 @@ export class PlayerController {
         enemy.isAttackWindup && enemy.getPosition && enemy.getPosition().distanceToSquared(this.mesh.position) < 36
       ) === true;
     (window as any).gameInstance?.hud?.showDodgeWarning?.(nearbyBossWindup);
-    // The same backward input works with S/Down and the existing mobile stick.
-    if (nearbyBossWindup && input.moveBackward && this.dodgeCooldown <= 0) {
+    // Backward dodge is shared by S/Down and the existing touch stick. The
+    // analog stick does not set moveBackward, so checking only the keyboard
+    // flag made the promised dodge impossible on phones.
+    const pressingBack = input.moveBackward || (input.touchAnalogZ < -0.55 && Math.abs(input.touchAnalogX) < 0.5);
+    if (nearbyBossWindup && pressingBack && this.dodgeCooldown <= 0) {
       this.dodgeCooldown = 1.15;
       this.dodgeInvulnerability = 0.48;
       this.isInvulnerable = true;
