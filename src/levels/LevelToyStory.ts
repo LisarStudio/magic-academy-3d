@@ -525,29 +525,37 @@ export class LevelToyStory {
       guardians.updateMatrixWorld(true);
       const lionNodes = ['Chinese Porcelain Lion.001', 'Chinese Porcelain Lion.002']
         .map((name) => guardians.getObjectByName(name)).filter((node): node is THREE.Object3D => !!node);
-      const ground = this.getTerrainHeight(0, -27.1);
+      const ground = this.getTerrainHeight(0, -30.4);
       lionNodes.forEach((node, index) => {
         const bounds = new THREE.Box3().setFromObject(node);
         const current = bounds.getCenter(new THREE.Vector3());
-        const target = new THREE.Vector3(index === 0 ? -9.2 : 9.2, ground + (bounds.max.y - bounds.min.y) * 0.5, -27.1);
-        if (node.parent) node.position.add(node.parent.worldToLocal(target).sub(node.parent.worldToLocal(current)));
-        const worldYaw = Math.atan2(-target.x, -21.5 - target.z);
+        // These markers sit immediately beside the stair landing, where the
+        // green Xs were drawn; the prior pair was pushed too far outward and
+        // forward, away from the entrance.
+        const target = new THREE.Vector3(index === 0 ? -7.2 : 7.2, ground + (bounds.max.y - bounds.min.y) * 0.5, -30.4);
+        if (node.parent) {
+          const localDelta = node.parent.worldToLocal(target.clone()).sub(node.parent.worldToLocal(current.clone()));
+          node.position.add(localDelta);
+        }
+        const worldYaw = Math.atan2(-target.x, 10 - target.z);
         node.rotation.y = worldYaw - guardians.rotation.y;
         node.traverse((part) => { if ((part as THREE.Mesh).isMesh) (part as THREE.Mesh).castShadow = false; });
       });
       guardians.updateMatrixWorld(true);
-      const lionBounds = new THREE.Box3().setFromObject(guardians);
       const lionColliders = new THREE.Group();
       lionColliders.name = 'porcelain_guardian_low_cost_colliders';
-      const invisible = new THREE.MeshBasicMaterial({ visible: false });
-      for (const lionX of [-9.2, 9.2]) {
-        const blocker = new THREE.Mesh(new THREE.CylinderGeometry(0.98, 1.08, 2.15, 8), invisible);
-        blocker.position.set(lionX, ground + 1.075, -27.1);
+      // Keep blockers in the raycast set from frame one. Material visibility
+      // can make ray picking skip these proxies on some Three.js versions, so
+      // hide only color/depth writes while leaving the mesh raycastable.
+      const invisible = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide });
+      for (const lionX of [-7.2, 7.2]) {
+        const blocker = new THREE.Mesh(new THREE.CylinderGeometry(1.18, 1.28, 2.55, 10), invisible);
+        blocker.position.set(lionX, ground + 1.275, -30.4);
         blocker.name = 'porcelain_guardian_blocker';
         lionColliders.add(blocker);
       }
       this.sceneManager.scene.add(lionColliders);
-      this.structureColliderCandidates.push({ root: lionColliders, center: lionBounds.getCenter(new THREE.Vector3()), radius: 14, active: false });
+      this.levelColliders.push(lionColliders);
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese Porcelain Lion asset.', lionResult.reason);
     }
@@ -563,29 +571,35 @@ export class LevelToyStory {
       lampNodes.forEach((node, index) => {
         const bounds = new THREE.Box3().setFromObject(node);
         const current = bounds.getCenter(new THREE.Vector3());
-        const target = new THREE.Vector3(index === 0 ? -3.15 : 3.15, current.y, lampZ);
+        const target = new THREE.Vector3(index === 0 ? -5.9 : 5.9, current.y, lampZ);
         if (node.parent) node.position.add(node.parent.worldToLocal(target).sub(node.parent.worldToLocal(current)));
       });
       lamps.updateMatrixWorld(true);
       for (const node of lampNodes) {
         const bounds = new THREE.Box3().setFromObject(node);
         const center = bounds.getCenter(new THREE.Vector3());
-        const anchor = new THREE.Vector3(center.x, bounds.max.y, center.z);
         anchors.push(center.clone());
-        const lampTop = bounds.max.y + 0.035;
-        const ray = new THREE.Raycaster(new THREE.Vector3(anchor.x, lampGround + 40, anchor.z), new THREE.Vector3(0, -1, 0), 0, 40);
+        // The cord's lower end must coincide with the actual top centre of
+        // this individual lantern, and its upper end with the roof above it.
+        const lampTop = bounds.max.y + 0.02;
+        const ray = new THREE.Raycaster(new THREE.Vector3(center.x, lampGround + 40, center.z), new THREE.Vector3(0, -1, 0), 0, 40);
         const roofHit = this.centralTempleObject
-          ? ray.intersectObject(this.centralTempleObject, true).find(hit => hit.point.y > lampTop)
+          ? ray.intersectObject(this.centralTempleObject, true).find(hit => hit.point.y > lampTop && hit.point.y < lampGround + 16)
           : undefined;
         const fallbackRoofY = lampGround + 8.5;
         const roofY = roofHit && roofHit.point.y > lampTop + 0.3 ? roofHit.point.y : Math.max(lampTop + 0.5, fallbackRoofY);
-        const cordLength = Math.max(0.18, roofY - lampTop - 0.06);
+        const cordStart = new THREE.Vector3(center.x, lampTop, center.z);
+        const cordEnd = new THREE.Vector3(center.x, roofY - 0.025, center.z);
+        const cordVector = cordEnd.clone().sub(cordStart);
+        const cordLength = cordVector.length();
         const cord = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.025, 0.025, cordLength, 6),
-          new THREE.MeshStandardMaterial({ color: 0x6b3824, roughness: 0.9 })
+          new THREE.CylinderGeometry(0.022, 0.022, 1, 6),
+          new THREE.MeshStandardMaterial({ color: 0x75432b, roughness: 0.92 })
         );
         cord.name = 'lantern_roof_hanging_cord';
-        cord.position.set(center.x, lampTop + cordLength * 0.5, center.z);
+        cord.position.copy(cordStart).addScaledVector(cordVector, 0.5);
+        cord.scale.y = cordLength;
+        cord.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cordVector.normalize());
         cord.castShadow = false;
         scene.add(cord);
       }
@@ -699,7 +713,9 @@ export class LevelToyStory {
           b.fromBufferAttribute(position, ib).applyMatrix4(geometryToTemple);
           c.fromBufferAttribute(position, ic).applyMatrix4(geometryToTemple);
           const x = (a.x + b.x + c.x) / 3, y = (a.y + b.y + c.y) / 3, z = (a.z + b.z + c.z) / 3;
-          const doorway = Math.abs(x) < 1.55 && y < 3.55 && y > 0.02 && z < -5.2 && z > -6.2;
+          // The textured temple's real front leaf spans about 5.4 m at local
+          // z=-5.4. The old 3.1 m cut left both door panels blocking the entry.
+          const doorway = Math.abs(x) < 2.55 && y < 5.0 && y > 0.02 && z < -4.65 && z > -6.15;
           if (!doorway) output.push(ia, ib, ic);
         }
         const count = output.length - start;
@@ -843,7 +859,7 @@ export class LevelToyStory {
     for (const item of this.collectibleSystem.collectibles) {
       if (item.type !== 'COIN' || item.isCollected) continue;
       const pos = item.mesh.position;
-      if (Math.abs(pos.x) <= 9.4 && pos.z >= -49 && pos.z <= -31) {
+      if (Math.abs(pos.x) <= 11.2 && pos.z >= -51 && pos.z <= -29) {
         pos.y = topY + 0.52;
       }
     }

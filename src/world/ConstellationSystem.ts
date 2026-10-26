@@ -12,8 +12,10 @@ export class ConstellationSystem {
   private opacity = 0;
   private readonly lookDirection = new THREE.Vector3();
   private readonly skyOffset = new THREE.Vector3(0, 3.2, 0);
-  private readonly starMaterial = new THREE.PointsMaterial({ color: 0xc9edff, size: 7, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
-  private readonly lineMaterial = new THREE.LineBasicMaterial({ color: 0x9be3ff, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
+  // These are sky overlays anchored in camera space. Depth testing against the
+  // temple/terrain hid them whenever the camera looked toward the horizon.
+  private readonly starMaterial = new THREE.PointsMaterial({ color: 0xc9edff, size: 7, transparent: true, opacity: 0, depthTest: false, depthWrite: false, toneMapped: false });
+  private readonly lineMaterial = new THREE.LineBasicMaterial({ color: 0x9be3ff, transparent: true, opacity: 0, depthTest: false, depthWrite: false, toneMapped: false });
   private readonly shapes = [
     // Cassiopeia's recognisable W.
     [[-4, 1], [-2, -1], [0, 1.4], [2, -1], [4, 1]],
@@ -29,6 +31,7 @@ export class ConstellationSystem {
     this.group.frustumCulled = false;
     this.stars = new THREE.Points(new THREE.BufferGeometry(), this.starMaterial);
     this.lines = new THREE.LineSegments(new THREE.BufferGeometry(), this.lineMaterial);
+    this.stars.renderOrder = this.lines.renderOrder = 1000;
     this.stars.frustumCulled = this.lines.frustumCulled = false;
     this.group.add(this.lines, this.stars);
     scene.add(this.group);
