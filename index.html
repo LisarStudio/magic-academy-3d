@@ -11,9 +11,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/magic-academy-3d/assets/index-BdK1od_Q.js"></script>
-    <link rel="modulepreload" crossorigin href="/magic-academy-3d/assets/three-vendor-EnAhI9Jf.js">
-    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-DBbZUhox.css">
+    <script type="module" crossorigin src="/magic-academy-3d/assets/index-IL5sn_T5.js"></script>
+    <link rel="modulepreload" crossorigin href="/magic-academy-3d/assets/three-vendor-M0wwyA9L.js">
+    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-BK-9qpru.css">
   </head>
   <body>
     <div id="app">
@@ -97,6 +97,7 @@
                 <span id="mp-text" class="bar-text">100 / 100</span>
               </div>
             </div>
+            <div id="life-count" class="life-count" aria-label="Vidas restantes">♥ ♥ ♥</div>
           </div>
         </div>
         
@@ -104,6 +105,7 @@
           <div class="hud-title">OBJETIVO</div>
           <div id="objective-text">Sigue al profesor por el corredor</div>
         </div>
+        <div id="dodge-warning" class="dodge-warning hidden" role="status" aria-live="polite">⚠ ¡Ahora! Retrocede para esquivar</div>
 
         <!-- Collectibles & Pause HUD Top Right -->
         <div id="hud-top-right" class="hud-panel hidden">
@@ -210,6 +212,17 @@
           </div>
         </div>
 
+        <div id="game-over-screen" class="modal-screen game-over-screen hidden" role="dialog" aria-modal="true" aria-labelledby="game-over-title">
+          <div class="game-over-card">
+            <h1 id="game-over-title">Se agotaron las vidas</h1>
+            <p>El viaje de Wukong aún puede continuar.</p>
+            <div class="modal-actions">
+              <button id="btn-life-continue" class="btn-magic primary">Continuar</button>
+              <button id="btn-life-abandon" class="btn-magic">Abandonar</button>
+            </div>
+          </div>
+        </div>
+
         <!-- Pause Screen with Equipment Tab -->
         <div id="pause-screen" class="modal-screen hidden">
           <div class="modal-card pause-card">
@@ -288,21 +301,7 @@
 
           <div id="main-menu" class="main-menu hidden">
             <div class="menu-panel">
-              <svg class="wukong-logo" viewBox="0 0 670 310" role="img" aria-labelledby="logo-title">
-                <title id="logo-title">La leyenda de Wukong</title>
-                <defs><linearGradient id="logo-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff16a"/><stop offset=".55" stop-color="#ffc62e"/><stop offset="1" stop-color="#ff9419"/></linearGradient></defs>
-                <g class="logo-clouds" fill="#ffe27b" stroke="#a6421e" stroke-width="5" stroke-linejoin="round">
-                  <path d="M25 103c-21-3-25-24-7-34 3-23 31-27 42-9 14-17 40-7 39 13 21 9 14 34-9 35H25z"/>
-                  <path d="M568 103c-21-3-25-24-7-34 3-23 31-27 42-9 14-17 40-7 39 13 21 9 14 34-9 35h-65z"/>
-                </g>
-                <text x="336" y="100" text-anchor="middle" class="logo-top">LA LEYENDA</text>
-                <text x="336" y="146" text-anchor="middle" class="logo-de">DE</text>
-                <text x="336" y="231" text-anchor="middle" class="logo-main">WUKONG</text>
-                <g class="logo-staff" stroke-linecap="round">
-                  <path d="M112 267h448" stroke="#54200e" stroke-width="22"/><path d="M112 260h448" stroke="#f4aa22" stroke-width="13"/>
-                  <path d="M104 250v22m18-22v22m407-22v22m18-22v22" stroke="#b73824" stroke-width="9"/>
-                </g>
-              </svg>
+              <img class="wukong-logo" data-menu-logo="assets/ui/01_logo_wukong_reino_celestial.png" alt="La leyenda de Wukong — Los sellos del Reino Celestial" loading="lazy" />
 
               <nav class="menu-actions" aria-label="Opciones principales">
                 <button id="btn-continue" class="menu-button menu-button-primary" type="button" disabled>
