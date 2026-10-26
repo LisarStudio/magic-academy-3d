@@ -11,9 +11,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/magic-academy-3d/assets/index-CDI0jnRc.js"></script>
-    <link rel="modulepreload" crossorigin href="/magic-academy-3d/assets/three-vendor-GyLAwZgQ.js">
-    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-pjhxVENq.css">
+    <script type="module" crossorigin src="/magic-academy-3d/assets/index-BdK1od_Q.js"></script>
+    <link rel="modulepreload" crossorigin href="/magic-academy-3d/assets/three-vendor-EnAhI9Jf.js">
+    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-DBbZUhox.css">
   </head>
   <body>
     <div id="app">
@@ -26,6 +26,32 @@
         <video id="idle-video" class="cinematic-video" muted playsinline preload="none" loop></video>
         <video id="start-video" class="cinematic-video" muted playsinline preload="none"></video>
       </div>
+
+      <!-- Solo se muestra después de la cinemática de Nueva partida, durante la carga real del nivel. -->
+      <section id="in-game-loading" class="in-game-loading hidden" role="status" aria-live="polite">
+        <video id="in-game-loading-video" class="in-game-loading-video" muted playsinline loop preload="none"></video>
+        <div class="in-game-loading-shade"></div>
+        <div class="in-game-loading-content">
+          <img class="in-game-loading-logo" data-loading-src="assets/ui/01_logo_wukong_reino_celestial.png" alt="Wukong — Los sellos del Reino Celestial, 悟空" />
+          <div class="in-game-loading-main">
+            <img class="in-game-loading-spinner" data-loading-src="assets/ui/02_icono_cargando.png" alt="" aria-hidden="true" />
+            <div class="in-game-loading-copy">
+              <img class="in-game-loading-title" data-loading-src="assets/ui/03_texto_cargando_partida.png" alt="Cargando partida" />
+              <p id="in-game-loading-status">Preparando a Wukong y el reino…</p>
+              <div class="in-game-loading-track" role="progressbar" aria-label="Progreso de carga" aria-valuemin="0" aria-valuemax="100">
+                <img class="in-game-loading-track-art" data-loading-src="assets/ui/04_marco_barra_carga_referencia.png" alt="" aria-hidden="true" />
+                <div class="in-game-loading-fill-window"><div id="in-game-loading-progress" class="in-game-loading-progress is-indeterminate"></div></div>
+              </div>
+              <p id="in-game-loading-count" class="in-game-loading-count">Preparando la partida…</p>
+            </div>
+          </div>
+          <aside class="in-game-loading-tip" aria-label="Consejo de juego">
+            <img class="in-game-loading-tip-art" data-loading-src="assets/ui/05_panel_consejo_referencia.png" alt="" aria-hidden="true" />
+            <div class="in-game-loading-tip-copy"><strong>CONSEJO:</strong><p id="in-game-loading-tip"></p></div>
+          </aside>
+          <button id="btn-retry-in-game-loading" class="menu-button hidden" type="button">Reintentar</button>
+        </div>
+      </section>
 
       <!-- UI Overlay -->
       <div id="ui-overlay">
