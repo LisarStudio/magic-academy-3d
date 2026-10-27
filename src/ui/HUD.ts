@@ -4,7 +4,6 @@ import { MobileTouchControls } from './MobileTouchControls';
 import { usesTouchControls } from '../core/ControlMode';
 
 export class HUD {
-  private reticleEl: HTMLElement;
   private hudTopLeftEl: HTMLElement;
   private hudTopRightEl: HTMLElement;
   private objectiveContainerEl: HTMLElement;
@@ -63,7 +62,6 @@ export class HUD {
   public isDebugMode = false;
 
   constructor() {
-    this.reticleEl = document.getElementById('reticle')!;
     this.hudTopLeftEl = document.getElementById('hud-top-left')!;
     this.hudTopRightEl = document.getElementById('hud-top-right')!;
     this.objectiveContainerEl = document.getElementById('objective-container')!;
@@ -261,7 +259,6 @@ export class HUD {
   private lastMaxMp = -1;
   private lastCoins = -1;
   private lastKeys = -1;
-  private lastHpColor = '';
 
   /**
    * HP bar with dynamic color: green (high) → orange (medium) → red (low)
@@ -274,25 +271,11 @@ export class HUD {
     this.lastMaxHp = maxHp;
 
     const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
-    this.hpBarFillEl.style.width = `${pct}%`;
-
-    let colorState = 'green';
-    if (pct <= 25) colorState = 'red';
-    else if (pct <= 55) colorState = 'orange';
-
-    if (colorState !== this.lastHpColor) {
-      this.lastHpColor = colorState;
-      if (colorState === 'green') {
-        this.hpBarFillEl.style.background = 'linear-gradient(90deg, #15803d, #22c55e, #86efac)';
-        this.hpBarFillEl.style.boxShadow = '0 0 8px rgba(34, 197, 94, 0.5), inset 0 1px 0 rgba(255,255,255,0.2)';
-      } else if (colorState === 'orange') {
-        this.hpBarFillEl.style.background = 'linear-gradient(90deg, #b45309, #f59e0b, #fcd34d)';
-        this.hpBarFillEl.style.boxShadow = '0 0 8px rgba(245, 158, 11, 0.5), inset 0 1px 0 rgba(255,255,255,0.2)';
-      } else {
-        this.hpBarFillEl.style.background = 'linear-gradient(90deg, #991b1b, #ef4444, #fca5a5)';
-        this.hpBarFillEl.style.boxShadow = '0 0 10px rgba(239, 68, 68, 0.6), inset 0 1px 0 rgba(255,255,255,0.2)';
-      }
-    }
+    this.hpBarFillEl.style.clipPath = `inset(0 ${100 - pct}% 0 0 round 999px)`;
+    this.hpBarFillEl.style.background = 'linear-gradient(180deg, #fff8ad 0%, #ffda56 28%, #ffae24 65%, #f56a15 100%)';
+    this.hpBarFillEl.style.boxShadow = '0 0 9px #ffb52a, inset 0 1px 2px #fff9';
+    this.hpBarFillEl.setAttribute('aria-valuenow', String(safeHp));
+    this.hpBarFillEl.setAttribute('aria-valuemax', String(maxHp));
 
     const hpTextEl = document.getElementById('hp-text');
     if (hpTextEl) hpTextEl.textContent = `${safeHp} / ${maxHp}`;
@@ -301,8 +284,8 @@ export class HUD {
   public setLives(lives: number): void {
     if (!this.lifeCountEl) return;
     this.lifeCountEl.innerHTML = Array.from({ length: 3 }, (_, index) =>
-      `<span class="${index >= lives ? 'lost-life' : ''}" aria-hidden="true">♥</span>`
-    ).join(' ');
+      `<img class="${index >= lives ? 'lost-life' : ''}" src="./assets/ui/hud-baculo-vida.png" alt="" aria-hidden="true" />`
+    ).join('');
     this.lifeCountEl.setAttribute('aria-label', `Vidas restantes: ${lives}`);
   }
 
@@ -376,14 +359,6 @@ export class HUD {
     setTimeout(() => {
       this.damageFlashEl.classList.add('hidden');
     }, 300);
-  }
-
-  public showReticle(visible: boolean): void {
-    if (visible) {
-      this.reticleEl.classList.remove('hidden');
-    } else {
-      this.reticleEl.classList.add('hidden');
-    }
   }
 
   /**

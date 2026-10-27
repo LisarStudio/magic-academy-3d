@@ -26,12 +26,18 @@ export class AudioManager {
   public voiceVolume = 0.95;
 
   private isAudioUnlocked = false;
+  private readonly footstepBuffers = new Map<'grass' | 'walk', AudioBuffer[]>();
+  private readonly footstepPreparation = new Map<'grass' | 'walk', Promise<AudioBuffer[]>>();
+  private readonly lastFootstepIndex = new Map<'grass' | 'walk', number>();
 
   constructor() {
     this.bgmAudio.preload = 'auto';
     this.bgmAudio.volume = this.musicVolume * this.masterVolume;
     this.bgmAudio.addEventListener('ended', () => this.playNextGameplayTrack());
     this.setupMobileTouchUnlock();
+    // Short, compressed one-step samples keep memory and network use small.
+    // Decode them in the background so playback never parses audio on a step.
+    void this.prepareFootsteps();
   }
 
   /**
@@ -929,25 +935,58 @@ export class AudioManager {
     });
   }
 
-  public playFootstep(): void {
+  private prepareFootstepSet(surface: 'grass' | 'walk'): Promise<AudioBuffer[]> {
+    const existing = this.footstepBuffers.get(surface);
+    if (existing) return Promise.resolve(existing);
+    const pending = this.footstepPreparation.get(surface);
+    if (pending) return pending;
+
+    const preparation = (async () => {
+      const ctx = this.initCtx();
+      const buffers = await Promise.all(Array.from({ length: 10 }, async (_, i) => {
+        const file = `${surface}-${String(i + 1).padStart(2, '0')}.mp3`;
+        const url = new URL(`${import.meta.env.BASE_URL}assets/audio/footsteps/${file}`, window.location.href);
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status} loading ${url.pathname}`);
+        return ctx.decodeAudioData(await response.arrayBuffer());
+      }));
+      this.footstepBuffers.set(surface, buffers);
+      return buffers;
+    })().catch((error: unknown) => {
+      console.warn(`[AudioManager] Could not prepare ${surface} footsteps:`, error);
+      return [];
+    }).finally(() => this.footstepPreparation.delete(surface));
+
+    this.footstepPreparation.set(surface, preparation);
+    return preparation;
+  }
+
+  public async prepareFootsteps(): Promise<void> {
+    await Promise.all([this.prepareFootstepSet('grass'), this.prepareFootstepSet('walk')]);
+  }
+
+  public playFootstep(surface: 'grass' | 'walk' = 'grass', running = false): void {
+    if (this.sfxVolume * this.masterVolume <= 0.001) return;
+    const buffers = this.footstepBuffers.get(surface);
+    if (!buffers?.length) return;
+
     const ctx = this.initCtx();
-    const now = ctx.currentTime;
+    let index = Math.floor(Math.random() * buffers.length);
+    const previous = this.lastFootstepIndex.get(surface);
+    if (buffers.length > 1 && index === previous) index = (index + 1 + Math.floor(Math.random() * (buffers.length - 1))) % buffers.length;
+    this.lastFootstepIndex.set(surface, index);
 
-    const osc = ctx.createOscillator();
+    const source = ctx.createBufferSource();
     const gain = ctx.createGain();
-
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(120 + Math.random() * 20, now);
-    osc.frequency.exponentialRampToValueAtTime(40, now + 0.08);
-
-    gain.gain.setValueAtTime(0.08, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-
-    osc.connect(gain);
+    source.buffer = buffers[index];
+    gain.gain.setValueAtTime((running ? 0.62 : 0.52) * this.sfxVolume * this.masterVolume, ctx.currentTime);
+    source.connect(gain);
     gain.connect(ctx.destination);
-
-    osc.start(now);
-    osc.stop(now + 0.08);
+    source.start();
+    source.onended = () => {
+      source.disconnect();
+      gain.disconnect();
+    };
   }
 
   public playEnemyStun(): void {

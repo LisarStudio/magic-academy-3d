@@ -44,7 +44,7 @@ export class Game {
   private lastFpsCalcTime = 0;
   private currentFps = 60;
   private isPaused = false;
-  private renderQuality = 0.85;
+  private renderQuality = 1;
   private gameplayPrepared = false;
   private frameTimeAverageMs = 16.67;
   private renderScale = 1;
@@ -567,7 +567,9 @@ export class Game {
       }
     }, () => {
       this.player.isAttacking = false;
-      this.animationController.playState(this.player.isGrounded ? 'Idle' : 'Fall', 0.14);
+      // Keep the normal jump arc pose after the quick kick; the long free-fall
+      // clip only starts when PlayerController detects a high drop.
+      this.animationController.playState(this.player.isGrounded ? 'Idle' : 'Jump', 0.14);
     });
   }
 
@@ -577,6 +579,7 @@ export class Game {
     this.gameOverElapsed = 0;
     this.inputManager.exitPointerLock();
     this.player.velocity.set(0, 0, 0);
+    this.snapPlayerFeetToGround();
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
     document.getElementById('game-over-screen')?.classList.remove('hidden');
@@ -605,6 +608,7 @@ export class Game {
     this.player.health = this.player.maxHealth;
     this.player.mana = this.player.maxMana;
     this.player.mesh.position.copy(this.checkpointManager.getActiveCheckpointPosition());
+    this.snapPlayerFeetToGround();
     this.player.velocity.set(0, 0, 0);
     this.player.onLivesChange?.(3);
     this.player.onHealthChange?.(this.player.health, this.player.maxHealth);
@@ -625,6 +629,23 @@ export class Game {
     requestAnimationFrame(() => { screen.style.opacity = '0'; });
     screen.addEventListener('transitionend', () => window.location.reload(), { once: true });
     window.setTimeout(() => window.location.reload(), 950);
+  }
+
+  private snapPlayerFeetToGround(): void {
+    const colliders = this.level01?.levelColliders;
+    if (!this.player || !colliders?.length) return;
+    const origin = this.player.mesh.position.clone().add(new THREE.Vector3(0, 4, 0));
+    const ray = new THREE.Raycaster(origin, new THREE.Vector3(0, -1, 0), 0, 12);
+    const hit = ray.intersectObjects(colliders, true).find((candidate) => {
+      const normal = candidate.face?.normal.clone();
+      if (!normal) return false;
+      normal.transformDirection(candidate.object.matrixWorld);
+      return normal.y > 0.55;
+    });
+    if (hit) {
+      this.player.mesh.position.y = hit.point.y + 0.012;
+      this.player.isGrounded = true;
+    }
   }
 
   private async retryIntroMedia(): Promise<void> {
@@ -759,14 +780,11 @@ export class Game {
       this.cameraController.update(delta, this.inputManager);
     }
 
-    this.spellSystem.update(delta, this.level01.levelColliders);
-    this.spellSystem.updateTargetLockon(this.cameraController.camera.position, this.cameraController.getForwardVector());
-    this.level01.update(delta, this.player.mesh.position);
-
-    if (this.player.hasStaff && document.pointerLockElement) {
-      this.hud.showReticle(true);
-    } else {
-      this.hud.showReticle(false);
+    // Freeze world simulation while the defeat vignette is active; keep the
+    // render/mixer/camera loop alive so Continue remains animated and responsive.
+    if (!this.gameOverActive) {
+      this.spellSystem.update(delta, this.level01.levelColliders);
+      this.level01.update(delta, this.player.mesh.position);
     }
 
     // Update Debug Panel

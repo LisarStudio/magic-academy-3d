@@ -48,6 +48,14 @@ export class GekkoNPC {
       // Scale down Gekko to fit the player's size
       model.scale.set(0.25, 0.25, 0.25);
       this.mesh.add(model);
+      this.mesh.updateMatrixWorld(true);
+      const modelBounds = new THREE.Box3().setFromObject(model);
+      if (Number.isFinite(modelBounds.min.y)) {
+        // GLB source pivot is not at the soles. Align its actual lowest point
+        // with the NPC root so terrain placement does not leave Gekko hovering.
+        model.position.y += this.mesh.position.y - modelBounds.min.y;
+        this.mesh.updateMatrixWorld(true);
+      }
 
       // Solid physical cylinder collider so raycasts and physical checks block player
       const physicalCollider = new THREE.Mesh(

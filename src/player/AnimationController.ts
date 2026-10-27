@@ -26,6 +26,18 @@ export class AnimationController {
   private currentAction: THREE.AnimationAction | null = null;
   private currentState: AnimationState = 'Idle';
   private idleCyclePhase: 'base' | 'variation' | null = null;
+  private idleCyclesUntilDecision = 3;
+  private readonly headGazeTarget = new THREE.Vector3();
+  private hasHeadGazeTarget = false;
+  private headBone: THREE.Bone | null = null;
+  private neckBone: THREE.Bone | null = null;
+  private gazeYaw = 0;
+  private gazePitch = 0;
+  private readonly appliedHeadGaze = new THREE.Quaternion();
+  private readonly appliedNeckGaze = new THREE.Quaternion();
+  private readonly gazeHeadPosition = new THREE.Vector3();
+  private readonly gazeDirection = new THREE.Vector3();
+  private readonly gazeParentRotation = new THREE.Quaternion();
 
   // Procedural mesh fallbacks
   private characterGroup: THREE.Group | null = null;
@@ -56,6 +68,12 @@ export class AnimationController {
   private initAnimations(root: THREE.Object3D, clips: THREE.AnimationClip[]): void {
     this.characterRoot = root;
     this.mixer = new THREE.AnimationMixer(root);
+    root.traverse((child) => {
+      if (!(child as THREE.Bone).isBone) return;
+      const name = child.name.toLowerCase();
+      if (!this.headBone && (name === 'mixamorig:head' || name.endsWith(':head'))) this.headBone = child as THREE.Bone;
+      if (!this.neckBone && (name === 'mixamorig:neck' || name.endsWith(':neck'))) this.neckBone = child as THREE.Bone;
+    });
 
     console.log('[AnimCtrl] Registering clips:', clips.map((c) => `${c.name} (${c.tracks.length}t, ${c.duration.toFixed(1)}s)`).join(' | '));
 
@@ -66,11 +84,19 @@ export class AnimationController {
     this.mixer.addEventListener('finished', (event) => {
       const finishedAction = (event as { action: THREE.AnimationAction }).action;
       if (this.currentState !== 'Idle') return;
-      if (this.idleCyclePhase === 'base' && finishedAction === this.currentAction) {
-        if (this.allActions.has('Idle_Kick')) this.playIdleClip('Idle_Kick', 'variation', 0.16);
-        else this.playIdleClip(this.resolveClipName('Idle'), 'base', 0.16);
-      } else if (this.idleCyclePhase === 'variation' && finishedAction === this.currentAction) {
-        this.playIdleClip(this.resolveClipName('Idle'), 'base', 0.18);
+      if (this.idleCyclePhase === 'variation' && finishedAction === this.currentAction) {
+        this.playIdleClip(this.resolveClipName('Idle'), 'base', 0.48);
+      }
+    });
+    this.mixer.addEventListener('loop', (event) => {
+      const loopedAction = (event as { action: THREE.AnimationAction }).action;
+      if (this.currentState !== 'Idle' || this.idleCyclePhase !== 'base' || loopedAction !== this.currentAction) return;
+      this.idleCyclesUntilDecision--;
+      if (this.idleCyclesUntilDecision > 0) return;
+      if (this.allActions.has('Idle_Kick') && Math.random() < 0.38) {
+        this.playIdleClip('Idle_Kick', 'variation', 0.48);
+      } else {
+        this.idleCyclesUntilDecision = 2 + Math.floor(Math.random() * 3);
       }
     });
 
@@ -95,6 +121,12 @@ export class AnimationController {
 
   public hasClip(name: string): boolean { return this.allActions.has(name); }
   public getClipDuration(name: string): number { return this.allActions.get(name)?.getClip().duration ?? 1.2; }
+
+  /** Softly turns the head toward a nearby NPC while in ordinary gameplay. */
+  public setGazeTarget(target: THREE.Vector3 | null): void {
+    this.hasHeadGazeTarget = target !== null;
+    if (target) this.headGazeTarget.copy(target);
+  }
 
   /** Run a prepared one-shot action without changing gameplay-specific logic. */
   public playOneShot(name: string, onComplete: () => void, speed = 1, markerFraction = -1, onMarker?: () => void): void {
@@ -126,12 +158,10 @@ export class AnimationController {
   }
 
   public playAirAttack(onImpact: () => void, onComplete: () => void): void {
-    if (!this.hasClip('Atack_Jump')) {
-      onImpact();
-      onComplete();
-      return;
-    }
-    this.playOneShot('Atack_Jump', onComplete, 1, 0.42, onImpact);
+    // Use the same quick kick the player uses on the ground. The supplied
+    // Atack_Jump FBX is a longer acrobatic move and leaves an unresponsive hang
+    // in mid-air, so it is not the combat animation for this input.
+    this.playWukongKick(onImpact, onComplete);
   }
 
   public playBackwardDodge(onComplete: () => void): void {
@@ -498,10 +528,17 @@ export class AnimationController {
       this.currentState = 'Idle';
       return;
     }
-    if (this.currentAction && this.currentAction !== next) this.currentAction.fadeOut(fadeDuration);
-    next.reset().setLoop(THREE.LoopOnce, 1).setEffectiveWeight(1).setEffectiveTimeScale(1);
-    next.clampWhenFinished = true;
-    next.fadeIn(fadeDuration).play();
+    if (this.currentAction && this.currentAction !== next) this.currentAction.crossFadeTo(next, fadeDuration, false);
+    if (phase === 'base') {
+      this.idleCyclesUntilDecision = 2 + Math.floor(Math.random() * 3);
+      next.reset().setLoop(THREE.LoopRepeat, Infinity).setEffectiveWeight(1).setEffectiveTimeScale(1);
+      next.clampWhenFinished = false;
+    } else {
+      next.reset().setLoop(THREE.LoopOnce, 1).setEffectiveWeight(1).setEffectiveTimeScale(1);
+      next.clampWhenFinished = true;
+    }
+    if (this.currentAction !== next) next.fadeIn(fadeDuration);
+    next.play();
     this.currentAction = next;
     this.currentState = 'Idle';
     this.idleCyclePhase = phase;
@@ -509,25 +546,57 @@ export class AnimationController {
 
   public update(delta: number): void {
     if (this.mixer) {
+      // Remove the previous additive gaze before the mixer applies this frame's pose.
+      if (this.headBone) this.headBone.quaternion.multiply(this.appliedHeadGaze.clone().invert());
+      if (this.neckBone) this.neckBone.quaternion.multiply(this.appliedNeckGaze.clone().invert());
+      this.appliedHeadGaze.identity();
+      this.appliedNeckGaze.identity();
       this.mixer.update(delta);
+      this.updateHeadGaze(delta);
       if (this.oneShotAction && !this.oneShotMarkerFired && this.oneShotMarkerTime >= 0 && this.oneShotAction.time >= this.oneShotMarkerTime) {
         this.oneShotMarkerFired = true;
         this.oneShotOnMarker?.();
       }
 
-      // Audit & enforce 1.0 scale on bones to guarantee zero bone scaling deformation
+      // Retain the rig's existing scale safeguard after animation evaluation.
       if (this.characterRoot) {
         this.characterRoot.traverse((child) => {
-          if ((child as THREE.Bone).isBone) {
-            if (child.scale.x !== 1.0 || child.scale.y !== 1.0 || child.scale.z !== 1.0) {
-              child.scale.set(1.0, 1.0, 1.0);
-            }
+          if ((child as THREE.Bone).isBone &&
+            (child.scale.x !== 1 || child.scale.y !== 1 || child.scale.z !== 1)) {
+            child.scale.set(1, 1, 1);
           }
         });
       }
     }
     if (this.isProcedural && this.characterGroup) {
       this.updateProceduralAnimation(delta);
+    }
+  }
+
+  private updateHeadGaze(delta: number): void {
+    const gazeAllowed = this.currentState === 'Idle' || this.currentState === 'Walk' || this.currentState === 'Run' || this.currentState === 'Sprint';
+    let targetYaw = 0;
+    let targetPitch = 0;
+    if (gazeAllowed && this.hasHeadGazeTarget && this.headBone?.parent) {
+      this.headBone.getWorldPosition(this.gazeHeadPosition);
+      this.gazeDirection.copy(this.headGazeTarget).sub(this.gazeHeadPosition).normalize();
+      this.headBone.parent.getWorldQuaternion(this.gazeParentRotation).invert();
+      this.gazeDirection.applyQuaternion(this.gazeParentRotation);
+      targetYaw = THREE.MathUtils.clamp(Math.atan2(this.gazeDirection.x, this.gazeDirection.z), -0.42, 0.42);
+      const horizontal = Math.hypot(this.gazeDirection.x, this.gazeDirection.z);
+      targetPitch = THREE.MathUtils.clamp(-Math.atan2(this.gazeDirection.y, horizontal), -0.24, 0.24);
+    }
+    const blend = 1 - Math.exp(-Math.max(0, delta) * 4.2);
+    this.gazeYaw = THREE.MathUtils.lerp(this.gazeYaw, targetYaw, blend);
+    this.gazePitch = THREE.MathUtils.lerp(this.gazePitch, targetPitch, blend);
+    if (Math.abs(this.gazeYaw) < 0.002 && Math.abs(this.gazePitch) < 0.002) return;
+    if (this.neckBone) {
+      this.appliedNeckGaze.setFromEuler(new THREE.Euler(this.gazePitch * 0.25, this.gazeYaw * 0.3, 0, 'XYZ'));
+      this.neckBone.quaternion.multiply(this.appliedNeckGaze);
+    }
+    if (this.headBone) {
+      this.appliedHeadGaze.setFromEuler(new THREE.Euler(this.gazePitch * 0.75, this.gazeYaw * 0.7, 0, 'XYZ'));
+      this.headBone.quaternion.multiply(this.appliedHeadGaze);
     }
   }
 

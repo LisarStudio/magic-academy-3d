@@ -11,12 +11,11 @@ export function isLowPowerDevice(): boolean {
 }
 
 export function renderPixelRatio(quality = 1): number {
-  // Cap very dense displays, but never render mobile below CSS-pixel density
-  // by default. Previously the 0.78 cap made every phone visibly soft, while
-  // multiplying DPR by the render scale before clamping prevented dynamic
-  // resolution from reacting until the scale was already unusably low.
+  // Keep a native CSS-pixel floor so dynamic resolution cannot turn the game
+  // visibly soft on phones or on standard-density displays. High-DPI panels
+  // retain extra detail, with a lower cap on mobile to protect GPU memory.
   const lowPower = isLowPowerDevice();
   const cap = lowPower ? 1.25 : 1.5;
   const deviceRatio = Math.min(window.devicePixelRatio || 1, cap);
-  return Math.max(lowPower ? 0.65 : 0.7, deviceRatio * quality);
+  return Math.max(1, deviceRatio * quality);
 }

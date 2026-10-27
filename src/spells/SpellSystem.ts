@@ -9,13 +9,11 @@ import { TreasureChest } from '../world/TreasureChest';
 import { LumosGargoyle } from '../world/LumosGargoyle';
 import { CollectibleSystem } from '../collectibles/CollectibleSystem';
 
-import { TargetReticle3D } from './TargetReticle3D';
 
 export class SpellSystem {
   private scene: THREE.Scene;
   private audioManager: AudioManager;
   private collectibleSystem!: CollectibleSystem;
-  public reticle3D: TargetReticle3D;
 
   public projectiles: SpellProjectile[] = [];
   public targets: SpellTarget[] = [];
@@ -32,8 +30,6 @@ export class SpellSystem {
     this.scene = scene;
     this.audioManager = audioManager;
 
-    this.reticle3D = new TargetReticle3D();
-    this.scene.add(this.reticle3D.mesh);
   }
 
   public setCollectibleSystem(system: CollectibleSystem): void {
@@ -157,92 +153,6 @@ export class SpellSystem {
     }
 
     return defaultDir.clone();
-  }
-
-  public updateTargetLockon(cameraPos: THREE.Vector3, aimDir: THREE.Vector3): void {
-    let closestObj: THREE.Object3D | null = null;
-    let closestDist = 18.0; // Max targeting range
-    let requiredSpell: SpellType | 'TARGET' = 'FLIPENDO';
-
-    // Check Enemies
-    for (const enemy of this.enemies) {
-      if (enemy.isAlive()) {
-        const ePos = enemy.getPosition();
-        const dist = ePos.distanceTo(cameraPos);
-        const dirToObj = ePos.clone().sub(cameraPos).normalize();
-        const dot = aimDir.dot(dirToObj);
-        if (dot > 0.85 && dist < closestDist) {
-          closestDist = dist;
-          closestObj = enemy.mesh;
-          requiredSpell = 'FLIPENDO';
-        }
-      }
-    }
-
-    // Check Pots
-    for (const pot of this.pots) {
-      if (!pot.isBroken) {
-        const dist = pot.position.distanceTo(cameraPos);
-        const dirToObj = pot.position.clone().sub(cameraPos).normalize();
-        const dot = aimDir.dot(dirToObj);
-        if (dot > 0.85 && dist < closestDist) {
-          closestDist = dist;
-          closestObj = pot.mesh;
-          requiredSpell = 'FLIPENDO';
-        }
-      }
-    }
-
-    // Check Chests
-    for (const chest of this.chests) {
-      if (!chest.isUnlocked) {
-        const dist = chest.position.distanceTo(cameraPos);
-        const dirToObj = chest.position.clone().sub(cameraPos).normalize();
-        const dot = aimDir.dot(dirToObj);
-        if (dot > 0.85 && dist < closestDist) {
-          closestDist = dist;
-          closestObj = chest.mesh;
-          requiredSpell = 'ALOHOMORA';
-        }
-      }
-    }
-
-    // Check Gargoyles
-    for (const gargoyle of this.gargoyles) {
-      if (!gargoyle.isLit) {
-        const dist = gargoyle.position.distanceTo(cameraPos);
-        const dirToObj = gargoyle.position.clone().sub(cameraPos).normalize();
-        const dot = aimDir.dot(dirToObj);
-        if (dot > 0.85 && dist < closestDist) {
-          closestDist = dist;
-          closestObj = gargoyle.mesh;
-          requiredSpell = 'LUMOS';
-        }
-      }
-    }
-
-    // Check Wall Targets
-    for (const target of this.targets) {
-      if (!target.isActivated) {
-        const worldPos = new THREE.Vector3();
-        target.mesh.getWorldPosition(worldPos);
-        const dist = worldPos.distanceTo(cameraPos);
-        const dirToObj = worldPos.clone().sub(cameraPos).normalize();
-        const dot = aimDir.dot(dirToObj);
-        if (dot > 0.85 && dist < closestDist) {
-          closestDist = dist;
-          closestObj = target.mesh;
-          requiredSpell = 'FLIPENDO';
-        }
-      }
-    }
-
-    if (closestObj) {
-      this.reticle3D.attachTo(closestObj, requiredSpell);
-      this.reticle3D.update(cameraPos);
-    } else {
-      this.reticle3D.detach();
-    }
   }
 
   public update(delta: number, colliders: THREE.Object3D[]): void {

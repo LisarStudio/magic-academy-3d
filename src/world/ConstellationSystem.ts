@@ -11,11 +11,10 @@ export class ConstellationSystem {
   private activeIndex = -1;
   private opacity = 0;
   private readonly lookDirection = new THREE.Vector3();
-  private readonly skyOffset = new THREE.Vector3(0, 3.2, 0);
   // These are sky overlays anchored in camera space. Depth testing against the
   // temple/terrain hid them whenever the camera looked toward the horizon.
-  private readonly starMaterial = new THREE.PointsMaterial({ color: 0xc9edff, size: 7, transparent: true, opacity: 0, depthTest: false, depthWrite: false, toneMapped: false });
-  private readonly lineMaterial = new THREE.LineBasicMaterial({ color: 0x9be3ff, transparent: true, opacity: 0, depthTest: false, depthWrite: false, toneMapped: false });
+  private readonly starMaterial: THREE.PointsMaterial;
+  private readonly lineMaterial = new THREE.LineBasicMaterial({ color: 0x9be3ff, transparent: true, opacity: 0, depthTest: true, depthWrite: false, toneMapped: false });
   private readonly shapes = [
     // Cassiopeia's recognisable W.
     [[-4, 1], [-2, -1], [0, 1.4], [2, -1], [4, 1]],
@@ -26,12 +25,36 @@ export class ConstellationSystem {
 
   constructor(scene: THREE.Scene, camera: THREE.Camera) {
     this.camera = camera;
+    // PointsMaterial without a map renders square point sprites. The old 7 m
+    // camera-space stars therefore appeared as translucent rectangles over
+    // Wukong while a constellation faded in. Use a tiny radial alpha sprite
+    // in screen pixels instead of large world-sized squares.
+    const starCanvas = document.createElement('canvas');
+    starCanvas.width = starCanvas.height = 64;
+    const ctx = starCanvas.getContext('2d');
+    if (ctx) {
+      const glow = ctx.createRadialGradient(32, 32, 0, 32, 32, 31);
+      glow.addColorStop(0, 'rgba(255,255,255,1)');
+      glow.addColorStop(0.22, 'rgba(255,255,255,.95)');
+      glow.addColorStop(0.55, 'rgba(255,255,255,.38)');
+      glow.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, 64, 64);
+    }
+    const starTexture = new THREE.CanvasTexture(starCanvas);
+    this.starMaterial = new THREE.PointsMaterial({
+      color: 0xc9edff, map: starTexture, vertexColors: true, size: 11, sizeAttenuation: false,
+      transparent: true, opacity: 0, depthTest: true, depthWrite: false,
+      toneMapped: false, alphaTest: 0.015
+    });
     this.group.name = 'night_constellations';
     this.group.visible = false;
     this.group.frustumCulled = false;
     this.stars = new THREE.Points(new THREE.BufferGeometry(), this.starMaterial);
     this.lines = new THREE.LineSegments(new THREE.BufferGeometry(), this.lineMaterial);
-    this.stars.renderOrder = this.lines.renderOrder = 1000;
+    // Keep both elements in the normal depth-tested world pass: close scenery
+    // occludes the stars, so they never draw over Wukong's face.
+    this.stars.renderOrder = this.lines.renderOrder = 1;
     this.stars.frustumCulled = this.lines.frustumCulled = false;
     this.group.add(this.lines, this.stars);
     scene.add(this.group);
@@ -39,7 +62,6 @@ export class ConstellationSystem {
   }
 
   update(delta: number, playerPosition: THREE.Vector3, phase: number): void {
-    void playerPosition;
     const night = phase < 0.24 || phase > 0.95;
     this.group.visible = night;
     if (!night) { this.opacity = 0; this.setOpacity(0); return; }
@@ -59,11 +81,14 @@ export class ConstellationSystem {
     const lineCount = this.lines.geometry.getAttribute('position').count;
     const trace = THREE.MathUtils.smoothstep(this.elapsed, 0.15, 2.7);
     this.lines.geometry.setDrawRange(0, Math.ceil(lineCount * trace));
-    // Keep the constellation in the camera's sky view. A fixed point 29 m
-    // above the player was outside the camera frustum for the gameplay pitch.
+    // Place the constellation in the upper sky field, well beyond the player.
+    // Camera-up keeps it above the horizon; depth testing lets the temple and
+    // Wukong occlude it instead of painting a HUD-like pattern over them.
     this.camera.getWorldDirection(this.lookDirection);
-    this.group.position.copy(this.camera.position).addScaledVector(this.lookDirection, 28).add(this.skyOffset);
+    this.group.position.copy(playerPosition).addScaledVector(this.lookDirection, 86);
+    this.group.position.addScaledVector(this.camera.up, 18);
     this.group.quaternion.copy(this.camera.quaternion);
+    this.group.scale.setScalar(2.4);
     this.group.rotateZ(Math.sin(this.elapsed * 0.12) * 0.018);
   }
 

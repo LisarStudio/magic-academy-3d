@@ -39,30 +39,6 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
 /* ══════════════════════════════════════════════════════════════
    CROSSHAIR
 ══════════════════════════════════════════════════════════════ */
-.crosshair-container {
-  position: absolute; top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  width: 24px; height: 24px;
-  display: flex; align-items: center; justify-content: center;
-}
-.crosshair-dot {
-  width: 4px; height: 4px;
-  background: var(--cyan-magic);
-  border-radius: 50%;
-  box-shadow: 0 0 8px var(--cyan-magic);
-}
-.crosshair-ring {
-  position: absolute;
-  width: 16px; height: 16px;
-  border: 1px solid rgba(61, 255, 245, 0.4);
-  border-radius: 50%;
-  animation: pulse-ring 2s infinite ease-in-out;
-}
-@keyframes pulse-ring {
-  0%, 100% { transform: scale(1); opacity: 0.4; }
-  50%       { transform: scale(1.25); opacity: 0.8; }
-}
-
 /* ══════════════════════════════════════════════════════════════
    PREMIUM HUD — TOP LEFT (HP/MP + Portrait)
 ══════════════════════════════════════════════════════════════ */
@@ -736,6 +712,49 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
   background: transparent;
 }
 .cinematic-video.is-visible { opacity: 1; }
+#idle-video { object-position: 74% center; }
+.menu-spirit-orbit {
+  --orbit-size: clamp(150px, 23vw, 390px);
+  position: absolute;
+  z-index: 2;
+  left: 76%;
+  top: 55%;
+  width: var(--orbit-size);
+  aspect-ratio: .72;
+  border: 1px solid rgba(255, 218, 126, .16);
+  border-radius: 50%;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(.92);
+  pointer-events: none;
+  transition: opacity .5s ease, transform .7s cubic-bezier(.2,.7,.2,1);
+  background: radial-gradient(ellipse, rgba(255, 191, 82, .08), transparent 68%);
+  box-shadow: 0 0 28px rgba(80, 196, 255, .08), inset 0 0 24px rgba(255, 198, 91, .06);
+}
+.cinematic-backdrop.is-menu-idle .menu-spirit-orbit {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.menu-spirit-orbit span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: clamp(4px, .48vw, 8px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff8d5 0 16%, #ffe18a 35%, #ffac3e 68%, rgba(255, 135, 37, .12) 100%);
+  box-shadow: 0 0 8px 2px rgba(255, 193, 87, .56), 0 0 20px rgba(107, 211, 255, .2);
+  animation: spirit-sparkle 2.4s ease-in-out infinite;
+}
+.menu-spirit-orbit span:nth-child(1) { transform: translate(-50%, -50%) translate(0, calc(var(--orbit-size) * -.48)); }
+.menu-spirit-orbit span:nth-child(2) { transform: translate(-50%, -50%) translate(calc(var(--orbit-size) * .31), calc(var(--orbit-size) * -.39)); animation-delay: -.3s; }
+.menu-spirit-orbit span:nth-child(3) { transform: translate(-50%, -50%) translate(calc(var(--orbit-size) * .48), calc(var(--orbit-size) * -.12)); animation-delay: -.7s; }
+.menu-spirit-orbit span:nth-child(4) { transform: translate(-50%, -50%) translate(calc(var(--orbit-size) * .43), calc(var(--orbit-size) * .25)); animation-delay: -1.1s; }
+.menu-spirit-orbit span:nth-child(5) { transform: translate(-50%, -50%) translate(calc(var(--orbit-size) * .17), calc(var(--orbit-size) * .46)); animation-delay: -1.5s; }
+.menu-spirit-orbit span:nth-child(6) { transform: translate(-50%, -50%) translate(calc(var(--orbit-size) * -.25), calc(var(--orbit-size) * .41)); animation-delay: -.5s; }
+.menu-spirit-orbit span:nth-child(7) { transform: translate(-50%, -50%) translate(calc(var(--orbit-size) * -.46), calc(var(--orbit-size) * .14)); animation-delay: -1.8s; }
+.menu-spirit-orbit span:nth-child(8) { transform: translate(-50%, -50%) translate(calc(var(--orbit-size) * -.39), calc(var(--orbit-size) * -.27)); animation-delay: -.9s; }
+.menu-spirit-orbit span:nth-child(9) { transform: translate(-50%, -50%) translate(calc(var(--orbit-size) * -.08), calc(var(--orbit-size) * .25)); animation-delay: -1.3s; }
+@keyframes spirit-sparkle { 0%, 100% { opacity: .42; filter: brightness(.9); } 50% { opacity: 1; filter: brightness(1.4); } }
 .cinematic-backdrop::after {
   content: "";
   position: absolute;
@@ -802,7 +821,9 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
 .in-game-loading-video {
   object-fit: cover;
   object-position: center;
-  transform: translate3d(14%, 0, 0);
+  /* Slightly enlarge then pan: this moves Wukong right without exposing an
+   * uncovered strip at the left edge of the full-screen video. */
+  transform: translate3d(12%, 0, 0) scale(1.22);
   will-change: transform;
   -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 17%);
   mask-image: linear-gradient(90deg, transparent 0%, #000 17%);
@@ -938,7 +959,7 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
   .loading-panel { width: min(480px, 90vw); padding: clamp(20px, 6vw, 30px); gap: 12px; }
   #btn-start-intro, #btn-retry-loading { width: min(340px, 100%); min-height: 50px; justify-content: center; font-size: clamp(17px, 4.6vw, 22px); }
   .in-game-loading { background-position: 64% center; }
-  .in-game-loading-video { object-position: 64% center; transform: translate3d(5%, 0, 0); }
+  .in-game-loading-video { object-position: 68% center; transform: translate3d(7%, 0, 0) scale(1.14); }
   .in-game-loading-shade { background: linear-gradient(0deg, rgba(12, 5, 4, .96) 0%, rgba(14, 6, 5, .82) 39%, rgba(14, 6, 5, .08) 100%); }
   .in-game-loading-content { width: 100%; height: 100%; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
   .in-game-loading-logo { top: max(3%, calc(env(safe-area-inset-top) + 8px)); left: 4%; width: 68%; }
@@ -956,6 +977,9 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
   .boss-health-panel { top: max(76px, calc(env(safe-area-inset-top) + 70px)); width: calc(100vw - 32px); min-width: 0; padding: 7px 12px 9px; }
   .boss-health-track { height: 14px; }
   .cinematic-video { object-position: 60% center; }
+  #idle-video { object-position: 74% center; }
+  .menu-spirit-orbit { --orbit-size: clamp(120px, 31vw, 230px); left: 76%; top: 53%; }
+  .menu-spirit-orbit span { width: 5px; }
   .menu-panel { top: 2.5%; left: 3vw; width: min(48vw, 300px); }
   .menu-actions { position: fixed; left: 4vw; bottom: 12vh; grid-template-columns: 1fr; gap: 6px; width: min(48vw, 280px); margin: 0; }
   .menu-button { gap: 5px; width: 100%; min-height: 42px; padding: 5px 7px; border-width: 2px; border-radius: 16px; font-size: clamp(13px, 3.4vw, 17px); }
@@ -980,7 +1004,8 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
   .menu-hint { bottom: 2%; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .cinematic-video, .menu-button { transition-duration: 0.01ms; }
+  .cinematic-video, .menu-button, .menu-spirit-orbit { transition-duration: 0.01ms; }
+  .menu-spirit-orbit span { animation-duration: .01ms; }
   .main-menu.is-leaving { transition-duration: 0.01ms; }
   .main-menu { animation: none; }
 }
@@ -1745,4 +1770,71 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
   .spell-hotbar-container {
     bottom: 6px;
   }
+}
+
+/* Imperial health HUD: use the supplied transparent artwork at its original aspect ratio. */
+#hud-top-left.imperial-hud {
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  width: clamp(270px, 24vw, 360px);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  pointer-events: none;
+  backdrop-filter: none;
+}
+.imperial-health { position: relative; width: 100%; aspect-ratio: 2092 / 752; flex: none; }
+.imperial-health-frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.imperial-health-fill-clip {
+  position: absolute; left: 33.4%; top: 45.7%; width: 58.8%; height: 13.9%;
+  overflow: hidden; border-radius: 999px; pointer-events: none;
+  clip-path: polygon(1% 0, 97% 0, 100% 16%, 99% 80%, 97% 100%, 1% 100%, 0 80%, 0 16%);
+}
+.imperial-health-fill {
+  position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit;
+  background: linear-gradient(180deg, #fff8ad 0%, #ffda56 28%, #ffae24 65%, #f56a15 100%);
+  box-shadow: 0 0 9px #ffb52a, inset 0 1px 2px #fff9;
+  clip-path: inset(0 0 0 0 round 999px);
+  transition: clip-path 420ms cubic-bezier(.2,.75,.2,1);
+}
+.imperial-health-fill::after { content: ""; position: absolute; inset: 1px 2px auto; height: 26%; border-radius: 999px; background: linear-gradient(#fffbdc88, transparent); }
+.imperial-health-value {
+  position: absolute; left: 48%; top: 49.5%; width: 37%; text-align: center;
+  color: #ffeeb9; font: 700 clamp(9px, 1vw, 12px)/1 system-ui, sans-serif;
+  text-shadow: 0 1px 3px #210d04; font-variant-numeric: tabular-nums; pointer-events: none;
+}
+.imperial-hud #life-count.imperial-life-count, #life-count {
+  position: absolute; left: 34.2%; top: 73%; display: flex; align-items: center; gap: clamp(5px, .7vw, 10px);
+  margin: 0; padding: 0; pointer-events: none;
+}
+.imperial-life-count img { display: block; width: clamp(17px, 1.55vw, 23px); height: clamp(17px, 1.55vw, 23px); object-fit: contain; filter: drop-shadow(0 1px 2px #160801); transition: filter 180ms ease, opacity 180ms ease; }
+.imperial-life-count img.lost-life { filter: grayscale(1) brightness(.32); opacity: .72; }
+#hud-top-left.imperial-hud .imperial-mana { position: relative; z-index: 1; width: min(190px, 70%); margin: -1px 0 0 29%; gap: 3px; }
+#hud-top-left.imperial-hud .mp-bar { justify-content: flex-start; }
+#hud-top-left.imperial-hud .mp-bar .bar-label { color: #ffe29a; text-shadow: 0 1px 3px #1b0900; }
+#hud-top-left.imperial-hud .mp-bar .bar-bg { height: 11px; border: 1px solid #b98c32; background: #160f10; }
+
+.game-over-screen {
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 16px max(22px, env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+.game-over-card { margin-bottom: 0; }
+@media (max-width: 700px) {
+  #hud-top-left.imperial-hud { width: min(68vw, 300px); top: max(6px, env(safe-area-inset-top)); left: max(7px, env(safe-area-inset-left)); }
+  .imperial-health-value { font-size: 9px; }
+  .imperial-life-count img { width: 16px; height: 16px; }
+  #hud-top-left.imperial-hud .imperial-mana { width: 62%; margin-left: 30%; }
+  .game-over-screen { padding-bottom: max(18px, env(safe-area-inset-bottom)); }
+  .game-over-card { width: min(460px, calc(100vw - 28px)); padding: 18px 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .imperial-health-fill, .imperial-life-count img { transition: none !important; }
 }

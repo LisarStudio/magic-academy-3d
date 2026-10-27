@@ -21,9 +21,15 @@ export class PlayerController {
   public runSpeed = 9.5;
   public jumpForce = 8.0;
   public gravity = -20.0;
+  /** Tracks the top of the current airborne arc so short jumps don't use the
+   * supplied free-fall pose. That clip is reserved for genuinely high drops. */
+  private airApexY = 0;
   private dodgeCooldown = 0;
   private dodgeInvulnerability = 0;
   private readonly dodgeDirection = new THREE.Vector3();
+  private damageFlinchRemaining = 0;
+  private defaultVisualRotationZ = 0;
+  private footstepClock = 0;
 
   public health = 100;
   public maxHealth = 100;
@@ -113,6 +119,7 @@ export class PlayerController {
     // The AssetManager returns a Group containing the actual playerModel as its first child
     this.visualModel = this.mesh.children.find(c => c.type === 'Group') || this.mesh.children[0] || this.mesh;
     this.defaultVisualRotationX = this.visualModel.rotation.x;
+    this.defaultVisualRotationZ = this.visualModel.rotation.z;
     
     this.animationController = animationController;
     this.mesh.position.set(0, 0, 0);
@@ -288,6 +295,7 @@ export class PlayerController {
       // Immune while performing TakeItem animation or watching cinematics
       return;
     }
+    this.damageFlinchRemaining = 0.28;
     this.health = Math.max(0, this.health - amount);
     this.onHealthChange?.(this.health, this.maxHealth);
 
@@ -335,6 +343,7 @@ export class PlayerController {
   private static readonly TEMP_NORM = new THREE.Vector3();
 
   public update(delta: number, input: InputManager, cameraController: CameraController, animationDelta = delta): void {
+    const wasGroundedAtFrameStart = this.isGrounded;
     // ── Fail-Safe Control Recovery ──────────────────────────────────────────
     // If controls are locked but NO cinematic or pickup sequence is active, force-unlock!
     const level = (window as any).gameInstance?.level01;
@@ -437,6 +446,7 @@ export class PlayerController {
       this.isGrounded = true;
       this.velocity.y = 0;
       this.mesh.position.y = floorY; // feet snap cleanly to floor
+      this.airApexY = floorY;
 
       const dangerousFall = prevVelY < -12.0;
 
@@ -449,6 +459,8 @@ export class PlayerController {
       }
     } else {
       this.isGrounded = false;
+      if (wasGroundedAtFrameStart) this.airApexY = this.mesh.position.y;
+      else this.airApexY = Math.max(this.airApexY, this.mesh.position.y);
       if (!this.isMovementLocked) {
         this.velocity.y += this.gravity * delta;
       }
@@ -463,11 +475,13 @@ export class PlayerController {
         if (this.isGrounded) {
           this.velocity.y = this.jumpForce;
           this.isGrounded = false;
+          this.airApexY = this.mesh.position.y;
           this.jumpCount = 1;
           this.animationController.playState('Jump');
           if (audioManager) audioManager.playJumpGrunt();
         } else if (this.jumpCount === 1) {
           this.velocity.y = this.jumpForce * 0.95;
+          this.airApexY = this.mesh.position.y;
           this.jumpCount = 2;
           this.doubleJumpSpinTimer = 0.4;
           if (!this.hasStaff) {
@@ -636,6 +650,41 @@ export class PlayerController {
       }
     }
 
+    // Trigger recorded footsteps from grounded locomotion, after movement and
+    // floor snapping. The source material selects a random prepared sample.
+    const canStep = isMoving && this.isGrounded && !this.isAttacking && !this.isMovementLocked;
+    if (canStep) {
+      this.footstepClock += Math.min(delta, 0.1);
+      const stepPeriod = isSprinting ? 0.34 : 0.49;
+      if (this.footstepClock >= stepPeriod) {
+        this.footstepClock %= stepPeriod;
+        const audioManager = (window as any).gameInstance?.audioManager;
+        if (audioManager?.playFootstep) {
+          const object = validGroundHit?.object;
+          const surfaceParts: string[] = [];
+          let surfaceObject: THREE.Object3D | null = object ?? null;
+          while (surfaceObject) {
+            if (surfaceObject.name) surfaceParts.push(surfaceObject.name.toLowerCase());
+            const materials = (surfaceObject as THREE.Mesh).material;
+            if (materials) {
+              for (const material of Array.isArray(materials) ? materials : [materials]) {
+                if (material.name) surfaceParts.push(material.name.toLowerCase());
+              }
+            }
+            surfaceObject = surfaceObject.parent;
+          }
+          const surfaceId = surfaceParts.join(' ');
+          const naturalSurface = /grass|terrain|ground|soil|earth|sand|dirt|lawn|field|meadow/.test(surfaceId);
+          const hardSurface = /stone|path|pavement|brick|wood|timber|floor|temple|pavilion|stair|step|bridge|platform|basalt|marble|tile|causeway|crypt/.test(surfaceId);
+          // Natural terrain has no collision mesh and therefore falls back to
+          // grass; named structure/path colliders use the supplied walk set.
+          audioManager.playFootstep(hardSurface && !naturalSurface ? 'walk' : 'grass', isSprinting);
+        }
+      }
+    } else {
+      this.footstepClock = 0;
+    }
+
     // Resolve radial collisions at hip and shoulder heights ONLY when airborne.
     // When grounded, the forward-direction wall raycast above already handles true walls.
     // Running this pass while grounded causes the player to be pushed sideways against
@@ -688,12 +737,16 @@ export class PlayerController {
     // Align visual model to ground perfectly during Hard Landing squat pose
     const targetVisualY = (this.animationController.getCurrentState() === 'Wukong_NoWood_HardLanding') ? -0.18 : 0.0;
     this.visualModel.position.y = THREE.MathUtils.lerp(this.visualModel.position.y, targetVisualY, delta * 12.0);
+    this.damageFlinchRemaining = Math.max(0, this.damageFlinchRemaining - delta);
+    const flinchProgress = 1 - this.damageFlinchRemaining / 0.28;
+    this.visualModel.rotation.z = this.defaultVisualRotationZ + Math.sin(flinchProgress * Math.PI) * 0.09;
 
     // 5. Select Animation State — always use Run for any movement (Walk = Run at lower speed)
-    // Blend into the supplied air-fall clip as soon as the jump passes its apex.
-    // Waiting for -1 m/s skipped most short jumps and made the fall pose appear
-    // only during long drops.
-    if (!this.isGrounded && !this.isAttacking && this.velocity.y < -0.15) {
+    // The supplied wukong_falling_air clip is for high falls. Normal jumps keep
+    // their jump pose through the short descent instead of snapping into a
+    // slow, hunched free-fall animation at the apex.
+    const highFall = this.velocity.y < -8.0 && this.airApexY - this.mesh.position.y > 2.0;
+    if (!this.isGrounded && !this.isAttacking && highFall) {
       this.animationController.playState('Fall', 0.12);
     } else if (this.isGrounded && !this.isAttacking) {
       if (isMoving) {

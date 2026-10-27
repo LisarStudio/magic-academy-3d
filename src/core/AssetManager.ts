@@ -237,7 +237,7 @@ export class AssetManager {
       // Try loading player.glb first (custom character Lisar)
       try {
         console.log('[AssetManager] Loading the rigged Wukong 2.0 model via GLTFLoader...');
-        const modelUrl = import.meta.env.BASE_URL + 'assets/characters/wukong_2.0_rigged.glb?v=20261024-cuerpo-skinweights';
+        const modelUrl = import.meta.env.BASE_URL + `assets/characters/wukong_2.0_rigged.glb?v=${__APP_VERSION__}-garment-depth`;
         const gltf = await this.withAssetTimeout(this.gltfLoader.loadAsync(modelUrl), modelUrl);
         playerModel = gltf.scene;
         console.log('[AssetManager] ✅ Loaded rigged Wukong 2.0 successfully');
@@ -338,8 +338,21 @@ export class AssetManager {
           const mesh = child as THREE.Mesh;
           const material = mesh.material;
           if (material) {
+            const meshName = mesh.name.toLowerCase();
+            const garmentSurface = meshName.includes('chamarra') || meshName.includes('short') || meshName.includes('pantalon');
             const processMat = (mat: any) => {
               mat.shadowSide = THREE.DoubleSide;
+              // The rigged source has intentionally layered shirt/body and
+              // trouser/body surfaces. A small depth bias keeps the outer
+              // garment in front where skin or the red undershirt nearly
+              // touches it, without hiding or deleting any character mesh.
+              if (garmentSurface) {
+                mat.polygonOffset = true;
+                mat.polygonOffsetFactor = -1.5;
+                mat.polygonOffsetUnits = -1;
+                mat.depthTest = true;
+                mat.depthWrite = true;
+              }
               
               // Disable transparency on opaque meshes to fix sorting glitches
               if (mat.transparent && mat.opacity >= 0.99) {
@@ -356,7 +369,7 @@ export class AssetManager {
               }
               
               // PBR material optimizations for professional finish
-              const name = child.name.toLowerCase();
+              const name = meshName;
               if (name.includes('cabeza') || name.includes('skin') || name.includes('face') || name.includes('pierna') || name.includes('brazo')) {
                 mat.roughness = 0.85; // Skin: matte
                 mat.metalness = 0.0;
@@ -469,13 +482,15 @@ export class AssetManager {
   /** Load the larger optional traversal/combat clips after the first playable frame. */
   public async loadSupplementalPlayerClips(targetRoot: THREE.Object3D): Promise<THREE.AnimationClip[]> {
     const specs: Array<[string, string]> = [
+      // The defeat Continue pose is needed before the player can exhaust lives;
+      // parse it first so the game-over screen never races the end of this queue.
+      ['continue.fbx', 'Continue'],
       ['atack_jump.fbx', 'Atack_Jump'],
       ['esquivar_paso_atras.fbx', 'Dodge_Back'],
       ['Swing To Land.fbx', 'Swing_To_Land'],
       ['Swing To Land2.fbx', 'Swing_To_Land2'],
       ['Climbing.fbx', 'Climbing'],
-      ['Climbing To Top.fbx', 'Climbing_To_Top'],
-      ['continue.fbx', 'Continue']
+      ['Climbing To Top.fbx', 'Climbing_To_Top']
     ];
     const clips: THREE.AnimationClip[] = [];
     for (const [file, name] of specs) {

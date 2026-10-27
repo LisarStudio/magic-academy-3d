@@ -80,12 +80,18 @@ export class LevelToyStory {
   private grassLoadPromise: Promise<void> | null = null;
   private grassCullElapsed = 0;
   private grassQuality = 0.85;
-  private structureColliderSyncElapsed = 0;
   private centralTempleObject: THREE.Object3D | null = null;
   private structureColliderCandidates: Array<{ root: THREE.Object3D; center: THREE.Vector3; radius: number; active: boolean }> = [];
   private cloudsUniforms: any = null;
   private lampMoths: LampMothSystem | null = null;
   private constellationSystem: ConstellationSystem | null = null;
+  private optionalArchitectureStarted = false;
+  private optionalArchitectureLoading = false;
+  private readonly highHouseCenter = new THREE.Vector3(38, 0, -92);
+  private centralTempleFloorTopY: number | null = null;
+  private centralTempleFloorWidth = 0;
+  private centralTempleFloorDepth = 0;
+  private centralTempleFloorCenterZ = -40;
   private lavaUniforms: { uTime: { value: number } } | null = null;
   private lavaEmberUniforms: { uTime: { value: number } } | null = null;
   private lavaLight: THREE.PointLight | null = null;
@@ -98,7 +104,10 @@ export class LevelToyStory {
   private hatchPivot!: THREE.Group;
   private hatchOpenProgress = 0;
   private hatchTarget = 0;
-  private readonly curiosityCryptSurface = new THREE.Vector3(-45, 0, -65);
+  // Set the crypt away from the paved route so its reveal never obstructs the
+  // approach to the temple or its stair landing.
+  private readonly curiosityCryptSurface = new THREE.Vector3(-57, 0, -61);
+  private readonly npcGazePoint = new THREE.Vector3();
   private readonly curiosityCryptRoomEntry = new THREE.Vector3(-9.8, -5.82, -40);
   private isInsideCuriosityCrypt = false;
   private curiosityCryptTransitioning = false;
@@ -526,19 +535,21 @@ export class LevelToyStory {
       const lionNodes = ['Chinese Porcelain Lion.001', 'Chinese Porcelain Lion.002']
         .map((name) => guardians.getObjectByName(name)).filter((node): node is THREE.Object3D => !!node);
       const ground = this.getTerrainHeight(0, -30.4);
+      const guardianXs = [-11.2, 11.2];
+      const guardianBounds: THREE.Box3[] = [];
       lionNodes.forEach((node, index) => {
         const bounds = new THREE.Box3().setFromObject(node);
         const current = bounds.getCenter(new THREE.Vector3());
-        // These markers sit immediately beside the stair landing, where the
-        // green Xs were drawn; the prior pair was pushed too far outward and
-        // forward, away from the entrance.
-        const target = new THREE.Vector3(index === 0 ? -7.2 : 7.2, ground + (bounds.max.y - bounds.min.y) * 0.5, -30.4);
+        // Place each statue outside the stair cheek walls at the green marks.
+        const target = new THREE.Vector3(guardianXs[index] ?? 11.2, ground + (bounds.max.y - bounds.min.y) * 0.5, -30.4);
         if (node.parent) {
           const localDelta = node.parent.worldToLocal(target.clone()).sub(node.parent.worldToLocal(current.clone()));
           node.position.add(localDelta);
         }
         const worldYaw = Math.atan2(-target.x, 10 - target.z);
         node.rotation.y = worldYaw - guardians.rotation.y;
+        node.updateMatrixWorld(true);
+        guardianBounds.push(new THREE.Box3().setFromObject(node));
         node.traverse((part) => { if ((part as THREE.Mesh).isMesh) (part as THREE.Mesh).castShadow = false; });
       });
       guardians.updateMatrixWorld(true);
@@ -548,12 +559,17 @@ export class LevelToyStory {
       // can make ray picking skip these proxies on some Three.js versions, so
       // hide only color/depth writes while leaving the mesh raycastable.
       const invisible = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide });
-      for (const lionX of [-7.2, 7.2]) {
-        const blocker = new THREE.Mesh(new THREE.CylinderGeometry(1.18, 1.28, 2.55, 10), invisible);
-        blocker.position.set(lionX, ground + 1.275, -30.4);
+      guardianBounds.forEach((bounds) => {
+        const size = bounds.getSize(new THREE.Vector3());
+        const center = bounds.getCenter(new THREE.Vector3());
+        const blockerHeight = Math.max(1.55, Math.min(2.2, size.y * 0.72));
+        const blocker = new THREE.Mesh(new THREE.BoxGeometry(
+          Math.max(1.15, size.x * 0.78), blockerHeight, Math.max(1.15, size.z * 0.78)
+        ), invisible);
+        blocker.position.set(center.x, ground + blockerHeight * 0.5, center.z);
         blocker.name = 'porcelain_guardian_blocker';
         lionColliders.add(blocker);
-      }
+      });
       this.sceneManager.scene.add(lionColliders);
       this.levelColliders.push(lionColliders);
     } else {
@@ -637,7 +653,7 @@ export class LevelToyStory {
     const y = this.getTerrainHeight(center.x, center.z);
     const root = new THREE.Group();
     root.name = 'pavilion_low_cost_collision';
-    const invisible = new THREE.MeshBasicMaterial({ visible: false });
+    const invisible = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide });
     const deck = new THREE.Mesh(new THREE.BoxGeometry(size.x * 0.82, 0.18, size.z * 0.82), invisible);
     deck.position.set(center.x, y + 0.09, center.z);
     root.add(deck);
@@ -654,34 +670,49 @@ export class LevelToyStory {
 
   private addTempleCollision(asset: THREE.Object3D): void {
     asset.updateMatrixWorld(true);
-    const bounds = new THREE.Box3().setFromObject(asset);
-    const size = bounds.getSize(new THREE.Vector3());
-    const center = bounds.getCenter(new THREE.Vector3());
+    // The overall GLB bounds include the roof eaves. Using them for collision
+    // pushed invisible walls several metres outside the real building. The
+    // textured asset's wall/panel planes are at roughly ±5.4 source units;
+    // roof eaves extend farther and are intentionally excluded.
+    const center = new THREE.Vector3(0, 0, -40);
+    const modelScale = asset.scale.x;
     const ground = this.getTerrainHeight(0, -40);
     const proxy = new THREE.Group();
     proxy.name = 'central_temple_open_entrance_collision';
-    const material = new THREE.MeshBasicMaterial({ visible: false });
-    const wallHeight = 7.5;
-    const thickness = 0.45;
+    // `visible:false` also disables Mesh.raycast in Three.js. Keep the proxies
+    // raycastable while suppressing every framebuffer write.
+    const material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide });
+    const wallHeight = 8.5;
+    const thickness = 0.34;
     const addWall = (name: string, sx: number, sz: number, x: number, z: number) => {
       const wall = new THREE.Mesh(new THREE.BoxGeometry(sx, wallHeight, sz), material);
       wall.name = name;
+      wall.frustumCulled = false;
       wall.position.set(x, ground + wallHeight * 0.5, z);
       proxy.add(wall);
     };
-    const halfW = Math.min(10.6, size.x * 0.44);
-    const halfD = Math.min(10.6, size.z * 0.44);
-    // The front is the +Z elevation. Keep a 4.6 m passage aligned with the
-    // architectural doorway and leave the stairs unobstructed.
-    const frontZ = center.z + halfD - 0.1;
-    const openingHalf = 2.3;
-    addWall('temple_west_wall', thickness, size.z * 0.78, center.x - halfW, center.z);
-    addWall('temple_east_wall', thickness, size.z * 0.78, center.x + halfW, center.z);
-    addWall('temple_rear_wall', size.x * 0.78, thickness, center.x, center.z - halfD);
+    // The actual wall/panel footprint is about ±5.4 source units. The larger
+    // ±7.9 bounds belong to the roof eaves and must not become invisible walls.
+    const halfW = 5.4 * modelScale;
+    const halfD = 5.4 * modelScale;
+    const sideHalfD = 5.4 * modelScale;
+    // After the asset's half-turn, its open south entrance faces +Z. The side
+    // and rear proxies meet that plane, leaving only the authored stair/door
+    // opening clear. No proxy is based on roof overhang dimensions.
+    const frontZ = center.z + halfD;
+    const rearZ = center.z - halfD;
+    const openingHalf = 2.45;
+    addWall('temple_west_wall', thickness, sideHalfD * 2, center.x - halfW, center.z);
+    addWall('temple_east_wall', thickness, sideHalfD * 2, center.x + halfW, center.z);
+    addWall('temple_rear_wall', halfW * 2, thickness, center.x, rearZ);
     addWall('temple_front_wall_left', halfW - openingHalf, thickness, center.x - (halfW + openingHalf) * 0.5, frontZ);
     addWall('temple_front_wall_right', halfW - openingHalf, thickness, center.x + (halfW + openingHalf) * 0.5, frontZ);
     this.sceneManager.scene.add(proxy);
-    this.structureColliderCandidates.push({ root: proxy, center, radius: 34, active: false });
+    // Only keep walls active around the building footprint, not across the
+    // surrounding field. A small approach margin still activates them before
+    // the player reaches a wall or the stair landing.
+    const radius = Math.hypot(halfW, halfD) + 3.0;
+    this.structureColliderCandidates.push({ root: proxy, center, radius, active: false });
     this.openTempleEntrance(asset);
   }
 
@@ -747,10 +778,9 @@ export class LevelToyStory {
     console.info('[LevelToyStory] Staff chest aligned to the visible pavilion tabletop.');
   }
 
-  private syncStructureColliders(delta: number, playerPos: THREE.Vector3): void {
-    this.structureColliderSyncElapsed -= delta;
-    if (this.structureColliderSyncElapsed > 0) return;
-    this.structureColliderSyncElapsed = 0.3;
+  private syncStructureColliders(playerPos: THREE.Vector3): void {
+    // These are only a few distance checks; update immediately so proxies do
+    // not linger as ghost barriers after leaving the temple area.
     let changed = false;
     for (const candidate of this.structureColliderCandidates) {
       const dx = playerPos.x - candidate.center.x;
@@ -791,81 +821,96 @@ export class LevelToyStory {
     map.colorSpace = THREE.SRGBColorSpace;
     map.anisotropy = Math.min(8, this.sceneManager.renderer.capabilities.getMaxAnisotropy());
     const floorMaterial = new THREE.MeshPhysicalMaterial({
-      map, color: 0xc9c4bc, roughness: 0.34, metalness: 0.12,
-      clearcoat: 0.22, clearcoatRoughness: 0.4
+      map, color: 0xb5aea2, roughness: 0.78, metalness: 0.02,
+      clearcoat: 0.04, clearcoatRoughness: 0.82
     });
     // The outdoor terrain is y=0 here. Keep the walkable temple surface within
     // the player's step height and put the collider's top at the same y as the
     // visible mosaic, avoiding the old 46 cm floor lip that hid Wukong's legs.
     const groundY = this.getTerrainHeight(0, -40);
     let topY = groundY + 0.16;
+    let frontZ = -31.8;
+    let rearZ = -48.2;
     if (temple) {
       temple.updateMatrixWorld(true);
-      const floorRay = new THREE.Raycaster(
-        new THREE.Vector3(0, groundY + 8, -40), new THREE.Vector3(0, -1, 0), 0, 10
-      );
-      const floorHit = floorRay.intersectObject(temple, true)
-        .filter((hit) => {
-          if (!hit.face || hit.point.y < groundY - 0.2 || hit.point.y > groundY + 1.5) return false;
-          return hit.face.normal.clone().transformDirection(hit.object.matrixWorld).y > 0.82;
-        })
-        .sort((a, b) => Math.abs(a.point.y - topY) - Math.abs(b.point.y - topY))[0];
-      if (floorHit) topY = floorHit.point.y + 0.012;
-    }
-    let floorWidth = 16;
-    let floorDepth = 16;
-    let floorCenterX = 0;
-    let floorCenterZ = -40;
-    const floorFootprint = new THREE.Box3().makeEmpty();
-    if (temple) {
-      // Measure only vertices on the actual walkable deck plane. The previous
-      // fixed 21.8 m square ignored the model's footprint and covered portions
-      // of the approach stairs and surrounding terrain.
-      const vertex = new THREE.Vector3();
-      temple.updateMatrixWorld(true);
-      temple.traverse((object) => {
-        const mesh = object as THREE.Mesh;
-        const positions = mesh.isMesh ? mesh.geometry?.getAttribute('position') : undefined;
-        if (!positions) return;
-        for (let i = 0; i < positions.count; i++) {
-          vertex.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
-          if (Math.abs(vertex.y - topY) > 0.12) continue;
-          if (Math.abs(vertex.x) > 11.8 || Math.abs(vertex.z + 40) > 11.8) continue;
-          floorFootprint.expandByPoint(vertex);
-        }
-      });
-      if (!floorFootprint.isEmpty()) {
-        const size = floorFootprint.getSize(new THREE.Vector3());
-        const center = floorFootprint.getCenter(new THREE.Vector3());
-        // Stay a small margin inside the authored edge so no new tile lip is
-        // visible beyond the temple's own stone base.
-        floorWidth = Math.max(4, size.x - 0.24);
-        floorDepth = Math.max(4, size.z - 0.24);
-        floorCenterX = center.x;
-        floorCenterZ = center.z;
+      const halfDepth = 5.4 * temple.scale.x;
+      frontZ = -40 + halfDepth;
+      rearZ = -40 - halfDepth;
+      const surfaceRay = new THREE.Raycaster();
+      const rayOrigin = new THREE.Vector3();
+      const down = new THREE.Vector3(0, -1, 0);
+      // The temple mesh has a deep eave in front of the doorway; sampling
+      // directly under it hit no walkable surface and left the overlay at the
+      // terrain fallback (0.16 m), below the final stair/landing (~0.6 m).
+      // Sample the actual landing just beyond the door plane instead.
+      const thresholdSamples = [frontZ + 1.3, frontZ + 1.8, frontZ + 2.3];
+      const walkableHeights: number[] = [];
+      // Sample the actual upper stair/landing, not the temple's middle. The
+      // center ray left a height lip at the seam between the last stair and floor.
+      for (const z of thresholdSamples) for (const x of [-1.1, 0, 1.1]) {
+        rayOrigin.set(x, groundY + 8, z);
+        surfaceRay.set(rayOrigin, down);
+        surfaceRay.far = 10;
+        const hit = surfaceRay.intersectObject(temple, true).find((candidate) => {
+          if (!candidate.face || candidate.point.y < groundY - 0.15 || candidate.point.y > groundY + 2.5) return false;
+          return candidate.face.normal.clone().transformDirection(candidate.object.matrixWorld).y > 0.82;
+        });
+        if (hit) walkableHeights.push(hit.point.y);
       }
+      if (walkableHeights.length) topY = Math.max(...walkableHeights) + 0.008;
     }
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(floorWidth, 0.08, floorDepth), floorMaterial);
+    // Keep the added finish strictly over the temple's ~18.5 m foundation.
+    // Scanning every roof/stair vertex at this height accidentally included
+    // the approach and made a large square pad spill into the surrounding land.
+    // Fit the floor to the actual wall footprint (±5.4 model units), rather
+    // than clipping it to a fixed 16 m square. The roof eaves are wider, so
+    // this keeps the finish inside the building while covering its walkable
+    // interior without a second drop at the stair landing.
+    const floorWidth = temple ? Math.max(1, 10.8 * temple.scale.x - 0.24) : 16;
+    const floorDepth = temple ? Math.max(1, frontZ - rearZ - 0.24) : 16;
+    const floorCenterX = 0;
+    const floorCenterZ = temple ? (frontZ + rearZ) * 0.5 : -40;
+    this.centralTempleFloorWidth = floorWidth;
+    this.centralTempleFloorDepth = floorDepth;
+    this.centralTempleFloorCenterZ = floorCenterZ;
+    // A thin rendered plane removes the visible boxed skirt that looked like
+    // a second slab under the temple. Its face remains raycastable as the
+    // walkable floor surface and sits on the sampled stair-landing height.
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(floorWidth, floorDepth), floorMaterial);
     floor.name = 'central_temple_stone_floor';
-    floor.position.set(floorCenterX, topY - 0.04, floorCenterZ);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(floorCenterX, topY, floorCenterZ);
     floor.receiveShadow = true;
     this.sceneManager.scene.add(floor);
     this.levelColliders.push(floor);
+    this.centralTempleFloorTopY = topY;
 
-    const scene = this.sceneManager.scene;
-    // Existing interior/entry coins are spawned on terrain before the GLB
-    // resolves. Put the temple route row on top of the real deck, including
-    // edge coins that sit over the plinth and were outside the inset tile box.
+    // Coins are created before environment GLBs finish loading. Re-seat temple
+    // coins after the actual stair/deck height is known so none are buried.
+    const stairRay = new THREE.Raycaster();
+    const stairOrigin = new THREE.Vector3();
+    const down = new THREE.Vector3(0, -1, 0);
     for (const item of this.collectibleSystem.collectibles) {
       if (item.type !== 'COIN' || item.isCollected) continue;
       const pos = item.mesh.position;
-      if (Math.abs(pos.x) <= 11.2 && pos.z >= -51 && pos.z <= -29) {
-        pos.y = topY + 0.52;
+      if (pos.x >= floorCenterX - floorWidth * 0.5 && pos.x <= floorCenterX + floorWidth * 0.5 &&
+          pos.z >= floorCenterZ - floorDepth * 0.5 && pos.z <= floorCenterZ + floorDepth * 0.5) {
+        pos.y = topY + 0.6;
+      } else if (temple && Math.abs(pos.x) <= 11 && pos.z >= frontZ - 1 && pos.z <= frontZ + 10) {
+        stairOrigin.set(pos.x, groundY + 8, pos.z);
+        stairRay.set(stairOrigin, down);
+        stairRay.far = 10;
+        const stairHit = stairRay.intersectObject(temple, true).find((hit) =>
+          !!hit.face && hit.face.normal.clone().transformDirection(hit.object.matrixWorld).y > 0.82 &&
+          hit.point.y >= groundY - 0.15 && hit.point.y <= topY + 0.2
+        );
+        pos.y = (stairHit?.point.y ?? this.getTerrainHeight(pos.x, pos.z)) + 0.6;
       }
     }
 
     // Recessed-looking stone medallion with an actual yin-yang S curve, not a
     // flat image. Its top sits only a few millimeters above the tiled floor.
+    const scene = this.sceneManager.scene;
     const medallion = new THREE.Mesh(
       new THREE.CircleGeometry(3.7, 64),
       new THREE.MeshStandardMaterial({ color: 0xd6cbb5, roughness: 0.42, metalness: 0.1, emissive: 0x173d35, emissiveIntensity: 0.045 })
@@ -1335,81 +1380,95 @@ export class LevelToyStory {
     // ═══════════════════════════════════════════════════════════════════════════════
     (() => {
       const gltfLoader = new GLTFLoader();
-      const treeColliderMaterial = new THREE.MeshBasicMaterial({ visible: false });
+      const treeColliderMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide });
 
-      // 1. Real 3D Conifer Pine & Oak Trees
-      gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/tree_conifer.gltf', (gltf) => {
-        const treeTemplate = gltf.scene;
-        const treePositions = [
+      // 1. Original Botaniq pine exported from the user's CameraSuave Blender scene.
+      // One InstancedMesh shares its source geometry across every tree; each
+      // instance is planted on the terrain and gets only a compact trunk collider.
+      gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/wukong-pinus-original.glb', (gltf) => {
+        const root = gltf.scene;
+        root.updateMatrixWorld(true);
+        const rootInverse = root.matrixWorld.clone().invert();
+        const meshes: THREE.Mesh[] = [];
+        root.traverse((part) => { if ((part as THREE.Mesh).isMesh) meshes.push(part as THREE.Mesh); });
+        const positions: [number, number, number][] = [
           [-45, 0, 15], [-55, 0, -20], [-60, 0, -55], [55, 0, 10], [60, 0, -20],
-          [-25, 0, -90], [25, 0, -90], [-40, 0, -80], [45, 0, -80], [0, 0, -105]
-        ];
-        treePositions.forEach(([x, y, z]) => {
-          const t = treeTemplate.clone();
-          t.position.set(x, y, z);
-          t.rotation.y = Math.random() * Math.PI * 2;
-          const s = 1.0 + Math.random() * 0.5;
-          t.scale.set(s, s * (0.9 + Math.random() * 0.3), s);
-          scene.add(t);
-          // Foliage and whole-tree bounds were acting as invisible walls.
-          // Only the visible trunk gets a compact gameplay collider.
-          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.24 * s, 0.34 * s, 3.1 * s, 8), treeColliderMaterial);
-          trunk.name = 'conifer_trunk_collision';
-          trunk.position.set(x, y + 1.55 * s, z);
-          scene.add(trunk);
-          this.levelColliders.push(trunk);
-        });
-      });
-
-      gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/tree_oak.gltf', (gltf) => {
-        const oakTemplate = gltf.scene;
-        const oakPositions = [
+          [-25, 0, -90], [25, 0, -90], [-40, 0, -80], [45, 0, -80], [0, 0, -105],
           [-35, 0, -10], [35, 0, -15], [-20, 0, -75], [20, 0, -75], [-50, 0, -45]
         ];
-        oakPositions.forEach(([x, y, z]) => {
-          const t = oakTemplate.clone();
-          t.position.set(x, y, z);
-          t.rotation.y = Math.random() * Math.PI * 2;
-          const s = 0.9 + Math.random() * 0.4;
-          t.scale.set(s, s, s);
-          scene.add(t);
-          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3 * s, 0.42 * s, 3.5 * s, 8), treeColliderMaterial);
-          trunk.name = 'oak_trunk_collision';
-          trunk.position.set(x, y + 1.75 * s, z);
+        const dummy = new THREE.Object3D();
+        const seed = 81271;
+        let randomSeed = seed;
+        const rand = () => { randomSeed = (randomSeed * 1664525 + 1013904223) >>> 0; return randomSeed / 4294967296; };
+        for (const mesh of meshes) {
+          const relative = rootInverse.clone().multiply(mesh.matrixWorld);
+          const instances = new THREE.InstancedMesh(mesh.geometry, mesh.material, positions.length);
+          instances.name = 'original_pinus_tree_instances';
+          instances.castShadow = false;
+          instances.receiveShadow = false;
+          positions.forEach(([x, , z], i) => {
+            const ground = this.getTerrainHeight(x, z);
+            const scale = 0.78 + rand() * 0.15;
+            dummy.position.set(x, ground, z);
+            dummy.rotation.set(0, rand() * Math.PI * 2, 0);
+            dummy.scale.setScalar(scale);
+            dummy.updateMatrix();
+            instances.setMatrixAt(i, dummy.matrix.multiply(relative));
+            if (mesh.material instanceof THREE.Material && mesh.material.transparent) instances.setColorAt(i, new THREE.Color().setHSL(0.25 + rand() * 0.08, 0.3, 0.76 + rand() * 0.12));
+          });
+          instances.instanceMatrix.needsUpdate = true;
+          if (instances.instanceColor) instances.instanceColor.needsUpdate = true;
+          instances.computeBoundingBox();
+          instances.computeBoundingSphere();
+          scene.add(instances);
+        }
+        positions.forEach(([x, , z]) => {
+          const terrainY = this.getTerrainHeight(x, z);
+          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 2.2, 7), treeColliderMaterial);
+          trunk.name = 'pinus_trunk_collision';
+          trunk.position.set(x, terrainY + 1.1, z);
           scene.add(trunk);
           this.levelColliders.push(trunk);
         });
       });
 
-      // 2. Real 3D Meadow Shrubs & Bushes (InstancedMesh: 1 single draw call)
-      gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/bush_meadow.gltf', (gltf) => {
+      // 2. Authored Chinese Croton meshes, instanced densely as low shrubs.
+      gltfLoader.load(import.meta.env.BASE_URL + 'assets/environment/wukong-chinese-croton-original.glb', (gltf) => {
         let bushMesh: THREE.Mesh | null = null;
-        gltf.scene.traverse((c) => {
-          if (!bushMesh && (c as THREE.Mesh).isMesh) bushMesh = c as THREE.Mesh;
+        gltf.scene.traverse((part) => { if (!bushMesh && (part as THREE.Mesh).isMesh) bushMesh = part as THREE.Mesh; });
+        const bushSource = bushMesh as THREE.Mesh | null;
+        if (!bushSource) return;
+        const shrubGeometry = bushSource.geometry.clone();
+        shrubGeometry.computeBoundingBox();
+        const shrubBounds = shrubGeometry.boundingBox!;
+        const shrubCenter = shrubBounds.getCenter(new THREE.Vector3());
+        shrubGeometry.translate(-shrubCenter.x, -shrubBounds.min.y, -shrubCenter.z);
+        const bushPositions: [number, number, number][] = [
+          [-28, 0, 8], [-32, 0, 12], [-42, 0, -38], [-48, 0, -42],
+          [28, 0, -12], [32, 0, -18], [-15, 0, -85], [15, 0, -85],
+          [-8, 0, -22], [8, 0, -22], [-14, 0, -12], [14, 0, -12]
+        ];
+        const instances = new THREE.InstancedMesh(shrubGeometry, bushSource.material, bushPositions.length);
+        instances.name = 'original_chinese_croton_instances';
+        const dummy = new THREE.Object3D();
+        let seed = 32471;
+        const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+        bushPositions.forEach(([x, , z], i) => {
+          const scale = 0.72 + rand() * 0.22;
+          dummy.position.set(x, this.getTerrainHeight(x, z), z);
+          dummy.rotation.set(0, rand() * Math.PI * 2, 0);
+          dummy.scale.set(scale, scale, scale);
+          dummy.updateMatrix();
+          instances.setMatrixAt(i, dummy.matrix);
+          instances.setColorAt(i, new THREE.Color().setHSL(0.25 + rand() * 0.08, 0.55, 0.38 + rand() * 0.14));
         });
-
-        if (bushMesh) {
-          const bushPositions = [
-            [-28, 0, 8], [-32, 0, 12], [-42, 0, -38], [-48, 0, -42],
-            [28, 0, -12], [32, 0, -18], [-15, 0, -85], [15, 0, -85],
-            [-8, 0, -22], [8, 0, -22], [-14, 0, -12], [14, 0, -12]
-          ];
-          const instancedBushes = new THREE.InstancedMesh((bushMesh as THREE.Mesh).geometry, (bushMesh as THREE.Mesh).material, bushPositions.length);
-          const dummy = new THREE.Object3D();
-
-          bushPositions.forEach(([x, y, z], idx) => {
-            dummy.position.set(x, y, z);
-            dummy.rotation.y = Math.random() * Math.PI * 2;
-            const s = 1.0 + Math.random() * 0.6;
-            dummy.scale.set(s, s * (0.8 + Math.random() * 0.4), s);
-            dummy.updateMatrix();
-            instancedBushes.setMatrixAt(idx, dummy.matrix);
-          });
-          instancedBushes.instanceMatrix.needsUpdate = true;
-          instancedBushes.castShadow = true;
-          instancedBushes.receiveShadow = true;
-          scene.add(instancedBushes);
-        }
+        instances.instanceMatrix.needsUpdate = true;
+        if (instances.instanceColor) instances.instanceColor.needsUpdate = true;
+        instances.castShadow = false;
+        instances.receiveShadow = false;
+        instances.computeBoundingBox();
+        instances.computeBoundingSphere();
+        scene.add(instances);
       });
 
       // 3. Real 3D Wildflowers — Daisies (InstancedMesh: 1 single draw call for 190 flowers)
@@ -1793,9 +1852,8 @@ export class LevelToyStory {
   }
 
   private buildCuriosityVault(scene: THREE.Scene, stoneMat: THREE.Material, castleCenterZ: number): void {
-    // The hatch is deliberately outside and west of the central temple. The
-    // interaction at the hatch transfers into the existing underground room;
-    // this avoids leaving the entrance buried beneath the temple terrain.
+    // The cave entrance sits off the paved route, outside the temple. Its
+    // existing interaction still transfers to the authored underground room.
     this.curiosityCryptSurface.y = this.getTerrainHeight(this.curiosityCryptSurface.x, this.curiosityCryptSurface.z);
     // A small, ground-hugging rune trail makes the already separate west-field
     // crypt entrance discoverable after the pavilion lever is activated.
@@ -1820,34 +1878,51 @@ export class LevelToyStory {
     this.lavaVaultHatch = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.35, 4.2), stoneMat);
     this.lavaVaultHatch.name = 'curiosity_hatch_lid';
     this.lavaVaultHatch.position.set(0, -0.2, 2.1);
-    this.lavaVaultHatch.castShadow = true;
-    this.lavaVaultHatch.receiveShadow = true;
+    // Keep the old hinge state for the lever flow, but remove the crude square
+    // lid from view and from collision; the new terrain cave is the entrance.
+    this.lavaVaultHatch.visible = false;
+    this.lavaVaultHatch.castShadow = false;
+    this.lavaVaultHatch.receiveShadow = false;
     this.hatchPivot.add(this.lavaVaultHatch);
     scene.add(this.hatchPivot);
-    this.levelColliders.push(this.lavaVaultHatch);
 
-    // Make the open hatch read as a real entrance from above instead of a lid
-    // opening onto ordinary terrain. Interaction transfers through this mouth
-    // to the existing crypt room below the map.
+    // A low-poly cave mouth set into the same terrain plane replaces the
+    // floating hatch/ring. The opening faces the approach and remains hidden
+    // until the existing lever opens the crypt.
     this.curiosityCryptMouth = new THREE.Group();
     this.curiosityCryptMouth.name = 'curiosity_crypt_surface_mouth';
     this.curiosityCryptMouth.position.copy(this.curiosityCryptSurface);
+    const caveShape = new THREE.Shape();
+    caveShape.moveTo(-1.55, 0.04);
+    caveShape.lineTo(-1.55, 1.65);
+    caveShape.bezierCurveTo(-1.55, 3.25, 1.55, 3.25, 1.55, 1.65);
+    caveShape.lineTo(1.55, 0.04);
+    caveShape.closePath();
     const voidPlane = new THREE.Mesh(
-      new THREE.PlaneGeometry(3.9, 3.9),
-      new THREE.MeshBasicMaterial({ color: 0x080b17, side: THREE.DoubleSide })
+      new THREE.ShapeGeometry(caveShape, 24),
+      new THREE.MeshBasicMaterial({ color: 0x070b13, side: THREE.DoubleSide })
     );
-    voidPlane.rotation.x = -Math.PI / 2;
-    voidPlane.position.y = 0.025;
+    voidPlane.position.set(0, 0.02, 0.08);
     this.curiosityCryptMouth.add(voidPlane);
-    const mouthRing = new THREE.Mesh(
-      new THREE.TorusGeometry(1.8, 0.075, 8, 40),
-      new THREE.MeshBasicMaterial({ color: 0x37d9d1, toneMapped: false })
-    );
-    mouthRing.rotation.x = Math.PI / 2;
-    mouthRing.position.y = 0.045;
+    const caveStone = new THREE.MeshStandardMaterial({ color: 0x34323a, roughness: 0.96, flatShading: true });
+    const caveRockPositions = [
+      [-1.8, 0.6, 0], [-1.95, 1.35, 0.02], [-1.45, 2.55, 0], [-0.65, 3.0, 0],
+      [0.25, 3.08, 0], [1.15, 2.78, 0], [1.8, 2.0, 0], [1.95, 1.05, 0], [1.7, 0.45, 0]
+    ] as const;
+    caveRockPositions.forEach(([x, y, z], i) => {
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5 + (i % 3) * 0.09, 0), caveStone);
+      rock.position.set(x, y, z);
+      rock.scale.set(1.25, 0.86 + (i % 2) * 0.22, 0.8);
+      rock.rotation.z = (i % 3 - 1) * 0.24;
+      rock.castShadow = true;
+      this.curiosityCryptMouth.add(rock);
+    });
+    const mouthRing = new THREE.Mesh(new THREE.TorusGeometry(1.72, 0.045, 6, 40, Math.PI),
+      new THREE.MeshBasicMaterial({ color: 0x37d9d1, toneMapped: false }));
+    mouthRing.position.set(0, 1.62, 0.12);
     this.curiosityCryptMouth.add(mouthRing);
     const entranceGlow = new THREE.PointLight(0x42deda, 2.2, 8, 2);
-    entranceGlow.position.y = 1.0;
+    entranceGlow.position.set(0, 1.35, 0.6);
     this.curiosityCryptMouth.add(entranceGlow);
     this.curiosityCryptMouth.visible = false;
     scene.add(this.curiosityCryptMouth);
@@ -1855,7 +1930,7 @@ export class LevelToyStory {
     const stairLen = 8.0;
     const stairDrop = 6.0;
     const angle = Math.atan(stairDrop / stairLen);
-    const ramp = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.14, Math.hypot(stairLen, stairDrop)), new THREE.MeshBasicMaterial({ visible: false }));
+    const ramp = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.14, Math.hypot(stairLen, stairDrop)), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide }));
     ramp.name = 'curiosity_stair_ramp_collider';
     ramp.position.set(-9.0, -2.93, castleCenterZ + 4.0);
     ramp.rotation.x = -angle;
@@ -2472,13 +2547,33 @@ export class LevelToyStory {
       rawCoins.push(new THREE.Vector3(rx, 0.6, rz));
     }
 
+    // Keep the existing 50-coin quest total; redistribute eight route coins
+    // inside the new wooden house rather than creating extra quest currency.
+    const highHouseCoins = [
+      [34, -88], [38, -88], [42, -88], [34, -92],
+      [42, -92], [34, -96], [38, -96], [42, -96]
+    ].map(([x, z]) => new THREE.Vector3(x, this.getTerrainHeight(x, z) + 2.2, z));
+    rawCoins.splice(rawCoins.length - highHouseCoins.length, highHouseCoins.length, ...highHouseCoins);
+
     // ── AUTOMATED COIN POSITION VALIDATION & COLLISION CHECKER ──
     const validateCoinPosition = (pos: THREE.Vector3): THREE.Vector3 => {
       const checkedPos = pos.clone();
 
-      // All exploration collectibles now sit on the real terrain surface;
-      // no coin remains suspended on removed mezzanine/roof geometry.
-      checkedPos.y = this.getTerrainHeight(checkedPos.x, checkedPos.z) + 0.6;
+      // Use the raised stone plane for temple coins; all other route coins
+      // remain attached to the natural terrain surface.
+      const templeFloorY = this.centralTempleFloorTopY;
+      const templeHalfWidth = this.centralTempleFloorWidth * 0.5;
+      const templeHalfDepth = this.centralTempleFloorDepth * 0.5;
+      if (templeFloorY !== null && Math.abs(checkedPos.x) <= templeHalfWidth &&
+          checkedPos.z >= this.centralTempleFloorCenterZ - templeHalfDepth &&
+          checkedPos.z <= this.centralTempleFloorCenterZ + templeHalfDepth) {
+        checkedPos.y = templeFloorY + 0.6;
+      } else if (Math.abs(checkedPos.x - this.highHouseCenter.x) < 7.5 &&
+                 Math.abs(checkedPos.z - this.highHouseCenter.z) < 8.5) {
+        checkedPos.y = this.getTerrainHeight(checkedPos.x, checkedPos.z) + 2.2;
+      } else {
+        checkedPos.y = this.getTerrainHeight(checkedPos.x, checkedPos.z) + 0.6;
+      }
 
       // 2. Horizontal Wall Collision Test (Cast rays in 4 cardinal directions to ensure no clipping inside walls)
       const raycaster = new THREE.Raycaster();
@@ -2513,8 +2608,8 @@ export class LevelToyStory {
   }
 
   private setupNPCs(): void {
-    // Position Gekko right alongside the entrance avenue, elevated +0.18m so his feet sit perfectly on top of floor
-    const gekkoY = this.getTerrainHeight(-2.8, -10) + 0.18;
+    // Place the model origin at the sampled terrain height; GekkoNPC aligns the GLB soles to that root.
+    const gekkoY = this.getTerrainHeight(-2.8, -10);
     this.gekkoNPC = new GekkoNPC(new THREE.Vector3(-2.8, gekkoY, -10), -Math.PI * 0.25);
     this.gekkoNPC.loadModels();
     this.sceneManager.scene.add(this.gekkoNPC.mesh);
@@ -2522,7 +2617,7 @@ export class LevelToyStory {
     // Gekko's physical collider (prevents Wukong from passing through Gekko)
     const gekkoCollider = new THREE.Mesh(
       new THREE.CylinderGeometry(0.8, 0.8, 2.5, 12),
-      new THREE.MeshBasicMaterial({ visible: false })
+      new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide })
     );
     gekkoCollider.position.set(-2.8, gekkoY + 1.25, -10);
     this.sceneManager.scene.add(gekkoCollider);
@@ -3202,7 +3297,8 @@ export class LevelToyStory {
   }
 
   public update(delta: number, playerPos: THREE.Vector3): void {
-    this.syncStructureColliders(delta, playerPos);
+    this.syncStructureColliders(playerPos);
+    this.loadOptionalArchitectureNearPlayer(playerPos);
     const interactionHud = (window as any).gameInstance?.hud;
     interactionHud?.beginInteractionFrame();
     this.updateCanopyTrial(delta, playerPos);
@@ -3342,6 +3438,15 @@ export class LevelToyStory {
     // Update NPC
     if (this.gekkoNPC) {
       this.gekkoNPC.update(delta);
+      const gekkoPosition = this.gekkoNPC.mesh.position;
+      const nearGekko = Math.hypot(playerPos.x - gekkoPosition.x, playerPos.z - gekkoPosition.z) < 7;
+      if (nearGekko && !this.isCinematicPlaying && !this.player.isControlsLocked) {
+        this.npcGazePoint.copy(gekkoPosition);
+        this.npcGazePoint.y += 1.5;
+        this.player.animationController.setGazeTarget(this.npcGazePoint);
+      } else {
+        this.player.animationController.setGazeTarget(null);
+      }
     }
     
     if (this.floatingCoinMesh && this.floatingCoinMesh.visible) {
@@ -3607,6 +3712,39 @@ export class LevelToyStory {
       }
     }
     interactionHud?.endInteractionFrame();
+  }
+
+  /** Load the large scenic annex only when the player explores its region. */
+  private loadOptionalArchitectureNearPlayer(playerPos: THREE.Vector3): void {
+    if (this.optionalArchitectureStarted || this.optionalArchitectureLoading) return;
+    if (playerPos.distanceToSquared(this.highHouseCenter) > 58 * 58) return;
+    this.optionalArchitectureLoading = true;
+    const loader = new GLTFLoader();
+    const base = import.meta.env.BASE_URL + 'assets/environment/';
+    loader.load(base + 'wukong-chinese-high-house-original.glb', (gltf) => {
+      const house = gltf.scene;
+      house.name = 'chinese_high_house_wood_original';
+      house.traverse((part) => {
+        if ((part as THREE.Mesh).isMesh) {
+          (part as THREE.Mesh).castShadow = false;
+          (part as THREE.Mesh).receiveShadow = true;
+        }
+      });
+      this.sceneManager.scene.add(house);
+      house.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(house);
+      const center = bounds.getCenter(new THREE.Vector3());
+      house.position.x += this.highHouseCenter.x - center.x;
+      house.position.z += this.highHouseCenter.z - center.z;
+      house.position.y += this.getTerrainHeight(this.highHouseCenter.x, this.highHouseCenter.z) - bounds.min.y;
+      house.updateMatrixWorld(true);
+      this.optionalArchitectureStarted = true;
+      this.optionalArchitectureLoading = false;
+      console.info('[LevelToyStory] Loaded original Chinese High House Wood annex on demand.');
+    }, undefined, (error) => {
+      this.optionalArchitectureLoading = false;
+      console.warn('[LevelToyStory] Optional high-house annex could not load.', error);
+    });
   }
 
   private async runCuriosityReveal(): Promise<void> {

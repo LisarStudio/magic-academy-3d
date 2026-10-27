@@ -19,7 +19,8 @@ interface MainMenuCallbacks {
 }
 
 const SAVE_KEY = 'lisar_savegame';
-const PREFERENCES_KEY = 'lisar_menu_preferences_v1';
+const PREFERENCES_KEY = 'lisar_menu_preferences_v2';
+const LEGACY_PREFERENCES_KEY = 'lisar_menu_preferences_v1';
 
 export class MainMenu {
   private readonly callbacks: MainMenuCallbacks;
@@ -41,7 +42,7 @@ export class MainMenu {
   private readonly menuButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.menu-actions button'));
   private state: MenuState = 'Loading';
   private startMode: StartMode = 'new';
-  private preferences: MenuPreferences = { music: 0.5, effects: 0.8, quality: 0.85 };
+  private preferences: MenuPreferences = { music: 0.5, effects: 0.8, quality: 1 };
   private errorRetry: (() => void) | null = null;
   private loadingRetry: () => void = () => window.location.reload();
   private transitionStarted = false;
@@ -351,6 +352,7 @@ export class MainMenu {
       await this.waitForVideoFrame(this.idleVideo);
       this.idleVideo.classList.add('is-visible');
       this.introVideo.classList.remove('is-visible');
+      document.getElementById('cinematic-backdrop')?.classList.add('is-menu-idle');
       this.loadOfficialMenuLogo();
       this.mainMenu.classList.remove('hidden');
       this.setState('MenuIdle');
@@ -380,6 +382,7 @@ export class MainMenu {
       await this.waitForVideoFrame(this.idleVideo);
       this.idleVideo.classList.add('is-visible');
       this.introVideo.classList.remove('is-visible');
+      document.getElementById('cinematic-backdrop')?.classList.add('is-menu-idle');
       this.loadOfficialMenuLogo();
       this.loadingPanel.classList.add('hidden');
       this.mainMenu.classList.remove('hidden');
@@ -565,6 +568,7 @@ export class MainMenu {
     this.transitionStarted = true;
     this.startMode = mode;
     this.setState('StartingGame');
+    document.getElementById('cinematic-backdrop')?.classList.remove('is-menu-idle');
     this.callbacks.onBeginTransition(mode);
     this.startVideo.currentTime = 0;
 
@@ -683,6 +687,7 @@ export class MainMenu {
     this.startVideo.classList.remove('is-visible');
     this.mainMenu.classList.remove('is-leaving');
     void this.idleVideo.play();
+    document.getElementById('cinematic-backdrop')?.classList.add('is-menu-idle');
     this.setState('MenuIdle');
     this.showDialogError(message, () => void this.retryStartTransition(this.startMode));
   }
@@ -793,14 +798,23 @@ export class MainMenu {
 
   private loadPreferences(): void {
     try {
-      const stored = localStorage.getItem(PREFERENCES_KEY);
+      const stored = localStorage.getItem(PREFERENCES_KEY) ?? localStorage.getItem(LEGACY_PREFERENCES_KEY);
       if (stored) {
         const parsed = JSON.parse(stored) as Partial<MenuPreferences>;
+        const savedQuality = Number(parsed.quality);
         this.preferences = {
           music: this.clamp(parsed.music, 0.5),
           effects: this.clamp(parsed.effects, 0.8),
-          quality: [0.65, 0.85, 1].includes(Number(parsed.quality)) ? Number(parsed.quality) : 0.85
+          // 0.85 was the former out-of-box preset and caused a soft image on
+          // standard-density screens. Migrate that implicit default to High;
+          // an explicitly chosen power-saving preset remains respected.
+          quality: Number.isFinite(savedQuality) && [0.65, 0.85, 1].includes(savedQuality)
+            ? (savedQuality === 0.85 ? 1 : savedQuality)
+            : 1
         };
+        if (!localStorage.getItem(PREFERENCES_KEY)) {
+          localStorage.setItem(PREFERENCES_KEY, JSON.stringify(this.preferences));
+        }
       }
     } catch { /* Use safe defaults when local storage is unavailable. */ }
     this.callbacks.onPreferences(this.preferences);
