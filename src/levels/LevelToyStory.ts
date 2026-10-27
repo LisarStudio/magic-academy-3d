@@ -1947,6 +1947,8 @@ export class LevelToyStory {
       this.levelColliders.push(step);
     }
 
+    const caveWallMat = new THREE.MeshStandardMaterial({ color: 0x49413b, roughness: 0.94, metalness: 0.02, flatShading: true });
+    const caveCeilingMat = new THREE.MeshStandardMaterial({ color: 0x292a31, roughness: 0.98, flatShading: true, side: THREE.DoubleSide });
     const floor = new THREE.Mesh(new THREE.BoxGeometry(29.5, 0.4, 27.5), stoneMat);
     floor.name = 'curiosity_chamber_floor';
     floor.position.set(-22.25, -6.1, castleCenterZ);
@@ -1954,17 +1956,67 @@ export class LevelToyStory {
     scene.add(floor);
     this.levelColliders.push(floor);
 
+    // Enclose the chamber under the terrain with a domed rock vault; the surface
+    // sky is hidden from inside and the cave no longer reads as an open box.
+    const roof = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 16, 0, Math.PI * 2, 0, Math.PI / 2), caveCeilingMat);
+    roof.name = 'curiosity_crypt_rock_ceiling';
+    roof.position.set(-22.25, -6.0, castleCenterZ);
+    roof.scale.set(17.5, 5.6, 16.0);
+    roof.receiveShadow = true;
+    scene.add(roof);
+    this.levelColliders.push(roof);
+
     const walls = [
       [29.5, 7.0, 0.7, -22.25, -2.45, castleCenterZ - 13.75],
       [29.5, 7.0, 0.7, -22.25, -2.45, castleCenterZ + 13.75],
       [0.7, 7.0, 27.5, -37.0, -2.45, castleCenterZ],
+      // Split east end wall around the exit portal so the cave is enclosed but navigable.
+      [0.7, 7.0, 11.0, -7.5, -2.45, castleCenterZ - 8.25],
+      [0.7, 7.0, 11.0, -7.5, -2.45, castleCenterZ + 8.25],
     ];
     walls.forEach(([width, height, depth, x, y, z], index) => {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), stoneMat);
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), caveWallMat);
       wall.name = `curiosity_chamber_wall_${index}`;
       wall.position.set(x, y, z);
       scene.add(wall);
       this.levelColliders.push(wall);
+    });
+
+    // A matching stone arch and a dim teal portal make the return opening legible.
+    const returnArch = new THREE.Group();
+    returnArch.name = 'curiosity_crypt_return_arch';
+    returnArch.position.set(-8.0, -5.8, castleCenterZ);
+    const archStone = new THREE.MeshStandardMaterial({ color: 0x75614a, roughness: 0.88, metalness: 0.12 });
+    const portalPlane = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 2.8), new THREE.MeshBasicMaterial({ color: 0x071923, side: THREE.DoubleSide }));
+    portalPlane.rotation.y = Math.PI / 2;
+    portalPlane.position.set(-0.04, 1.4, 0);
+    returnArch.add(portalPlane);
+    const archLeft = new THREE.Mesh(new THREE.BoxGeometry(0.48, 2.8, 0.55), archStone);
+    const archRight = archLeft.clone();
+    archLeft.position.set(0, 1.4, -2.45);
+    archRight.position.set(0, 1.4, 2.45);
+    const archTop = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.5, 5.45), archStone);
+    archTop.position.set(0, 2.8, 0);
+    returnArch.add(archLeft, archRight, archTop);
+    const returnRing = new THREE.Mesh(new THREE.TorusGeometry(1.1, 0.07, 8, 40), new THREE.MeshBasicMaterial({ color: 0x57d8ce, toneMapped: false }));
+    returnRing.rotation.y = Math.PI / 2;
+    returnRing.position.set(0.08, 1.4, 0);
+    returnArch.add(returnRing);
+    scene.add(returnArch);
+
+    // Low-cost cave lighting, no shadow maps: readable stone and traversal on mobile too.
+    [
+      new THREE.Vector3(-15.5, -1.5, castleCenterZ - 7),
+      new THREE.Vector3(-22.5, -1.5, castleCenterZ),
+      new THREE.Vector3(-30, -1.5, castleCenterZ + 7),
+    ].forEach((position, i) => {
+      const glow = new THREE.Mesh(new THREE.OctahedronGeometry(0.28, 0), new THREE.MeshBasicMaterial({ color: i === 1 ? 0x64d9d2 : 0xffbb66, toneMapped: false }));
+      glow.position.copy(position);
+      scene.add(glow);
+      const light = new THREE.PointLight(i === 1 ? 0x57cfc9 : 0xffb35d, 3.2, 12, 2);
+      light.position.copy(position);
+      light.castShadow = false;
+      scene.add(light);
     });
 
     const floorMark = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.08, 1.6), new THREE.MeshStandardMaterial({ color: 0xb78a4b, roughness: 0.7 }));
@@ -2674,10 +2726,19 @@ export class LevelToyStory {
       new THREE.Vector3(70.5, -7.45, -106), new THREE.Vector3(73.5, -7.45, -106),
     ]);
 
+    // The crypt is a small underground extension with its own two patrols.
+    // Their height band keeps them independent from the surface encounters.
+    const cryptGuard1 = new EnemyController('crypt_crab_guard_1', new THREE.Vector3(-30, -5.82, -33), [
+      new THREE.Vector3(-33, -5.82, -33), new THREE.Vector3(-27, -5.82, -33),
+    ]);
+    const cryptGuard2 = new EnemyController('crypt_crab_guard_2', new THREE.Vector3(-20, -5.82, -47), [
+      new THREE.Vector3(-23, -5.82, -47), new THREE.Vector3(-17, -5.82, -47),
+    ]);
+
     // Boss Giant Crab in the Sand Arena (firmly grounded at y = 0.2)
     const bossY = 0.2;
     this.bossEnemy = new EnemyController('crab_boss', new THREE.Vector3(45, bossY, -40));
-    this.enemies.push(patrol1, patrol2, patrol3, patrol4, patrol5, lavaGuard1, lavaGuard2, this.bossEnemy);
+    this.enemies.push(patrol1, patrol2, patrol3, patrol4, patrol5, lavaGuard1, lavaGuard2, cryptGuard1, cryptGuard2, this.bossEnemy);
 
     this.enemies.forEach(e => {
       const scaleMult = e.id === 'crab_boss' ? 3.5 : 1.0;
@@ -3493,6 +3554,10 @@ export class LevelToyStory {
     // Update enemies (including DYING state for death VFX execution and memory cleanup)
     this.enemies.forEach(e => {
       if (e.state !== 'DEAD') {
+        // Enemy AI uses planar distance; keep surface enemies from aggroing or
+        // dealing damage through the ground while Wukong explores the crypt.
+        // Continue DYING sequences everywhere so their cleanup/VFX still finish.
+        if (e.state !== 'DYING' && Math.abs(e.mesh.position.y - playerPos.y) > 3.25) return;
         e.update(delta, playerPos, this.levelColliders);
         if (!this.combatTutorialShown && e.isAlive() && e.mesh.position.distanceTo(playerPos) < 5.5) {
           this.combatTutorialShown = true;
@@ -3565,7 +3630,6 @@ export class LevelToyStory {
             this.hatchTarget = 1;
           this.audioManager.playHitImpact();
           this.audioManager.playPortalActivate();
-            void this.runCuriosityReveal();
           this.subtitleSystem.show('Mecanismo Secreto', '¡El mecanismo del pabellón ha abierto una cámara secreta al otro lado del reino!');
           }
         } else {
@@ -3745,38 +3809,6 @@ export class LevelToyStory {
       this.optionalArchitectureLoading = false;
       console.warn('[LevelToyStory] Optional high-house annex could not load.', error);
     });
-  }
-
-  private async runCuriosityReveal(): Promise<void> {
-    if (this.isCinematicPlaying) return;
-    const game = (window as any).gameInstance;
-    const cinematicCamera = game?.cinematicCamera;
-    const cameraController = game?.cameraController;
-    if (!cinematicCamera || !cameraController) return;
-
-    this.isCinematicPlaying = true;
-    this.player.isControlsLocked = true;
-    this.player.isMovementLocked = true;
-    this.player.velocity.set(0, 0, 0);
-    this.enemies.forEach((enemy) => { enemy.isPaused = true; });
-    try {
-      const hatchLook = this.curiosityCryptSurface.clone().add(new THREE.Vector3(0, 0.15, 0));
-      const from = cameraController.camera.position.clone();
-      const to = hatchLook.clone().add(new THREE.Vector3(4.2, 5.5, 5.5));
-      await cinematicCamera.moveCamera(from, to, this.player.mesh.position.clone().add(new THREE.Vector3(0, 1, 0)), hatchLook, 1.8);
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    } catch (error) {
-      console.warn('[CuriosityVault] Reveal camera failed; restoring gameplay camera.', error);
-    } finally {
-      cinematicCamera.abort();
-      cameraController.setTarget(this.player.mesh);
-      cameraController.resumeAfterCinematic();
-      this.player.isControlsLocked = false;
-      this.player.isMovementLocked = false;
-      this.player.velocity.set(0, 0, 0);
-      this.enemies.forEach((enemy) => { enemy.isPaused = false; });
-      this.isCinematicPlaying = false;
-    }
   }
 
   private async transitionCuriosityCrypt(entering: boolean): Promise<void> {
