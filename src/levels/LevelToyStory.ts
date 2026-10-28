@@ -695,52 +695,44 @@ export class LevelToyStory {
 
   private addTempleCollision(asset: THREE.Object3D): void {
     asset.updateMatrixWorld(true);
-    // The overall GLB bounds include the roof eaves. Using them for collision
-    // pushed invisible walls several metres outside the real building. The
-    // textured asset's wall/panel planes are at roughly ±5.4 source units;
-    // roof eaves extend farther and are intentionally excluded.
-    const center = new THREE.Vector3(0, 0, -40);
+    // Build collision in the temple asset's local coordinates. Previously the
+    // shell was reconstructed in world space from assumed center/scale values;
+    // that drifted away from the rendered GLB after its root transform and left
+    // the player able to pass through wall panels. The GLB wall footprint is
+    // about ±5.4 source units; roof eaves extend farther and are excluded.
+    const center = asset.localToWorld(new THREE.Vector3(0, 0, 0));
     const modelScale = asset.scale.x;
-    const ground = this.getTerrainHeight(0, -40);
     const proxy = new THREE.Group();
     proxy.name = 'central_temple_open_entrance_collision';
     // `visible:false` also disables Mesh.raycast in Three.js. Keep the proxies
     // raycastable while suppressing every framebuffer write.
     const material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide });
-    const wallHeight = 8.5;
+    const wallHeight = 12.2;
     const thickness = 0.34;
-    const addWall = (name: string, sx: number, sz: number, x: number, z: number) => {
+    const addWall = (name: string, sx: number, sz: number, x: number, y: number, z: number) => {
       const wall = new THREE.Mesh(new THREE.BoxGeometry(sx, wallHeight, sz), material);
       wall.name = name;
       wall.frustumCulled = false;
-      wall.position.set(x, ground + wallHeight * 0.5, z);
+      wall.position.set(x, y, z);
       proxy.add(wall);
     };
-    // The actual wall/panel footprint is about ±5.4 source units. The larger
-    // ±7.9 bounds belong to the roof eaves and must not become invisible walls.
-    const halfW = 5.4 * modelScale;
-    const halfD = 5.4 * modelScale;
-    const sideHalfD = 5.4 * modelScale;
-    // After the asset's half-turn, its open south entrance faces +Z. The side
-    // and rear proxies meet that plane, leaving only the authored stair/door
-    // opening clear. No proxy is based on roof overhang dimensions.
-    const frontZ = center.z + halfD;
-    const rearZ = center.z - halfD;
-    // Match the real cut in the door mesh (about ±2.55 source units after
-    // scaling) and leave a little room for the player's shoulder radius.
-    // The previous fixed 2.45 m opening created invisible jambs across the
-    // otherwise visibly open doorway.
-    const openingHalf = 2.55 * modelScale + 0.45;
-    addWall('temple_west_wall', thickness, sideHalfD * 2, center.x - halfW, center.z);
-    addWall('temple_east_wall', thickness, sideHalfD * 2, center.x + halfW, center.z);
-    addWall('temple_rear_wall', halfW * 2, thickness, center.x, rearZ);
-    addWall('temple_front_wall_left', halfW - openingHalf, thickness, center.x - (halfW + openingHalf) * 0.5, frontZ);
-    addWall('temple_front_wall_right', halfW - openingHalf, thickness, center.x + (halfW + openingHalf) * 0.5, frontZ);
-    this.sceneManager.scene.add(proxy);
+    const halfW = 5.4;
+    const halfD = 5.4;
+    const wallY = wallHeight * 0.5;
+    // The opening is cut in source-local z=-5.4; the temple's half-turn points
+    // that side toward the approach (+world Z). Only this wall has a doorway.
+    const openingHalf = 2.95;
+    addWall('temple_west_wall', thickness, halfD * 2, -halfW, wallY, 0);
+    addWall('temple_east_wall', thickness, halfD * 2, halfW, wallY, 0);
+    addWall('temple_rear_wall', halfW * 2, thickness, 0, wallY, halfD);
+    addWall('temple_front_wall_left', halfW - openingHalf, thickness, -(halfW + openingHalf) * 0.5, wallY, -halfD);
+    addWall('temple_front_wall_right', halfW - openingHalf, thickness, (halfW + openingHalf) * 0.5, wallY, -halfD);
+    asset.add(proxy);
+    asset.updateMatrixWorld(true);
     // Only keep walls active around the building footprint, not across the
     // surrounding field. A small approach margin still activates them before
     // the player reaches a wall or the stair landing.
-    const radius = Math.hypot(halfW, halfD) + 3.0;
+    const radius = Math.hypot(halfW * modelScale, halfD * modelScale) + 8.0;
     this.structureColliderCandidates.push({ root: proxy, center, radius, active: false });
     this.openTempleEntrance(asset);
   }
