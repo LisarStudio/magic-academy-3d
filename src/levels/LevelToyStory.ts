@@ -3054,7 +3054,10 @@ export class LevelToyStory {
       const gekkoY = gekkoPos.y;
 
       // Position Player facing Gekko
-      this.player.mesh.position.set(gekkoPos.x, 0.2, gekkoPos.z + 2.5);
+      // Gekko may be standing on a raised/uneven section of terrain. Keep the
+      // player on that same ground elevation; the old hard-coded 0.2 m put
+      // Wukong under the ground whenever the NPC was higher on a slope.
+      this.player.mesh.position.set(gekkoPos.x, gekkoY, gekkoPos.z + 2.5);
       this.player.mesh.rotation.set(0, Math.PI, 0);
       this.player.forceIdle();
       
@@ -3068,9 +3071,11 @@ export class LevelToyStory {
 
       this.subtitleSystem.hide();
 
-      // Camera view side-by-side shot
-      const endPos = new THREE.Vector3(gekkoPos.x + 2.5, gekkoY + 1.25, gekkoPos.z + 1.25); 
-      const endLookAt = new THREE.Vector3(gekkoPos.x, gekkoY + 1.1, gekkoPos.z + 1.25); 
+      // Keep the two speakers separated in frame. The former 2.5 m camera
+      // distance put Wukong on the near edge of the frustum, where the close
+      // third-person model could be cropped or hidden by Gekko.
+      const endPos = new THREE.Vector3(gekkoPos.x + 7.5, gekkoY + 2.8, gekkoPos.z + 1.25);
+      const endLookAt = new THREE.Vector3(gekkoPos.x, gekkoY + 1.05, gekkoPos.z + 1.25);
       cinematicCamera.moveCamera(endPos, endPos, endLookAt, endLookAt, 999.0);
 
       await hud.fadeScreenIn(500);
@@ -3278,7 +3283,7 @@ export class LevelToyStory {
       const gekkoY = gekkoPos.y;
 
       // Position Player facing Gekko
-      this.player.mesh.position.set(gekkoPos.x, 0.2, gekkoPos.z + 2.5);
+      this.player.mesh.position.set(gekkoPos.x, gekkoY, gekkoPos.z + 2.5);
       this.player.mesh.rotation.set(0, Math.PI, 0);
       this.player.forceIdle();
       
@@ -3290,9 +3295,10 @@ export class LevelToyStory {
       // NO LISAR COIN FLOATING IN 2ND CINEMATIC!
       if (this.floatingCoinMesh) this.floatingCoinMesh.visible = false;
 
-      // Camera view side-by-side shot
-      const endPos = new THREE.Vector3(gekkoPos.x + 2.5, gekkoY + 1.25, gekkoPos.z + 1.25); 
-      const endLookAt = new THREE.Vector3(gekkoPos.x, gekkoY + 1.1, gekkoPos.z + 1.25); 
+      // Use the same wider conversation composition as Gekko's first scene
+      // so neither actor is clipped during the reward dialogue.
+      const endPos = new THREE.Vector3(gekkoPos.x + 7.5, gekkoY + 2.8, gekkoPos.z + 1.25);
+      const endLookAt = new THREE.Vector3(gekkoPos.x, gekkoY + 1.05, gekkoPos.z + 1.25);
       cinematicCamera.moveCamera(endPos, endPos, endLookAt, endLookAt, 999.0);
 
       this.subtitleSystem.hide();
