@@ -190,7 +190,7 @@ export class PlayerController {
     backSocket.name = 'wukong_sacred_staff_back_socket';
     // Keep the carried staff deliberately compact in third person. The source
     // rig is centimeter based, while StaffFactory is authored in metres.
-    const backMountScale = 0.58;
+    const backMountScale = 0.38;
     backStaff.scale.setScalar(backMountScale);
     backStaff.position.set(0, 0, 0);
     backStaff.rotation.set(0, 0, 0);
@@ -351,8 +351,6 @@ export class PlayerController {
   private wallRaycaster = new THREE.Raycaster();
   private readonly PLAYER_RADIUS = 0.4;
   private static readonly TEMP_GROUND_ORIGIN = new THREE.Vector3();
-  private static readonly TEMP_CAMERA_FROM_PLAYER = new THREE.Vector3();
-  private static readonly TEMP_BACK_AXIS = new THREE.Vector3();
   private static readonly RAY_OFFSET = new THREE.Vector3(0, 0.4, 0);
   private static readonly DOWN_DIR = new THREE.Vector3(0, -1, 0);
   private static readonly TEMP_NORM = new THREE.Vector3();
@@ -409,25 +407,11 @@ export class PlayerController {
         if (this.staffHandMesh && !this.staffHandMesh.visible) this.staffHandMesh.visible = true;
       } else {
         if (this.staffHandMesh && this.staffHandMesh.visible) this.staffHandMesh.visible = false;
-        // When camera collision pushes the camera close to Wukong (temple walls,
-        // crypt entrances, narrow interiors), a back-mounted prop can fill the
-        // foreground. Hide only the carried visual until the normal view returns.
+        // Keep the carried staff out of the normal gameplay camera range. The
+        // rear socket can project the prop into the lens even when the camera
+        // angle changes around walls or during a transition.
         const cameraDistance = cameraController.camera.position.distanceTo(this.mesh.position);
-        // The third-person camera normally sits directly behind Wukong. A
-        // back-mounted staff on that sightline is projected into the lens and
-        // can fill the screen (especially after GLB auto-scaling). Keep it on
-        // the character for side/front views, but suppress the prop whenever
-        // the camera looks along the back socket axis. Hand combat visibility
-        // remains controlled by the attack branch above.
-        PlayerController.TEMP_CAMERA_FROM_PLAYER
-          .subVectors(cameraController.camera.position, this.mesh.position)
-          .normalize();
-        PlayerController.TEMP_BACK_AXIS
-          .set(0, 0, 1)
-          .applyQuaternion(this.mesh.quaternion)
-          .normalize();
-        const cameraBehindCharacter = PlayerController.TEMP_CAMERA_FROM_PLAYER.dot(PlayerController.TEMP_BACK_AXIS) > 0.68;
-        const backStaffShouldShow = cameraDistance > 3.1 && !cameraBehindCharacter && !this.isAttacking;
+        const backStaffShouldShow = cameraDistance > 9.5 && !this.isAttacking;
         if (this.staffBackMesh && this.staffBackMesh.visible !== backStaffShouldShow) {
           this.staffBackMesh.visible = backStaffShouldShow;
         }
@@ -855,7 +839,8 @@ export class PlayerController {
     this.attackAura.stop();
     if (this.staffHandMesh) this.staffHandMesh.visible = false;
     if (this.staffBackMesh) {
-      this.staffBackMesh.visible = true;
+      // Never flash the back prop before the camera-distance guard in update().
+      this.staffBackMesh.visible = false;
       // Clean staff on back: NO permanent aura, NO glow, NO floating particles
       if (this.wandEffect && this.wandEffect.wandMesh) {
         this.wandEffect.wandMesh.visible = false;
