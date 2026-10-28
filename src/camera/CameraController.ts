@@ -26,6 +26,10 @@ export class CameraController {
   // Auto-recenter
   private idleTimer = 0;
   private readonly RECENTER_DELAY = 0.8;
+  private readonly TOUCH_RECENTER_DELAY = 2.2;
+  private readonly touchFirstInput = (navigator.maxTouchPoints ?? 0) > 0 &&
+    (window.matchMedia?.('(pointer: coarse)').matches ?? false) &&
+    !(window.matchMedia?.('(pointer: fine)').matches ?? false);
   private isManual = false;
 
   // Camera collision
@@ -153,14 +157,28 @@ export class CameraController {
 
     // ── 2. Passive recenter ──────────────────────────────────────────
     const isMoving = input.moveForward || input.moveBackward || input.moveLeft || input.moveRight;
-    if (!this.isManual && this.idleTimer > this.RECENTER_DELAY && isMoving) {
+    // Touch camera drags can leave the player facing away from the view. On
+    // touch-first devices, recenter after a short pause even while stationary;
+    // requiring movement (the old behavior) left the camera stuck indefinitely.
+    // Desktop keeps its familiar behavior: follow behind only while moving.
+    const shouldTouchRecenter = this.touchFirstInput &&
+      !this.scriptedPan && this.overviewRemaining <= 0 &&
+      this.idleTimer > this.TOUCH_RECENTER_DELAY;
+    const shouldDesktopRecenter = !this.touchFirstInput &&
+      this.idleTimer > this.RECENTER_DELAY && isMoving;
+    if (!this.isManual && (shouldTouchRecenter || shouldDesktopRecenter)) {
       const targetYaw = this.target.rotation.y + Math.PI;
       let diff = targetYaw - this.yaw;
       while (diff < -Math.PI) diff += Math.PI * 2;
       while (diff >  Math.PI) diff -= Math.PI * 2;
 
-      const alignSpeed = Math.min(1.0, delta * 3.0);
-      this.yaw += diff * alignSpeed;
+      // Exponential damping keeps the recovery smooth and frame-rate
+      // independent instead of snapping after a missed touch gesture.
+      const alignBlend = 1 - Math.exp(-2.2 * delta);
+      this.yaw += diff * alignBlend;
+      if (shouldTouchRecenter) {
+        this.pitch = THREE.MathUtils.damp(this.pitch, 0.25, 1.8, delta);
+      }
     }
 
     // ── 3. Position + collision ───────────────────────────────────────────────
