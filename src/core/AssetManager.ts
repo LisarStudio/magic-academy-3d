@@ -479,12 +479,15 @@ export class AssetManager {
     }
   }
 
+  /** Prepare the short game-over pose before controls are enabled. */
+  public async loadContinueAnimation(targetRoot: THREE.Object3D): Promise<THREE.AnimationClip | null> {
+    const url = `${import.meta.env.BASE_URL}assets/characters/wukong/continue.fbx?v=20261027-gameover`;
+    return this.loadAndRetargetClip(url, 'Continue', targetRoot, this.playerTranslationScale);
+  }
+
   /** Load the larger optional traversal/combat clips after the first playable frame. */
   public async loadSupplementalPlayerClips(targetRoot: THREE.Object3D): Promise<THREE.AnimationClip[]> {
     const specs: Array<[string, string]> = [
-      // The defeat Continue pose is needed before the player can exhaust lives;
-      // parse it first so the game-over screen never races the end of this queue.
-      ['continue.fbx', 'Continue'],
       ['atack_jump.fbx', 'Atack_Jump'],
       ['esquivar_paso_atras.fbx', 'Dodge_Back'],
       ['Swing To Land.fbx', 'Swing_To_Land'],

@@ -199,6 +199,16 @@ export class Game {
 
     await this.level01.init();
 
+    // Continue is needed only at the rare final-life transition, but it must
+    // already be retargeted when that transition happens. This is still inside
+    // the in-game loading screen, before controls and hazard damage are enabled.
+    const continueClip = await this.assetManager.loadContinueAnimation(this.player.mesh);
+    if (continueClip?.tracks.length) {
+      this.animationController.addClips([continueClip]);
+    } else {
+      console.warn('[Game] Continue animation unavailable; game-over will use the prepared idle fallback.');
+    }
+
     // Focus camera on target AFTER the level is initialized and player is spawned at Checkpoint 0!
     this.cameraController.setTarget(this.player.mesh);
 
@@ -579,7 +589,8 @@ export class Game {
     this.gameOverElapsed = 0;
     this.inputManager.exitPointerLock();
     this.player.velocity.set(0, 0, 0);
-    this.snapPlayerFeetToGround();
+    // Do not raycast recursively through every level mesh here. The death
+    // transition must be immediate; the player's current contact pose is kept.
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
     document.getElementById('game-over-screen')?.classList.remove('hidden');
@@ -608,7 +619,6 @@ export class Game {
     this.player.health = this.player.maxHealth;
     this.player.mana = this.player.maxMana;
     this.player.mesh.position.copy(this.checkpointManager.getActiveCheckpointPosition());
-    this.snapPlayerFeetToGround();
     this.player.velocity.set(0, 0, 0);
     this.player.onLivesChange?.(3);
     this.player.onHealthChange?.(this.player.health, this.player.maxHealth);
@@ -629,23 +639,6 @@ export class Game {
     requestAnimationFrame(() => { screen.style.opacity = '0'; });
     screen.addEventListener('transitionend', () => window.location.reload(), { once: true });
     window.setTimeout(() => window.location.reload(), 950);
-  }
-
-  private snapPlayerFeetToGround(): void {
-    const colliders = this.level01?.levelColliders;
-    if (!this.player || !colliders?.length) return;
-    const origin = this.player.mesh.position.clone().add(new THREE.Vector3(0, 4, 0));
-    const ray = new THREE.Raycaster(origin, new THREE.Vector3(0, -1, 0), 0, 12);
-    const hit = ray.intersectObjects(colliders, true).find((candidate) => {
-      const normal = candidate.face?.normal.clone();
-      if (!normal) return false;
-      normal.transformDirection(candidate.object.matrixWorld);
-      return normal.y > 0.55;
-    });
-    if (hit) {
-      this.player.mesh.position.y = hit.point.y + 0.012;
-      this.player.isGrounded = true;
-    }
   }
 
   private async retryIntroMedia(): Promise<void> {
