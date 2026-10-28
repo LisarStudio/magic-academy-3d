@@ -407,11 +407,13 @@ export class PlayerController {
         if (this.staffHandMesh && !this.staffHandMesh.visible) this.staffHandMesh.visible = true;
       } else {
         if (this.staffHandMesh && this.staffHandMesh.visible) this.staffHandMesh.visible = false;
-        // Keep the carried staff out of the normal gameplay camera range. The
-        // rear socket can project the prop into the lens even when the camera
-        // angle changes around walls or during a transition.
+        // Show the back-mounted staff only in the normal close gameplay view.
+        // Wide overview / cinematic cameras used to do the opposite (show it
+        // when farther than 9.5m), which let the rear prop dominate the frame
+        // during distant camera shots. Hide it outside ordinary third-person
+        // framing; attacks still explicitly show the hand-mounted weapon.
         const cameraDistance = cameraController.camera.position.distanceTo(this.mesh.position);
-        const backStaffShouldShow = cameraDistance > 9.5 && !this.isAttacking;
+        const backStaffShouldShow = cameraDistance < 9.5 && !this.isAttacking;
         if (this.staffBackMesh && this.staffBackMesh.visible !== backStaffShouldShow) {
           this.staffBackMesh.visible = backStaffShouldShow;
         }
