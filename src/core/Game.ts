@@ -162,6 +162,15 @@ export class Game {
     this.inputManager.canInteract = () => this.canUseGameplayActions();
     this.inputManager.canAttack = () => this.canUseGameplayActions();
 
+    // Register the defeat spotlight before scene shader preparation. Adding a
+    // new light at the moment of death changes Three.js light defines and can
+    // trigger a costly material recompile on desktop and mobile GPUs.
+    this.gameOverSpot = new THREE.SpotLight(0xffe0a4, 0, 24, Math.PI / 5, 0.62, 1.5);
+    this.gameOverSpot.name = 'game_over_prepared_spotlight';
+    this.gameOverSpot.castShadow = false;
+    this.gameOverSpot.target = this.gameOverTarget;
+    this.sceneManager.scene.add(this.gameOverSpot, this.gameOverTarget);
+
     // 3. Setup Cameras
     this.cameraController = new CameraController(this.sceneManager.camera);
     this.cinematicCamera = new CinematicCamera(this.sceneManager.camera);
@@ -595,13 +604,10 @@ export class Game {
     this.player.isMovementLocked = true;
     document.getElementById('game-over-screen')?.classList.remove('hidden');
     this.gameOverTarget.position.copy(this.player.mesh.position).add(new THREE.Vector3(0, 1, 0));
-    this.sceneManager.scene.add(this.gameOverTarget);
-    this.gameOverSpot = new THREE.SpotLight(0xffe0a4, 24, 24, Math.PI / 5, 0.62, 1.5);
-    this.gameOverSpot.position.copy(this.player.mesh.position).add(new THREE.Vector3(0, 8, 1));
-    this.gameOverSpot.target = this.gameOverTarget;
-    this.gameOverSpot.castShadow = false;
-    this.sceneManager.scene.add(this.gameOverSpot);
-    this.sceneManager.scene.add(this.gameOverSpot.target);
+    if (this.gameOverSpot) {
+      this.gameOverSpot.position.copy(this.player.mesh.position).add(new THREE.Vector3(0, 8, 1));
+      this.gameOverSpot.intensity = 24;
+    }
     if (this.animationController.hasClip('Continue')) {
       this.animationController.playOneShot('Continue', () => {}, 1);
     } else {
@@ -612,9 +618,7 @@ export class Game {
   private continueAfterGameOver(): void {
     if (!this.gameOverActive) return;
     this.gameOverActive = false;
-    this.gameOverSpot?.removeFromParent();
-    this.gameOverSpot = null;
-    this.gameOverTarget.removeFromParent();
+    if (this.gameOverSpot) this.gameOverSpot.intensity = 0;
     this.player.lives = 3;
     this.player.health = this.player.maxHealth;
     this.player.mana = this.player.maxMana;
