@@ -1812,7 +1812,7 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
   color: #ffeeb9; font: 700 clamp(9px, 1vw, 12px)/1 system-ui, sans-serif;
   text-shadow: 0 1px 3px #210d04; font-variant-numeric: tabular-nums; pointer-events: none;
 }
-.imperial-hud #life-count.imperial-life-count, #life-count {
+.imperial-hud #life-count.imperial-life-count {
   position: absolute; left: 34.2%; top: 73%; display: flex; align-items: center; gap: clamp(5px, .7vw, 10px);
   margin: 0; padding: 0; pointer-events: none;
 }
