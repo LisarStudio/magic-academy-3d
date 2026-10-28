@@ -66,10 +66,10 @@ export class MainMenu {
     const mobileMedia = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
     const introPath = mobileMedia
       ? 'assets/cinematics/optimized/wukong-intro-mobile.mp4'
-      : 'assets/cinematics/wukong-intro.mp4';
+      : 'assets/cinematics/optimized/wukong-intro-desktop.mp4';
     const idlePath = mobileMedia
       ? 'assets/cinematics/optimized/wukong-menu-idle-mobile.mp4'
-      : 'assets/cinematics/wukong-menu-idle.mp4';
+      : 'assets/cinematics/optimized/wukong-menu-idle-desktop.mp4';
     this.introVideo.setAttribute('fetchpriority', 'high');
     this.introVideo.src = `${base}${introPath}?v=${__APP_VERSION__}`;
     this.idleVideo.preload = 'none';

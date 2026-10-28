@@ -11,11 +11,11 @@ export function isLowPowerDevice(): boolean {
 }
 
 export function renderPixelRatio(quality = 1): number {
-  // Keep a native CSS-pixel floor so dynamic resolution cannot turn the game
-  // visibly soft on phones or on standard-density displays. High-DPI panels
-  // retain extra detail, with a lower cap on mobile to protect GPU memory.
+  // Keep native density at full quality, but allow the adaptive renderer to
+  // step below 1x when frame time exceeds budget. The old 1x floor silently
+  // disabled dynamic-resolution recovery on standard-DPI screens.
   const lowPower = isLowPowerDevice();
   const cap = lowPower ? 1.25 : 1.5;
   const deviceRatio = Math.min(window.devicePixelRatio || 1, cap);
-  return Math.max(1, deviceRatio * quality);
+  return Math.max(0.5, deviceRatio * quality);
 }

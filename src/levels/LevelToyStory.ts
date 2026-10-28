@@ -550,27 +550,47 @@ export class LevelToyStory {
     }
 
     if (lionResult.status === 'fulfilled') {
-      // Place the two authored statues at the actual stair-side markers. Move
-      // each model node independently so their authored spacing cannot collapse
-      // into a single cluster when the source is scaled.
-      const guardians = placeAsset(lionResult.value.scene, 'chinese_porcelain_guardian_pair', 7.0, 0, -27.1, Math.PI);
+      // Place the guardians on the two marked sides of the entrance landing.
+      // The previous fixed z=-30.4 left them down in front of the steps rather
+      // than beside the upper stair/landing markers.
+      const templeScale = this.centralTempleObject?.scale.x ?? 1.4;
+      const templeFrontZ = this.centralTempleFloorCenterZ + this.centralTempleFloorDepth * 0.5;
+      const stairWidth = Math.max(7.2, Math.min(9.6, 6.1 * templeScale));
+      const guardianZ = templeFrontZ + 0.9;
+      const guardianOffsetX = stairWidth * 0.5 + 3.1;
+      const guardians = placeAsset(lionResult.value.scene, 'chinese_porcelain_guardian_pair', 7.0, 0, guardianZ, Math.PI);
       guardians.updateMatrixWorld(true);
       const lionNodes = ['Chinese Porcelain Lion.001', 'Chinese Porcelain Lion.002']
         .map((name) => guardians.getObjectByName(name)).filter((node): node is THREE.Object3D => !!node);
-      const ground = this.getTerrainHeight(0, -30.4);
-      const guardianXs = [-11.2, 11.2];
       const guardianBounds: THREE.Box3[] = [];
       lionNodes.forEach((node, index) => {
+        const targetX = index === 0 ? -guardianOffsetX : guardianOffsetX;
+        const targetZ = guardianZ;
+        const terrainY = this.getTerrainHeight(targetX, targetZ);
+        let ground = terrainY;
+        if (this.centralTempleObject) {
+          const supportRay = new THREE.Raycaster(
+            new THREE.Vector3(targetX, terrainY + 8, targetZ), new THREE.Vector3(0, -1, 0), 0, 10
+          );
+          const support = supportRay.intersectObject(this.centralTempleObject, true).find((hit) =>
+            !!hit.face && hit.point.y >= terrainY - 0.1 &&
+            hit.point.y <= (this.centralTempleFloorTopY ?? terrainY + 2.5) + 0.25 &&
+            hit.face.normal.clone().transformDirection(hit.object.matrixWorld).y > 0.65
+          );
+          if (support) ground = support.point.y;
+        }
+        // Turn toward the approach, then align the bottom of the whole visible
+        // lion (including its plinth) with the terrain at its final location.
+        const worldYaw = Math.atan2(-targetX, 10 - targetZ);
+        node.rotation.y = worldYaw - guardians.rotation.y;
+        node.updateMatrixWorld(true);
         const bounds = new THREE.Box3().setFromObject(node);
         const current = bounds.getCenter(new THREE.Vector3());
-        // Place each statue outside the stair cheek walls at the green marks.
-        const target = new THREE.Vector3(guardianXs[index] ?? 11.2, ground + (bounds.max.y - bounds.min.y) * 0.5, -30.4);
+        const target = new THREE.Vector3(targetX, ground + (bounds.max.y - bounds.min.y) * 0.5, targetZ);
         if (node.parent) {
           const localDelta = node.parent.worldToLocal(target.clone()).sub(node.parent.worldToLocal(current.clone()));
           node.position.add(localDelta);
         }
-        const worldYaw = Math.atan2(-target.x, 10 - target.z);
-        node.rotation.y = worldYaw - guardians.rotation.y;
         node.updateMatrixWorld(true);
         guardianBounds.push(new THREE.Box3().setFromObject(node));
         node.traverse((part) => { if ((part as THREE.Mesh).isMesh) (part as THREE.Mesh).castShadow = false; });
@@ -586,12 +606,14 @@ export class LevelToyStory {
         const size = bounds.getSize(new THREE.Vector3());
         const center = bounds.getCenter(new THREE.Vector3());
         // Match the visible statue's body, not its full decorative plinth.
-        // Keep the base solid too, so neither part can be walked through.
-        const blockerHeight = Math.max(1.75, Math.min(2.45, size.y * 0.84));
+        // Keep the blocker grounded at the final statue bounds (not at the
+        // old shared spawn height), and cover the body without a wide invisible
+        // barrier extending across the stair approach.
+        const blockerHeight = Math.max(1.65, Math.min(2.25, size.y * 0.86));
         const blocker = new THREE.Mesh(new THREE.BoxGeometry(
-          Math.max(1.45, size.x * 0.9), blockerHeight, Math.max(1.45, size.z * 0.9)
+          Math.max(1.35, size.x * 0.78), blockerHeight, Math.max(1.35, size.z * 0.78)
         ), invisible);
-        blocker.position.set(center.x, ground + blockerHeight * 0.5, center.z);
+        blocker.position.set(center.x, bounds.min.y + blockerHeight * 0.5, center.z);
         blocker.name = 'porcelain_guardian_blocker';
         lionColliders.add(blocker);
       });
@@ -1358,12 +1380,11 @@ export class LevelToyStory {
         matrices.forEach((instances, variant) => {
           if (!instances.length) return;
           const template = templates[variant];
-          const sector = new THREE.InstancedMesh(template.geometry, template.material, instances.length);
+          const sector = new THREE.InstancedMesh(template.lodGeometry, template.material, instances.length);
           sector.name = `grassit-${template.name.toLowerCase()}-sector-${sx}-${sz}`;
           const center = new THREE.Vector2(x0 + sectorSize * 0.5, z0 + sectorSize * 0.5);
           sector.userData.grassCenter = center;
           sector.userData.grassHalfSize = sectorSize * 0.5;
-          sector.userData.grassFullGeometry = template.geometry;
           sector.userData.grassLodGeometry = template.lodGeometry;
           sector.userData.grassLowGeometry = template.lowGeometry;
           sector.userData.grassMediumGeometry = template.mediumGeometry;
@@ -1384,6 +1405,9 @@ export class LevelToyStory {
         // Give input, camera and rendering a frame between sector batches.
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     }
+    // Full source meshes are no longer referenced after placement: the runtime
+    // uses the Blender-authored LOD, plus its derived distance variants.
+    templates.forEach((template) => template.geometry.dispose());
     console.info(`[Grass] ${placedTotal} original Grass It! clumps from ${sourceNames.join(', ')} in ${sectorSize}m sectors (${isMobile ? 'mobile' : 'desktop'} spacing ${spacing}m); Wukong ${characterHeight.toFixed(2)}m, grass cap ${ankleGrassHeight.toFixed(2)}m`);
   }
 
@@ -3449,16 +3473,15 @@ export class LevelToyStory {
       // carries coverage beyond the vegetation range.
       const isMobile = isLowPowerDevice();
       const qualityIndex = this.grassQuality === 0.65 ? 0 : this.grassQuality === 1 ? 2 : 1;
-      const detailDistances = isMobile ? [2, 3, 4] : [4, 5, 7];
       const midDistances = isMobile ? [8, 10, 12] : [14, 20, 30];
       const farDistances = isMobile ? [20, 26, 34] : [48, 65, 90];
-      const detailedDistance = detailDistances[qualityIndex];
       const lodDistance = midDistances[qualityIndex];
       const farDistance = farDistances[qualityIndex];
-      // High keeps the complete Blender LOD close to the player; Medium uses
-      // a fuller topology reduction and Low/mobile uses the lightest variant.
-      // Full source polygons remain exclusive to High desktop.
-      const useFullDetail = !isMobile && qualityIndex === 2;
+      // The 20 m sectors contain hundreds of clumps. Applying the complete
+      // source mesh to an entire sector because only its near edge is close
+      // caused a large triangle spike. The authored Blender LOD is used for
+      // the near band too; it retains the blade silhouette with far fewer
+      // repeated polygons.
       for (let i = 0; i < this.grassSectors.length; i++) {
         const sector = this.grassSectors[i];
         const center = sector.userData.grassCenter as THREE.Vector2;
@@ -3473,9 +3496,7 @@ export class LevelToyStory {
         const distance = Math.sqrt(distanceSq);
         sector.visible = distance <= farDistance;
         if (sector.visible) {
-          const targetGeometry = distance <= detailedDistance && useFullDetail
-            ? sector.userData.grassFullGeometry
-            : distance <= lodDistance
+          const targetGeometry = distance <= lodDistance
               ? (isMobile
                 ? (distance <= 5 ? sector.userData.grassMediumGeometry : sector.userData.grassLowGeometry)
                 : qualityIndex === 2

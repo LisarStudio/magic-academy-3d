@@ -673,8 +673,9 @@ export class PlayerController {
       const bodyBottom = this.mesh.position.y + 0.08;
       const bodyTop = this.mesh.position.y + 1.45;
       for (const entry of this.solidBlockerBounds) {
-        entry.mesh.updateWorldMatrix(true, false);
-        entry.bounds.setFromObject(entry.mesh);
+        // Temple shell and statue proxy colliders are static. Their bounds are
+        // captured in setColliders(); rebuilding Box3s for every wall on every
+        // movement frame needlessly traversed geometry around the temple.
         const box = entry.bounds;
         if (bodyTop <= box.min.y || bodyBottom >= box.max.y) continue;
         const minX = box.min.x - this.PLAYER_RADIUS;
