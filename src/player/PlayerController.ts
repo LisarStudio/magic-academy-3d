@@ -186,26 +186,37 @@ export class PlayerController {
     backStaff.visible = false;
     this.staffBackMesh = backStaff;
 
+    const backSocket = new THREE.Group();
+    backSocket.name = 'wukong_sacred_staff_back_socket';
+    const backMountScale = 0.84; // keeps the staff proportional to the 1.7 m gameplay rig
+    backStaff.scale.setScalar(backMountScale);
+    backStaff.position.set(0, 0, 0);
+    backStaff.rotation.set(0, 0, 0);
+    backSocket.add(backStaff);
+
     if (spineBone) {
       this.mesh.updateMatrixWorld(true);
       const spineWorldScale = new THREE.Vector3();
       (spineBone as THREE.Object3D).getWorldScale(spineWorldScale);
-      // Ensure STRICT UNIFORM scaling factor to eliminate any non-uniform deformation
-      const uniformInv = spineWorldScale.x > 0.00001 ? 1.0 / spineWorldScale.x : 1.0;
-      backStaff.scale.set(uniformInv, uniformInv, uniformInv);
-
-      // The GLB rig includes an internal 0.01 scale below the character root.
-      // Convert metre offsets to the actual local units of the Spine2 socket.
-      backStaff.position.copy(def.backAttachment.position).divide(spineWorldScale);
-      backStaff.rotation.copy(def.backAttachment.rotation);
-      (spineBone as THREE.Object3D).add(backStaff);
+      // Cancel only the character's uniform model scale once. The socket then
+      // applies its metre offsets and orientation independently of the mesh.
+      const inverseUniformScale = spineWorldScale.x > 0.00001 ? 1 / spineWorldScale.x : 1;
+      backStaff.scale.multiplyScalar(inverseUniformScale);
+      backSocket.position.copy(def.backAttachment.position).divide(spineWorldScale);
+      backSocket.rotation.copy(def.backAttachment.rotation);
+      (spineBone as THREE.Object3D).add(backSocket);
     } else {
       const rootWorldScale = new THREE.Vector3();
       this.mesh.getWorldScale(rootWorldScale);
-      backStaff.scale.setScalar(rootWorldScale.x > 0.00001 ? 1 / rootWorldScale.x : 1);
-      backStaff.position.set(0.02 / rootWorldScale.x, 1.05 / rootWorldScale.y, -0.20 / rootWorldScale.z);
-      backStaff.rotation.copy(def.backAttachment.rotation);
-      this.mesh.add(backStaff);
+      const safeRootScale = new THREE.Vector3(
+        Math.max(rootWorldScale.x, 0.00001),
+        Math.max(rootWorldScale.y, 0.00001),
+        Math.max(rootWorldScale.z, 0.00001)
+      );
+      backStaff.scale.multiplyScalar(1 / safeRootScale.x);
+      backSocket.position.set(0.035 / safeRootScale.x, 1.05 / safeRootScale.y, -0.24 / safeRootScale.z);
+      backSocket.rotation.copy(def.backAttachment.rotation);
+      this.mesh.add(backSocket);
     }
 
     // 4. Create Staff Hand Mesh (firmly gripped in right hand for attacking)
