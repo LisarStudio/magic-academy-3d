@@ -39,11 +39,9 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDefinition> = {
     backAttachment: {
       boneNameSubstrings: ['spine2', 'chest', 'upperchest'],
       fallbackBoneNames: ['spine1', 'spine'],
-      // Dedicated upper-back socket: the rod sits outside the garment, with
-      // its top below the neck and its lower tip above the waist/legs.
-      // Offsets are metres in the local bone axes. PlayerController converts
-      // them to this rig's (centimetre-scaled) bone coordinates at binding.
-      position: new THREE.Vector3(0.035, -0.18, -0.24),
+      // Dedicated upper-back socket, shifted to Wukong's right and onto the
+      // back-facing side of the rig. Offsets are metres in bone-local axes.
+      position: new THREE.Vector3(0.15, -0.10, 0.18),
       rotation: new THREE.Euler(0.04, -0.04, 0.62, 'XYZ')
     },
     handAttachment: {

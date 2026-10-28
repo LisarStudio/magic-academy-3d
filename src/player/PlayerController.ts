@@ -188,7 +188,9 @@ export class PlayerController {
 
     const backSocket = new THREE.Group();
     backSocket.name = 'wukong_sacred_staff_back_socket';
-    const backMountScale = 0.84; // keeps the staff proportional to the 1.7 m gameplay rig
+    // Keep the carried staff deliberately compact in third person. The source
+    // rig is centimeter based, while StaffFactory is authored in metres.
+    const backMountScale = 0.58;
     backStaff.scale.setScalar(backMountScale);
     backStaff.position.set(0, 0, 0);
     backStaff.rotation.set(0, 0, 0);
@@ -405,7 +407,14 @@ export class PlayerController {
         if (this.staffHandMesh && !this.staffHandMesh.visible) this.staffHandMesh.visible = true;
       } else {
         if (this.staffHandMesh && this.staffHandMesh.visible) this.staffHandMesh.visible = false;
-        if (this.staffBackMesh && !this.staffBackMesh.visible) this.staffBackMesh.visible = true;
+        // When camera collision pushes the camera close to Wukong (temple walls,
+        // crypt entrances, narrow interiors), a back-mounted prop can fill the
+        // foreground. Hide only the carried visual until the normal view returns.
+        const cameraDistance = cameraController.camera.position.distanceTo(this.mesh.position);
+        const backStaffShouldShow = cameraDistance > 3.1 && !this.isAttacking;
+        if (this.staffBackMesh && this.staffBackMesh.visible !== backStaffShouldShow) {
+          this.staffBackMesh.visible = backStaffShouldShow;
+        }
       }
     } else {
       if (this.animationController.isArmed) {
