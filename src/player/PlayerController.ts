@@ -362,7 +362,11 @@ export class PlayerController {
   private wallRaycaster = new THREE.Raycaster();
   private readonly PLAYER_RADIUS = 0.4;
   private static readonly TEMP_GROUND_ORIGIN = new THREE.Vector3();
-  private static readonly RAY_OFFSET = new THREE.Vector3(0, 0.4, 0);
+  // Start well above the root and cast through a generous recovery window.
+  // A short foot ray could start underneath the thin temple paving after a
+  // missed frame, then fall back to the lower terrain forever (visible as
+  // Wukong sinking through paths and landings).
+  private static readonly RAY_OFFSET = new THREE.Vector3(0, 2.2, 0);
   private static readonly DOWN_DIR = new THREE.Vector3(0, -1, 0);
   private static readonly TEMP_NORM = new THREE.Vector3();
 
@@ -454,7 +458,7 @@ export class PlayerController {
     // 1. Ground Check (Surface normal validation + Self-mesh exclusion)
     PlayerController.TEMP_GROUND_ORIGIN.copy(this.mesh.position).add(PlayerController.RAY_OFFSET);
     this.groundRaycaster.set(PlayerController.TEMP_GROUND_ORIGIN, PlayerController.DOWN_DIR);
-    this.groundRaycaster.far = 1.2;
+    this.groundRaycaster.far = 4.8;
     const rawGroundHits = this.groundRaycaster.intersectObjects(this.colliders, true);
 
     let validGroundHit: THREE.Intersection | null = null;
@@ -462,8 +466,10 @@ export class PlayerController {
       if (isPlayerChild(hit.object)) continue;
       if (!hit.face) continue;
       PlayerController.TEMP_NORM.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
-      // Accept walkable floor surfaces and steps/ramps ahead up to +0.45m
-      if (PlayerController.TEMP_NORM.y >= 0.40 && hit.point.y <= this.mesh.position.y + 0.45 && hit.point.y >= this.mesh.position.y - 1.2) {
+      // Accept walkable floors, including a nearby surface above the terrain.
+      // The lower bound also recovers from a shallow fall-through instead of
+      // letting the player keep descending below a valid path/floor collider.
+      if (PlayerController.TEMP_NORM.y >= 0.40 && hit.point.y <= this.mesh.position.y + 0.45 && hit.point.y >= this.mesh.position.y - 2.4) {
         validGroundHit = hit;
         break;
       }
@@ -722,16 +728,16 @@ export class PlayerController {
 
     // Post-movement ground re-snap for smooth slope and ramp traversal
     if (this.isGrounded && this.velocity.y === 0 && this.colliders.length > 0) {
-      const snapOrigin = this.mesh.position.clone().add(new THREE.Vector3(0, 0.4, 0));
-      this.groundRaycaster.set(snapOrigin, PlayerController.DOWN_DIR);
-      this.groundRaycaster.far = 1.0;
+      PlayerController.TEMP_GROUND_ORIGIN.copy(this.mesh.position).add(PlayerController.RAY_OFFSET);
+      this.groundRaycaster.set(PlayerController.TEMP_GROUND_ORIGIN, PlayerController.DOWN_DIR);
+      this.groundRaycaster.far = 4.8;
       const rawSnapHits = this.groundRaycaster.intersectObjects(this.colliders, true);
       for (const hit of rawSnapHits) {
         if (isPlayerChild(hit.object)) continue;
         if (!hit.face) continue;
         const norm = hit.face.normal.clone();
         norm.transformDirection(hit.object.matrixWorld);
-        if (norm.y >= 0.4 && hit.point.y <= this.mesh.position.y + 0.45 && hit.point.y >= this.mesh.position.y - 0.6) {
+        if (norm.y >= 0.4 && hit.point.y <= this.mesh.position.y + 0.45 && hit.point.y >= this.mesh.position.y - 2.4) {
           this.mesh.position.y = hit.point.y;
           break;
         }
