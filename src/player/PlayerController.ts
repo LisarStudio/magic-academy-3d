@@ -404,21 +404,19 @@ export class PlayerController {
       }
       if (this.isAttacking) {
         if (this.staffBackMesh && this.staffBackMesh.visible) this.staffBackMesh.visible = false;
-        // Keep the weapon out of the lens when collision/crypt framing pushes
-        // the third-person camera into Wukong. The hit logic and attack clip do
-        // not depend on rendering this prop.
-        const cameraDistance = cameraController.camera.position.distanceTo(this.mesh.position);
-        const handStaffShouldShow = cameraDistance > 3.0;
-        if (this.staffHandMesh && this.staffHandMesh.visible !== handStaffShouldShow) {
-          this.staffHandMesh.visible = handStaffShouldShow;
-        }
+        if (this.staffHandMesh && !this.staffHandMesh.visible) this.staffHandMesh.visible = true;
       } else {
         if (this.staffHandMesh && this.staffHandMesh.visible) this.staffHandMesh.visible = false;
-        // The back socket is retained for attachment/equipment continuity, but
-        // rendering it in gameplay puts the long prop on the camera sightline.
-        // Keep it hidden; the hand prop is shown during attacks when framing is
-        // wide enough, and weapon mechanics remain unchanged.
-        if (this.staffBackMesh?.visible) this.staffBackMesh.visible = false;
+        // Show the back-mounted staff only in the normal close gameplay view.
+        // Wide overview / cinematic cameras used to do the opposite (show it
+        // when farther than 9.5m), which let the rear prop dominate the frame
+        // during distant camera shots. Hide it outside ordinary third-person
+        // framing; attacks still explicitly show the hand-mounted weapon.
+        const cameraDistance = cameraController.camera.position.distanceTo(this.mesh.position);
+        const backStaffShouldShow = cameraDistance < 9.5 && !this.isAttacking;
+        if (this.staffBackMesh && this.staffBackMesh.visible !== backStaffShouldShow) {
+          this.staffBackMesh.visible = backStaffShouldShow;
+        }
       }
     } else {
       if (this.animationController.isArmed) {
@@ -833,9 +831,7 @@ export class PlayerController {
     if (!this.hasStaff) return;
     if (this.staffBackMesh) this.staffBackMesh.visible = false;
     if (this.staffHandMesh) {
-      // Visibility is decided each frame from camera clearance to prevent a
-      // close third-person camera from turning the weapon into a screen overlay.
-      this.staffHandMesh.visible = false;
+      this.staffHandMesh.visible = true;
       this.attackAura.trigger();
     }
   }
