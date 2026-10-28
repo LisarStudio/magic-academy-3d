@@ -42,6 +42,7 @@ export class PlayerController {
   public isMovementLocked = false;
   private groundRaycaster = new THREE.Raycaster();
   private colliders: THREE.Object3D[] = [];
+  private solidBlockerBounds: Array<{ mesh: THREE.Mesh; bounds: THREE.Box3 }> = [];
 
   public onHealthChange?: (hp: number, maxHp: number) => void;
   public onManaChange?: (mp: number, maxMp: number) => void;
@@ -339,6 +340,16 @@ export class PlayerController {
 
   public setColliders(colliders: THREE.Object3D[]): void {
     this.colliders = colliders;
+    this.solidBlockerBounds = [];
+    const includeBlocker = (object: THREE.Object3D) => {
+      const name = (object.name || '').toLowerCase();
+      const mesh = object as THREE.Mesh;
+      if (mesh.isMesh && (name.startsWith('temple_') && name.endsWith('_wall') || name === 'porcelain_guardian_blocker')) {
+        object.updateWorldMatrix(true, false);
+        this.solidBlockerBounds.push({ mesh, bounds: new THREE.Box3().setFromObject(mesh) });
+      }
+    };
+    for (const collider of colliders) collider.traverse(includeBlocker);
   }
 
   public forceIdle(): void {
@@ -642,6 +653,61 @@ export class PlayerController {
         }
       }
 
+    }
+
+    // Raycasts alone miss a thin wall if a frame starts with the player already
+    // inside its proxy (Raycaster does not report a hit from inside a mesh).
+    // Resolve the temple shell and guardian statues as expanded solid volumes,
+    // allowing a player who spawned inside to move out but never deeper in.
+    if (horizontalSpeed > 0.001 && this.solidBlockerBounds.length > 0) {
+      let candidateX = this.mesh.position.x + this.velocity.x * delta;
+      let candidateZ = this.mesh.position.z + this.velocity.z * delta;
+      const currentX = this.mesh.position.x;
+      const currentZ = this.mesh.position.z;
+      const bodyBottom = this.mesh.position.y + 0.08;
+      const bodyTop = this.mesh.position.y + 1.45;
+      for (const entry of this.solidBlockerBounds) {
+        entry.mesh.updateWorldMatrix(true, false);
+        entry.bounds.setFromObject(entry.mesh);
+        const box = entry.bounds;
+        if (bodyTop <= box.min.y || bodyBottom >= box.max.y) continue;
+        const minX = box.min.x - this.PLAYER_RADIUS;
+        const maxX = box.max.x + this.PLAYER_RADIUS;
+        const minZ = box.min.z - this.PLAYER_RADIUS;
+        const maxZ = box.max.z + this.PLAYER_RADIUS;
+        const inside = (x: number, z: number) => x >= minX && x <= maxX && z >= minZ && z <= maxZ;
+        const clearance = (x: number, z: number) => Math.min(x - minX, maxX - x, z - minZ, maxZ - z);
+        const wasInside = inside(currentX, currentZ);
+        if (!inside(candidateX, candidateZ)) continue;
+
+        if (wasInside) {
+          // Only permit movement that reduces penetration toward the nearest
+          // edge; this gives a reliable escape path from an overlap.
+          if (clearance(candidateX, candidateZ) < clearance(currentX, currentZ) - 0.001) continue;
+          this.velocity.x = 0;
+          this.velocity.z = 0;
+          candidateX = currentX;
+          candidateZ = currentZ;
+          continue;
+        }
+
+        const xOnlyBlocked = inside(candidateX, currentZ);
+        const zOnlyBlocked = inside(currentX, candidateZ);
+        if (!xOnlyBlocked) {
+          candidateZ = currentZ;
+          this.velocity.z = 0;
+        } else if (!zOnlyBlocked) {
+          candidateX = currentX;
+          this.velocity.x = 0;
+        } else {
+          candidateX = currentX;
+          candidateZ = currentZ;
+          this.velocity.x = 0;
+          this.velocity.z = 0;
+        }
+      }
+      this.velocity.x = (candidateX - currentX) / Math.max(delta, 0.0001);
+      this.velocity.z = (candidateZ - currentZ) / Math.max(delta, 0.0001);
     }
 
     // Apply final position

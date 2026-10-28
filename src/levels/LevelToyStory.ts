@@ -585,9 +585,11 @@ export class LevelToyStory {
       guardianBounds.forEach((bounds) => {
         const size = bounds.getSize(new THREE.Vector3());
         const center = bounds.getCenter(new THREE.Vector3());
-        const blockerHeight = Math.max(1.55, Math.min(2.2, size.y * 0.72));
+        // Match the visible statue's body, not its full decorative plinth.
+        // Keep the base solid too, so neither part can be walked through.
+        const blockerHeight = Math.max(1.75, Math.min(2.45, size.y * 0.84));
         const blocker = new THREE.Mesh(new THREE.BoxGeometry(
-          Math.max(1.15, size.x * 0.78), blockerHeight, Math.max(1.15, size.z * 0.78)
+          Math.max(1.45, size.x * 0.9), blockerHeight, Math.max(1.45, size.z * 0.9)
         ), invisible);
         blocker.position.set(center.x, ground + blockerHeight * 0.5, center.z);
         blocker.name = 'porcelain_guardian_blocker';
@@ -724,7 +726,11 @@ export class LevelToyStory {
     // opening clear. No proxy is based on roof overhang dimensions.
     const frontZ = center.z + halfD;
     const rearZ = center.z - halfD;
-    const openingHalf = 2.45;
+    // Match the real cut in the door mesh (about ±2.55 source units after
+    // scaling) and leave a little room for the player's shoulder radius.
+    // The previous fixed 2.45 m opening created invisible jambs across the
+    // otherwise visibly open doorway.
+    const openingHalf = 2.55 * modelScale + 0.45;
     addWall('temple_west_wall', thickness, sideHalfD * 2, center.x - halfW, center.z);
     addWall('temple_east_wall', thickness, sideHalfD * 2, center.x + halfW, center.z);
     addWall('temple_rear_wall', halfW * 2, thickness, center.x, rearZ);
@@ -820,6 +826,7 @@ export class LevelToyStory {
       changed = true;
     }
     if (changed) {
+      this.player.setColliders(this.levelColliders);
       this.cameraController.setCollisionObjects(this.levelColliders);
     }
   }
@@ -907,6 +914,33 @@ export class LevelToyStory {
     this.sceneManager.scene.add(floor);
     this.levelColliders.push(floor);
     this.centralTempleFloorTopY = topY;
+
+    // The GLB stairs are decorative render meshes and are deliberately kept
+    // out of the expensive raycast set. Give the visible stair run one smooth,
+    // walkable collision surface underneath it, meeting the interior floor at
+    // the sampled threshold height and the terrain at its foot.
+    if (temple) {
+      const stairRun = Math.max(5.8, Math.min(7.2, 4.4 * temple.scale.x));
+      const stairWidth = Math.max(7.2, Math.min(9.6, 6.1 * temple.scale.x));
+      const stairTopZ = frontZ + 0.12;
+      const stairFootZ = stairTopZ + stairRun;
+      const footY = this.getTerrainHeight(0, stairFootZ) + 0.015;
+      const rampGeometry = new THREE.BufferGeometry();
+      const half = stairWidth * 0.5;
+      rampGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+        -half, topY, stairTopZ, half, topY, stairTopZ,
+        -half, footY, stairFootZ, half, footY, stairFootZ,
+      ], 3));
+      rampGeometry.setIndex([0, 2, 1, 1, 2, 3]);
+      rampGeometry.computeVertexNormals();
+      const ramp = new THREE.Mesh(rampGeometry, new THREE.MeshBasicMaterial({
+        colorWrite: false, depthWrite: false, side: THREE.DoubleSide
+      }));
+      ramp.name = 'central_temple_stair_walkable_ramp';
+      ramp.frustumCulled = false;
+      this.sceneManager.scene.add(ramp);
+      this.levelColliders.push(ramp);
+    }
 
     // Coins are created before environment GLBs finish loading. Re-seat temple
     // coins after the actual stair/deck height is known so none are buried.
