@@ -371,13 +371,18 @@ export class LevelToyStory {
     scene.add(skyDome);
     this.cloudsUniforms = cloudMat.uniforms;
 
-    // Create Starfield above the map
-    const starCount = 450;
+    // Star-forming constellation members are inserted into this same field;
+    // their animated lines therefore join actual sky points in fixed world
+    // coordinates instead of a camera-facing overlay.
+    this.constellationSystem = new ConstellationSystem(scene);
+    const ambientStarCount = 450;
+    const constellationStarCount = this.constellationSystem.skyStarPositions.length / 3;
+    const starCount = ambientStarCount + constellationStarCount;
     const starGeo = new THREE.BufferGeometry();
     const starPositions = new Float32Array(starCount * 3);
     const starColors = new Float32Array(starCount * 3);
 
-    for (let i = 0; i < starCount; i++) {
+    for (let i = 0; i < ambientStarCount; i++) {
       const u = Math.random();
       const v = Math.random();
       const theta = u * 2.0 * Math.PI;
@@ -399,15 +404,35 @@ export class LevelToyStory {
       starColors[i * 3 + 2] = intensity;
     }
 
+    starPositions.set(this.constellationSystem.skyStarPositions, ambientStarCount * 3);
+    for (let i = ambientStarCount; i < starCount; i++) {
+      starColors[i * 3] = 0.66;
+      starColors[i * 3 + 1] = 0.86;
+      starColors[i * 3 + 2] = 1.0;
+    }
     starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
     starGeo.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
 
+    const starSprite = document.createElement('canvas');
+    starSprite.width = starSprite.height = 32;
+    const starContext = starSprite.getContext('2d');
+    if (starContext) {
+      const glow = starContext.createRadialGradient(16, 16, 0, 16, 16, 15);
+      glow.addColorStop(0, 'rgba(255,255,255,1)');
+      glow.addColorStop(0.28, 'rgba(255,255,255,.75)');
+      glow.addColorStop(1, 'rgba(255,255,255,0)');
+      starContext.fillStyle = glow;
+      starContext.fillRect(0, 0, 32, 32);
+    }
     const starMat = new THREE.PointsMaterial({
-      size: 1.2,
+      map: new THREE.CanvasTexture(starSprite),
+      size: 2.1,
       vertexColors: true,
       transparent: true,
       opacity: 0.9,
-      sizeAttenuation: true
+      sizeAttenuation: true,
+      depthWrite: false,
+      alphaTest: 0.02
     });
 
     const starField = new THREE.Points(starGeo, starMat);
@@ -421,8 +446,6 @@ export class LevelToyStory {
       this.cloudsUniforms,
       { cycleDuration: 240.0, startPhase: 0.05, renderer: this.sceneManager.renderer }
     );
-    this.constellationSystem = new ConstellationSystem(scene, this.cameraController.camera);
-
     // Add key visual hints
     this.spawnKeysInWorld();
 
@@ -3367,7 +3390,7 @@ export class LevelToyStory {
     if (this.dayNightCycle) {
       this.dayNightCycle.update(delta, playerPos);
     }
-    this.constellationSystem?.update(delta, playerPos, this.dayNightCycle?.phase ?? 0);
+    this.constellationSystem?.update(delta, this.dayNightCycle?.phase ?? 0);
 
     if (this.grassUniforms) {
       this.grassUniforms.uTime.value = performance.now() / 1000.0;

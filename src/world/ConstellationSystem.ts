@@ -1,116 +1,140 @@
 import * as THREE from 'three';
 
-/** A single lightweight constellation that fades in, traces its lines, then fades away. */
+type SkyPattern = { name: string; points: [number, number][]; azimuth: number; altitude: number };
+
+/** Connects fixed members of the actual world star field into occasional constellations. */
 export class ConstellationSystem {
   private readonly group = new THREE.Group();
-  private readonly camera: THREE.Camera;
   private readonly stars: THREE.Points;
   private readonly lines: THREE.LineSegments;
   private elapsed = 0;
-  private nextChange = 8;
+  private elapsedSinceChange = 0;
+  private patternDuration = 10;
   private activeIndex = -1;
-  private opacity = 0;
-  private readonly lookDirection = new THREE.Vector3();
-  // These are sky overlays anchored in camera space. Depth testing against the
-  // temple/terrain hid them whenever the camera looked toward the horizon.
+  private activeLineStart = 0;
+  private activeLineCount = 0;
   private readonly starMaterial: THREE.PointsMaterial;
-  private readonly lineMaterial = new THREE.LineBasicMaterial({ color: 0x9be3ff, transparent: true, opacity: 0, depthTest: true, depthWrite: false, toneMapped: false });
-  private readonly shapes = [
-    // Cassiopeia's recognisable W.
-    [[-4, 1], [-2, -1], [0, 1.4], [2, -1], [4, 1]],
-    [[-3, -1], [-2, 1], [0, 2], [2, 1], [3, -1], [0, -2], [-3, -1]],
-    [[-3, 1], [-1, 2], [1, 0.8], [2.8, 1.8], [2, -1], [0, -2], [-2, -0.8]],
-    [[-3, 0], [-1.2, 1.8], [0, 0], [1.2, 1.8], [3, 0], [1.2, -1.8], [-1.2, -1.8], [-3, 0]],
+  private readonly lineMaterial = new THREE.LineBasicMaterial({
+    color: 0x9be3ff, transparent: true, opacity: 0, depthTest: true,
+    depthWrite: false, toneMapped: false
+  });
+
+  // Positions are fixed in the level sky. Cassiopeia is included; every pattern
+  // shares its points with the general starfield below, rather than following
+  // the camera or drawing a HUD-shaped overlay in front of the player.
+  private readonly patterns: SkyPattern[] = [
+    { name: 'Cassiopeia', azimuth: -0.92, altitude: 0.65, points: [[-3.8, 0.9], [-1.9, -0.7], [0, 1.25], [1.9, -0.75], [3.8, 0.85]] },
+    { name: 'Cisne', azimuth: 0.05, altitude: 0.75, points: [[0, 3], [0, 1], [-1.8, -0.2], [0, 1], [1.8, -0.2], [0, 1], [0, -2.7]] },
+    { name: 'Osa Menor', azimuth: 1.15, altitude: 0.82, points: [[-1.8, 2.1], [0, 2.7], [2.0, 2.0], [1.9, 0], [1.6, -2.0], [-0.2, -2.4], [-1.8, -1.2]] },
+    { name: 'Lira', azimuth: 2.35, altitude: 0.68, points: [[-1.5, 1.7], [1.5, 1.7], [0, 0], [-1.2, -2.0], [1.2, -2.0], [0, 0]] },
   ];
 
-  constructor(scene: THREE.Scene, camera: THREE.Camera) {
-    this.camera = camera;
-    // PointsMaterial without a map renders square point sprites. The old 7 m
-    // camera-space stars therefore appeared as translucent rectangles over
-    // Wukong while a constellation faded in. Use a tiny radial alpha sprite
-    // in screen pixels instead of large world-sized squares.
-    const starCanvas = document.createElement('canvas');
-    starCanvas.width = starCanvas.height = 64;
-    const ctx = starCanvas.getContext('2d');
-    if (ctx) {
-      const glow = ctx.createRadialGradient(32, 32, 0, 32, 32, 31);
-      glow.addColorStop(0, 'rgba(255,255,255,1)');
-      glow.addColorStop(0.22, 'rgba(255,255,255,.95)');
-      glow.addColorStop(0.55, 'rgba(255,255,255,.38)');
-      glow.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = glow;
-      ctx.fillRect(0, 0, 64, 64);
+  /** World positions appended to the normal star points so lines meet those same stars. */
+  public readonly skyStarPositions: Float32Array;
+
+  constructor(scene: THREE.Scene) {
+    const starPositions: number[] = [];
+    const linePositions: number[] = [];
+    const lineRanges: Array<{ start: number; count: number }> = [];
+    const up = new THREE.Vector3(0, 1, 0);
+    const center = new THREE.Vector3();
+    const towardLevel = new THREE.Vector3();
+    const right = new THREE.Vector3();
+    const skyUp = new THREE.Vector3();
+    const previous = new THREE.Vector3();
+    const current = new THREE.Vector3();
+
+    for (const pattern of this.patterns) {
+      const horizontal = Math.cos(pattern.azimuth);
+      const depth = Math.sin(pattern.azimuth);
+      center.set(horizontal * 105, Math.sin(pattern.altitude) * 58 + 18, depth * 105);
+      towardLevel.copy(center).negate().normalize();
+      right.crossVectors(up, towardLevel).normalize();
+      skyUp.crossVectors(towardLevel, right).normalize();
+      const lineStart = linePositions.length / 3;
+      let first = true;
+      for (const [px, py] of pattern.points) {
+        current.copy(center).addScaledVector(right, px * 1.75).addScaledVector(skyUp, py * 1.75);
+        starPositions.push(current.x, current.y, current.z);
+        if (!first) linePositions.push(previous.x, previous.y, previous.z, current.x, current.y, current.z);
+        previous.copy(current);
+        first = false;
+      }
+      lineRanges.push({ start: lineStart, count: (pattern.points.length - 1) * 2 });
     }
-    const starTexture = new THREE.CanvasTexture(starCanvas);
+    this.skyStarPositions = new Float32Array(starPositions);
+
+    const glow = document.createElement('canvas');
+    glow.width = glow.height = 32;
+    const ctx = glow.getContext('2d');
+    if (ctx) {
+      const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 15);
+      gradient.addColorStop(0, 'rgba(255,255,255,1)');
+      gradient.addColorStop(0.3, 'rgba(255,255,255,.8)');
+      gradient.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 32, 32);
+    }
     this.starMaterial = new THREE.PointsMaterial({
-      color: 0xc9edff, map: starTexture, vertexColors: true, size: 11, sizeAttenuation: false,
-      transparent: true, opacity: 0, depthTest: true, depthWrite: false,
-      toneMapped: false, alphaTest: 0.015
+      color: 0xc9edff, map: new THREE.CanvasTexture(glow), size: 8,
+      sizeAttenuation: false, transparent: true, opacity: 0,
+      depthTest: true, depthWrite: false, toneMapped: false, alphaTest: 0.015
     });
-    this.group.name = 'night_constellations';
-    this.group.visible = false;
-    this.group.frustumCulled = false;
-    this.stars = new THREE.Points(new THREE.BufferGeometry(), this.starMaterial);
-    this.lines = new THREE.LineSegments(new THREE.BufferGeometry(), this.lineMaterial);
-    // Keep both elements in the normal depth-tested world pass: close scenery
-    // occludes the stars, so they never draw over Wukong's face.
-    this.stars.renderOrder = this.lines.renderOrder = 1;
+    const starGeometry = new THREE.BufferGeometry();
+    starGeometry.setAttribute('position', new THREE.BufferAttribute(this.skyStarPositions, 3));
+    const lineGeometry = new THREE.BufferGeometry();
+    lineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
+    this.stars = new THREE.Points(starGeometry, this.starMaterial);
+    this.lines = new THREE.LineSegments(lineGeometry, this.lineMaterial);
     this.stars.frustumCulled = this.lines.frustumCulled = false;
+    this.group.name = 'world_anchored_night_constellations';
+    this.group.visible = false;
     this.group.add(this.lines, this.stars);
     scene.add(this.group);
-    this.selectShape(0);
+    this.lineRanges = lineRanges;
+    this.selectPattern(0);
   }
 
-  update(delta: number, playerPosition: THREE.Vector3, phase: number): void {
+  private readonly lineRanges: Array<{ start: number; count: number }>;
+
+  public update(delta: number, phase: number): void {
     const night = phase < 0.24 || phase > 0.95;
     this.group.visible = night;
-    if (!night) { this.opacity = 0; this.setOpacity(0); return; }
-
-    this.elapsed += Math.min(delta, 0.1);
-    this.nextChange -= delta;
-    if (this.nextChange <= 0) {
-      let next = Math.floor(Math.random() * this.shapes.length);
-      if (this.shapes.length > 1 && next === this.activeIndex) next = (next + 1) % this.shapes.length;
-      this.selectShape(next);
-      this.elapsed = 0;
-      this.nextChange = 15 + Math.random() * 12;
+    if (!night) {
+      this.setOpacity(0);
+      return;
     }
-    const show = THREE.MathUtils.smoothstep(this.elapsed, 0.35, 2.6) * (1 - THREE.MathUtils.smoothstep(this.elapsed, this.nextChange - 2.8, this.nextChange));
-    this.opacity = show * 0.72;
-    this.setOpacity(this.opacity);
-    const lineCount = this.lines.geometry.getAttribute('position').count;
-    const trace = THREE.MathUtils.smoothstep(this.elapsed, 0.15, 2.7);
-    this.lines.geometry.setDrawRange(0, Math.ceil(lineCount * trace));
-    // Place the constellation in the upper sky field, well beyond the player.
-    // Camera-up keeps it above the horizon; depth testing lets the temple and
-    // Wukong occlude it instead of painting a HUD-like pattern over them.
-    this.camera.getWorldDirection(this.lookDirection);
-    this.group.position.copy(playerPosition).addScaledVector(this.lookDirection, 86);
-    this.group.position.addScaledVector(this.camera.up, 18);
-    this.group.quaternion.copy(this.camera.quaternion);
-    this.group.scale.setScalar(2.4);
-    this.group.rotateZ(Math.sin(this.elapsed * 0.12) * 0.018);
+    this.elapsed += Math.min(delta, 0.1);
+    this.elapsedSinceChange += delta;
+    if (this.elapsedSinceChange >= this.patternDuration) {
+      let next = Math.floor(Math.random() * this.patterns.length);
+      if (next === this.activeIndex) next = (next + 1) % this.patterns.length;
+      this.selectPattern(next);
+      this.elapsed = 0;
+      this.elapsedSinceChange = 0;
+      this.patternDuration = 22 + Math.random() * 14;
+    }
+
+    const fadeIn = THREE.MathUtils.smoothstep(this.elapsed, 0.2, 1.8);
+    const fadeOut = 1 - THREE.MathUtils.smoothstep(this.elapsedSinceChange, this.patternDuration - 2.8, this.patternDuration);
+    const twinkle = 0.86 + Math.sin(this.elapsed * 2.1) * 0.08;
+    this.setOpacity(fadeIn * fadeOut * twinkle);
+    const tracedVertices = Math.ceil(this.activeLineCount * THREE.MathUtils.smoothstep(this.elapsed, 0.3, 3.0));
+    this.lines.geometry.setDrawRange(this.activeLineStart, tracedVertices);
   }
 
-  private selectShape(index: number): void {
+  private selectPattern(index: number): void {
     this.activeIndex = index;
-    const shape = this.shapes[index];
-    const starPositions = new Float32Array(shape.length * 3);
-    const linePositions = new Float32Array(Math.max(0, shape.length - 1) * 6);
-    shape.forEach(([x, y], i) => {
-      starPositions.set([x, y, 0], i * 3);
-      if (i < shape.length - 1) linePositions.set([x, y, 0, shape[i + 1][0], shape[i + 1][1], 0], i * 6);
-    });
-    this.stars.geometry.dispose();
-    this.lines.geometry.dispose();
-    this.stars.geometry = new THREE.BufferGeometry();
-    this.stars.geometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
-    this.lines.geometry = new THREE.BufferGeometry();
-    this.lines.geometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+    const range = this.lineRanges[index];
+    this.activeLineStart = range.start;
+    this.activeLineCount = range.count;
+    this.lines.geometry.setDrawRange(range.start, 0);
+    this.elapsed = 0;
+    this.elapsedSinceChange = 0;
   }
 
   private setOpacity(opacity: number): void {
     this.starMaterial.opacity = opacity;
-    this.lineMaterial.opacity = opacity * 0.58;
+    this.lineMaterial.opacity = opacity * 0.56;
   }
 }

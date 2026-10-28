@@ -351,6 +351,8 @@ export class PlayerController {
   private wallRaycaster = new THREE.Raycaster();
   private readonly PLAYER_RADIUS = 0.4;
   private static readonly TEMP_GROUND_ORIGIN = new THREE.Vector3();
+  private static readonly TEMP_CAMERA_FROM_PLAYER = new THREE.Vector3();
+  private static readonly TEMP_BACK_AXIS = new THREE.Vector3();
   private static readonly RAY_OFFSET = new THREE.Vector3(0, 0.4, 0);
   private static readonly DOWN_DIR = new THREE.Vector3(0, -1, 0);
   private static readonly TEMP_NORM = new THREE.Vector3();
@@ -411,7 +413,21 @@ export class PlayerController {
         // crypt entrances, narrow interiors), a back-mounted prop can fill the
         // foreground. Hide only the carried visual until the normal view returns.
         const cameraDistance = cameraController.camera.position.distanceTo(this.mesh.position);
-        const backStaffShouldShow = cameraDistance > 3.1 && !this.isAttacking;
+        // The third-person camera normally sits directly behind Wukong. A
+        // back-mounted staff on that sightline is projected into the lens and
+        // can fill the screen (especially after GLB auto-scaling). Keep it on
+        // the character for side/front views, but suppress the prop whenever
+        // the camera looks along the back socket axis. Hand combat visibility
+        // remains controlled by the attack branch above.
+        PlayerController.TEMP_CAMERA_FROM_PLAYER
+          .subVectors(cameraController.camera.position, this.mesh.position)
+          .normalize();
+        PlayerController.TEMP_BACK_AXIS
+          .set(0, 0, 1)
+          .applyQuaternion(this.mesh.quaternion)
+          .normalize();
+        const cameraBehindCharacter = PlayerController.TEMP_CAMERA_FROM_PLAYER.dot(PlayerController.TEMP_BACK_AXIS) > 0.68;
+        const backStaffShouldShow = cameraDistance > 3.1 && !cameraBehindCharacter && !this.isAttacking;
         if (this.staffBackMesh && this.staffBackMesh.visible !== backStaffShouldShow) {
           this.staffBackMesh.visible = backStaffShouldShow;
         }
