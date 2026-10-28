@@ -1775,15 +1775,13 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
   }
 }
 
-/* Imperial health HUD: use the supplied transparent artwork at its original aspect ratio. */
+/* Imperial HUD: every live layer is positioned in the same 2092x752 design space. */
 #hud-top-left.imperial-hud {
   top: max(12px, env(safe-area-inset-top));
   left: max(12px, env(safe-area-inset-left));
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0;
-  width: clamp(270px, 24vw, 360px);
+  display: block;
+  width: clamp(300px, 22vw, 400px);
+  aspect-ratio: 2092 / 752;
   padding: 0;
   background: transparent;
   border: 0;
@@ -1792,8 +1790,8 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
   pointer-events: none;
   backdrop-filter: none;
 }
-.imperial-health { position: relative; width: 100%; aspect-ratio: 2092 / 752; flex: none; }
-.imperial-health-frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.imperial-hud-art { position: absolute; inset: 0; }
+.imperial-health-frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
 .imperial-health-fill-clip {
   position: absolute; left: 33.4%; top: 45.7%; width: 58.8%; height: 13.9%;
   overflow: hidden; border-radius: 999px; pointer-events: none;
@@ -1809,19 +1807,65 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
 .imperial-health-fill::after { content: ""; position: absolute; inset: 1px 2px auto; height: 26%; border-radius: 999px; background: linear-gradient(#fffbdc88, transparent); }
 .imperial-health-value {
   position: absolute; left: 48%; top: 49.5%; width: 37%; text-align: center;
-  color: #ffeeb9; font: 700 clamp(9px, 1vw, 12px)/1 system-ui, sans-serif;
+  color: #fff2c8; font: 700 clamp(11px, .72rem, 14px)/1 system-ui, sans-serif;
   text-shadow: 0 1px 3px #210d04; font-variant-numeric: tabular-nums; pointer-events: none;
 }
-.imperial-hud #life-count.imperial-life-count {
-  position: absolute; left: 34.2%; top: 73%; display: flex; align-items: center; gap: clamp(5px, .7vw, 10px);
-  margin: 0; padding: 0; pointer-events: none;
+.imperial-mana-frame {
+  position: absolute; left: 34.2%; top: 61%;
+  width: 56%; height: 13%; pointer-events: none;
 }
-.imperial-life-count img { display: block; width: clamp(17px, 1.55vw, 23px); height: clamp(17px, 1.55vw, 23px); object-fit: contain; filter: drop-shadow(0 1px 2px #160801); transition: filter 180ms ease, opacity 180ms ease; }
-.imperial-life-count img.lost-life { filter: grayscale(1) brightness(.32); opacity: .72; }
-#hud-top-left.imperial-hud .imperial-mana { position: relative; z-index: 1; width: min(190px, 70%); margin: -1px 0 0 29%; gap: 3px; }
-#hud-top-left.imperial-hud .mp-bar { justify-content: flex-start; }
-#hud-top-left.imperial-hud .mp-bar .bar-label { color: #ffe29a; text-shadow: 0 1px 3px #1b0900; }
-#hud-top-left.imperial-hud .mp-bar .bar-bg { height: 11px; border: 1px solid #b98c32; background: #160f10; }
+.imperial-mana-label {
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 15%; text-align: center; color: #ffdf91;
+  font: 900 clamp(11px, .68rem, 13px)/1 var(--font-title);
+  text-shadow: 0 1px 2px #230c02, 0 0 4px #f1a62b55;
+}
+.imperial-mana-label::after {
+  content: ""; position: absolute; inset: -18% 4%; border-radius: 999px;
+  border: 1px solid #e7b54b; box-shadow: inset 0 0 0 1px #642c14, 0 0 3px #f0c45e66;
+}
+.imperial-hud .imperial-mana-track {
+  position: absolute; left: 16%; top: 50%; transform: translateY(-50%);
+  width: 84%; height: 64%; min-height: 12px; overflow: hidden;
+  border: 2px solid #d9a847; border-radius: 999px; padding: 2px;
+  background: linear-gradient(180deg, #160b0b, #351716 48%, #10090a);
+  box-shadow: 0 1px 0 #fff0b877, inset 0 0 0 1px #5e3215, 0 0 4px #f0b84255;
+}
+.imperial-mana-track::before {
+  content: ""; position: absolute; inset: 1px; border: 1px solid #8b652c;
+  border-radius: inherit; pointer-events: none; z-index: 2;
+}
+.imperial-hud .imperial-mana-track .mp-fill {
+  position: absolute; inset: 2px auto 2px 2px; width: calc(100% - 4px); height: auto;
+  border-radius: 999px; overflow: hidden;
+  background: linear-gradient(180deg, #b9fbff 0%, #43e2ec 24%, #08a9ce 72%, #08769d 100%);
+  box-shadow: 0 0 6px #33ddeb88, inset 0 1px 2px #e8ffffaa;
+  transition: clip-path 360ms cubic-bezier(.2,.75,.2,1);
+}
+.imperial-hud .imperial-mana-track .bar-glimmer {
+  position: absolute; inset: 0 0 auto; height: 28%;
+  background: linear-gradient(#fff9, transparent); pointer-events: none;
+}
+.imperial-mana-value {
+  z-index: 3; color: #eaffff; font-size: clamp(9px, .58rem, 11px);
+  text-shadow: 0 1px 2px #00212b, 0 0 3px #00131c; font-variant-numeric: tabular-nums;
+}
+.imperial-hud #life-count.imperial-life-count {
+  position: absolute; left: 38%; top: 76%; display: flex; align-items: center;
+  gap: 2.4%; width: 46%; height: 22%; margin: 0; padding: 0; pointer-events: none;
+}
+.imperial-life-socket {
+  position: relative; display: grid; flex: 0 0 20%; aspect-ratio: 1;
+  place-items: center; border-radius: 50%;
+  background: radial-gradient(circle at 32% 25%, #704326, #24110c 68%);
+  border: 1px solid #e1b454; box-shadow: inset 0 0 0 1px #5e3515, 0 1px 2px #150805aa;
+  transition: filter 180ms ease, opacity 180ms ease;
+}
+.imperial-life-socket img {
+  display: block; width: 80%; height: 80%; object-fit: contain;
+  filter: drop-shadow(0 1px 1px #160801); transition: filter 180ms ease, opacity 180ms ease;
+}
+.imperial-life-socket img.lost-life { filter: grayscale(1) brightness(.28); opacity: .76; }
 
 .game-over-screen {
   align-items: flex-end;
@@ -1831,13 +1875,18 @@ html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050
 }
 .game-over-card { margin-bottom: 0; }
 @media (max-width: 700px) {
-  #hud-top-left.imperial-hud { width: min(68vw, 300px); top: max(6px, env(safe-area-inset-top)); left: max(7px, env(safe-area-inset-left)); }
-  .imperial-health-value { font-size: 9px; }
-  .imperial-life-count img { width: 16px; height: 16px; }
-  #hud-top-left.imperial-hud .imperial-mana { width: 62%; margin-left: 30%; }
+  #hud-top-left.imperial-hud { width: min(88vw, 360px); top: max(7px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); }
+  .imperial-health-value { font-size: 11px; }
+  .imperial-mana-value { font-size: 9px; }
+  .imperial-mana-frame { gap: 3px; }
   .game-over-screen { padding-bottom: max(18px, env(safe-area-inset-bottom)); }
   .game-over-card { width: min(460px, calc(100vw - 28px)); padding: 18px 16px; }
 }
+@media (max-height: 450px) and (orientation: landscape) {
+  #hud-top-left.imperial-hud { width: clamp(235px, 22vw, 320px); }
+  .imperial-health-value { font-size: 10px; }
+  .imperial-mana-value { font-size: 9px; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .imperial-health-fill, .imperial-life-count img { transition: none !important; }
+  .imperial-health-fill, .imperial-mana-track .mp-fill, .imperial-life-socket, .imperial-life-socket img { transition: none !important; }
 }

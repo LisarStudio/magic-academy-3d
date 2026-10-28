@@ -276,6 +276,8 @@ export class HUD {
     this.hpBarFillEl.style.boxShadow = '0 0 9px #ffb52a, inset 0 1px 2px #fff9';
     this.hpBarFillEl.setAttribute('aria-valuenow', String(safeHp));
     this.hpBarFillEl.setAttribute('aria-valuemax', String(maxHp));
+    this.hpBarFillEl.parentElement?.setAttribute('aria-valuenow', String(safeHp));
+    this.hpBarFillEl.parentElement?.setAttribute('aria-valuemax', String(maxHp));
 
     const hpTextEl = document.getElementById('hp-text');
     if (hpTextEl) hpTextEl.textContent = `${safeHp} / ${maxHp}`;
@@ -283,10 +285,11 @@ export class HUD {
 
   public setLives(lives: number): void {
     if (!this.lifeCountEl) return;
+    const safeLives = Math.max(0, Math.min(3, Math.floor(lives)));
     this.lifeCountEl.innerHTML = Array.from({ length: 3 }, (_, index) =>
-      `<img class="${index >= lives ? 'lost-life' : ''}" src="./assets/ui/hud-baculo-vida.png" alt="" aria-hidden="true" />`
+      `<span class="imperial-life-socket"><img class="${index >= safeLives ? 'lost-life' : ''}" src="./assets/ui/hud-baculo-vida.png" alt="" aria-hidden="true" /></span>`
     ).join('');
-    this.lifeCountEl.setAttribute('aria-label', `Vidas restantes: ${lives}`);
+    this.lifeCountEl.setAttribute('aria-label', `Vidas restantes: ${safeLives}`);
   }
 
   public showDodgeWarning(active: boolean): void {
@@ -300,9 +303,12 @@ export class HUD {
     this.lastMaxMp = maxMp;
 
     const pct = Math.max(0, Math.min(100, (mp / maxMp) * 100));
-    this.mpBarFillEl.style.width = `${pct}%`;
+    this.mpBarFillEl.style.width = 'calc(100% - 4px)';
+    this.mpBarFillEl.style.clipPath = `inset(0 ${100 - pct}% 0 0 round 999px)`;
     const mpTextEl = document.getElementById('mp-text');
     if (mpTextEl) mpTextEl.textContent = `${safeMp} / ${maxMp}`;
+    this.mpBarFillEl.parentElement?.setAttribute('aria-valuenow', String(safeMp));
+    this.mpBarFillEl.parentElement?.setAttribute('aria-valuemax', String(maxMp));
   }
 
   public setCoinCount(count: number): void {

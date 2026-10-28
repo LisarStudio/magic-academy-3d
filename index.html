@@ -72,23 +72,21 @@
 
         <!-- Objectives & Status HUD Top Left -->
         <div id="hud-top-left" class="hud-panel hidden modern-hud imperial-hud">
-          <div class="imperial-health">
+          <div class="imperial-hud-art">
             <img class="imperial-health-frame" src="./assets/ui/hud-vida-imperial.png" alt="" />
-            <div class="imperial-health-fill-clip" aria-hidden="true"><div id="hp-bar-fill" class="imperial-health-fill"></div></div>
+            <div class="imperial-health-fill-clip" role="progressbar" aria-label="Salud" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><div id="hp-bar-fill" class="imperial-health-fill"></div></div>
             <span id="hp-text" class="imperial-health-value">100 / 100</span>
           </div>
-          <div class="status-bars modern-bars imperial-mana">
-            <div class="bar-container mp-bar">
-              <span class="bar-label">MP</span>
-              <div class="bar-bg mp-bg">
-                <div id="mp-bar-fill" class="bar-fill mp-fill" style="width: 100%;">
+          <div class="imperial-mana-frame" aria-label="Puntos de magia">
+            <span class="imperial-mana-label">MP</span>
+            <div class="bar-bg mp-bg imperial-mana-track" role="progressbar" aria-label="Puntos de magia" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+                <div id="mp-bar-fill" class="bar-fill mp-fill" style="width: 100%; clip-path: inset(0 0 0 0 round 999px);">
                   <div class="bar-glimmer"></div>
                 </div>
-                <span id="mp-text" class="bar-text">100 / 100</span>
-              </div>
+                <span id="mp-text" class="bar-text imperial-mana-value">100 / 100</span>
             </div>
-            <div id="life-count" class="life-count imperial-life-count" aria-label="Vidas restantes">♥ ♥ ♥</div>
           </div>
+          <div id="life-count" class="life-count imperial-life-count" aria-label="Vidas restantes">♥ ♥ ♥</div>
         </div>
         
         <div id="objective-container" class="hud-panel hidden">
