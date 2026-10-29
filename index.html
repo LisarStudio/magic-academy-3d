@@ -13,9 +13,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/magic-academy-3d/assets/index-Cf5Gh6FC.js"></script>
+    <script type="module" crossorigin src="/magic-academy-3d/assets/index--DqEH2aG.js"></script>
     <link rel="modulepreload" crossorigin href="/magic-academy-3d/assets/three-vendor-iDlIPeKz.js">
-    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-x-CgE_5P.css">
+    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-F_PT44Hh.css">
   </head>
   <body>
     <div id="app">
@@ -291,21 +291,24 @@
 
           <div id="main-menu" class="main-menu hidden">
             <div class="menu-panel">
-              <img class="wukong-logo" data-menu-logo="assets/ui/01_logo_wukong_reino_celestial.png" alt="La leyenda de Wukong — Los sellos del Reino Celestial" loading="lazy" />
-
               <nav class="menu-actions" aria-label="Opciones principales">
-                <button id="btn-continue" class="menu-button menu-button-primary" type="button" disabled>
-                  <span class="menu-icon" aria-hidden="true">▶</span><span>Continuar</span>
-                </button>
+                <div class="menu-brand-block">
+                  <img class="wukong-logo" data-menu-logo="assets/ui/01_logo_wukong_reino_celestial.png" alt="La leyenda de Wukong — Los sellos del Reino Celestial" loading="lazy" />
+                  <button id="btn-continue" class="menu-button menu-button-primary" type="button" disabled>
+                    <span class="menu-icon" aria-hidden="true">▶</span><span>Continuar</span>
+                  </button>
+                </div>
                 <button id="btn-new-game" class="menu-button" type="button">
                   <span class="menu-icon" aria-hidden="true">★</span><span>Nueva partida</span>
                 </button>
-                <button id="btn-options" class="menu-button" type="button">
-                  <span class="menu-icon" aria-hidden="true">⚙</span><span>Opciones</span>
-                </button>
-                <button id="btn-credits" class="menu-button" type="button">
-                  <span class="menu-icon" aria-hidden="true">▤</span><span>Créditos</span>
-                </button>
+                <div class="menu-secondary-block">
+                  <button id="btn-options" class="menu-button" type="button">
+                    <span class="menu-icon" aria-hidden="true">⚙</span><span>Opciones</span>
+                  </button>
+                  <button id="btn-credits" class="menu-button" type="button">
+                    <span class="menu-icon" aria-hidden="true">▤</span><span>Créditos</span>
+                  </button>
+                </div>
               </nav>
               <p id="menu-loading-status" class="menu-loading-status" aria-live="polite">Preparando el nivel…</p>
             </div>
