@@ -8,7 +8,7 @@ type Pattern = {
   starIndices: number[];
 };
 
-/** Animates existing points in the level star field; no overlay or extra geometry. */
+/** Animates real star points in the level sky; no overlay lines or extra geometry. */
 export class ConstellationSystem {
   private readonly patterns: Pattern[] = [
     { name: 'Casiopea', azimuth: -0.92, altitude: 0.65, points: [[-3.8, 0.9], [-1.9, -0.7], [0, 1.25], [1.9, -0.75], [3.8, 0.85]], starIndices: [] },
@@ -32,8 +32,9 @@ export class ConstellationSystem {
     const right = new THREE.Vector3();
     const skyUp = new THREE.Vector3();
     const target = new THREE.Vector3();
-    const used = new Set<number>();
     const count = Math.floor(starPositions.length / 3);
+    const nodeCount = this.patterns.reduce((sum, pattern) => sum + pattern.points.length, 0);
+    let constellationIndex = Math.max(0, count - nodeCount);
 
     for (const pattern of this.patterns) {
       const radius = 132;
@@ -50,23 +51,12 @@ export class ConstellationSystem {
 
       for (const [x, y] of pattern.points) {
         target.copy(center).addScaledVector(right, x * 4.4).addScaledVector(skyUp, y * 4.4);
-        let bestIndex = -1;
-        let bestDistance = Infinity;
-        for (let i = 0; i < count; i++) {
-          if (used.has(i)) continue;
-          const dx = starPositions[i * 3] - target.x;
-          const dy = starPositions[i * 3 + 1] - target.y;
-          const dz = starPositions[i * 3 + 2] - target.z;
-          const distance = dx * dx + dy * dy + dz * dz;
-          if (distance < bestDistance) {
-            bestDistance = distance;
-            bestIndex = i;
-          }
-        }
-        if (bestIndex >= 0) {
-          pattern.starIndices.push(bestIndex);
-          used.add(bestIndex);
-        }
+        target.setLength(radius);
+        const index = constellationIndex++;
+        starPositions[index * 3] = target.x;
+        starPositions[index * 3 + 1] = target.y;
+        starPositions[index * 3 + 2] = target.z;
+        pattern.starIndices.push(index);
       }
     }
   }

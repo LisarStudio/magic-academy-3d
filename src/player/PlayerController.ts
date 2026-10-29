@@ -344,7 +344,7 @@ export class PlayerController {
     const includeBlocker = (object: THREE.Object3D) => {
       const name = (object.name || '').toLowerCase();
       const mesh = object as THREE.Mesh;
-      if (mesh.isMesh && (name.startsWith('temple_') && name.endsWith('_wall') || name === 'porcelain_guardian_blocker')) {
+      if (mesh.isMesh && (mesh.userData.solidPlayerBlocker === true || name === 'porcelain_guardian_blocker')) {
         object.updateWorldMatrix(true, false);
         this.solidBlockerBounds.push({ mesh, bounds: new THREE.Box3().setFromObject(mesh) });
       }
@@ -422,13 +422,10 @@ export class PlayerController {
         if (this.staffHandMesh && !this.staffHandMesh.visible) this.staffHandMesh.visible = true;
       } else {
         if (this.staffHandMesh && this.staffHandMesh.visible) this.staffHandMesh.visible = false;
-        // Show the back-mounted staff only in the normal close gameplay view.
-        // Wide overview / cinematic cameras used to do the opposite (show it
-        // when farther than 9.5m), which let the rear prop dominate the frame
-        // during distant camera shots. Hide it outside ordinary third-person
-        // framing; attacks still explicitly show the hand-mounted weapon.
-        const cameraDistance = cameraController.camera.position.distanceTo(this.mesh.position);
-        const backStaffShouldShow = cameraDistance < 9.5 && !this.isAttacking;
+        // An equipped staff remains visible on Wukong's back at every camera
+        // distance. Hiding it based on camera distance made it disappear in
+        // overview shots and on some desktop/mobile camera framings.
+        const backStaffShouldShow = !this.isAttacking;
         if (this.staffBackMesh && this.staffBackMesh.visible !== backStaffShouldShow) {
           this.staffBackMesh.visible = backStaffShouldShow;
         }
@@ -914,8 +911,7 @@ export class PlayerController {
     this.attackAura.stop();
     if (this.staffHandMesh) this.staffHandMesh.visible = false;
     if (this.staffBackMesh) {
-      // Never flash the back prop before the camera-distance guard in update().
-      this.staffBackMesh.visible = false;
+      this.staffBackMesh.visible = true;
       // Clean staff on back: NO permanent aura, NO glow, NO floating particles
       if (this.wandEffect && this.wandEffect.wandMesh) {
         this.wandEffect.wandMesh.visible = false;

@@ -85,6 +85,9 @@ export class LevelToyStory {
   private centralTempleObject: THREE.Object3D | null = null;
   private structureColliderCandidates: Array<{ root: THREE.Object3D; center: THREE.Vector3; radius: number; active: boolean }> = [];
   private cloudsUniforms: any = null;
+  private skyAnchor: THREE.Group | null = null;
+  private moonMaterial: THREE.MeshBasicMaterial | null = null;
+  private starMaterial: THREE.PointsMaterial | null = null;
   private lampMoths: LampMothSystem | null = null;
   private constellationSystem: ConstellationSystem | null = null;
   private optionalArchitectureStarted = false;
@@ -284,11 +287,50 @@ export class LevelToyStory {
 
     scene.add(ambientLight, hemiLight, moonLight, rimLight);
 
-    // Create glowing celestial Moon
-    const moonGeo = new THREE.SphereGeometry(6, 24, 24);
-    const moonMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    // Anchor distant sky objects to the level's player position so the dome,
+    // moon and stars remain at a consistent distance throughout exploration.
+    const skyAnchor = new THREE.Group();
+    skyAnchor.name = 'world_sky_anchor';
+    this.skyAnchor = skyAnchor;
+
+    // A small procedural albedo gives the existing moon readable crater
+    // relief without adding another image download or draw call.
+    const moonCanvas = document.createElement('canvas');
+    moonCanvas.width = 512;
+    moonCanvas.height = 256;
+    const moonContext = moonCanvas.getContext('2d');
+    if (moonContext) {
+      moonContext.fillStyle = '#c8d0dc';
+      moonContext.fillRect(0, 0, moonCanvas.width, moonCanvas.height);
+      let moonSeed = 173;
+      const moonRandom = () => {
+        moonSeed = (moonSeed * 16807) % 2147483647;
+        return (moonSeed - 1) / 2147483646;
+      };
+      for (let i = 0; i < 170; i++) {
+        const x = moonRandom() * moonCanvas.width;
+        const y = moonRandom() * moonCanvas.height;
+        const radius = 2 + moonRandom() * 13;
+        const shade = Math.floor(132 + moonRandom() * 73);
+        moonContext.beginPath();
+        moonContext.arc(x, y, radius, 0, Math.PI * 2);
+        moonContext.fillStyle = `rgba(${shade},${shade + 4},${shade + 10},${0.12 + moonRandom() * 0.23})`;
+        moonContext.fill();
+        moonContext.beginPath();
+        moonContext.arc(x - radius * 0.12, y - radius * 0.18, radius * 0.82, Math.PI * 1.05, Math.PI * 1.9);
+        moonContext.strokeStyle = 'rgba(246,249,255,0.18)';
+        moonContext.lineWidth = Math.max(1, radius * 0.12);
+        moonContext.stroke();
+      }
+    }
+    const moonTexture = new THREE.CanvasTexture(moonCanvas);
+    moonTexture.colorSpace = THREE.SRGBColorSpace;
+    const moonGeo = new THREE.SphereGeometry(5.5, 32, 24);
+    const moonMat = new THREE.MeshBasicMaterial({ map: moonTexture, color: 0xe7edf7, transparent: true });
+    this.moonMaterial = moonMat;
     const moonMesh = new THREE.Mesh(moonGeo, moonMat);
-    moonMesh.position.set(40, 80, -60);
+    moonMesh.name = 'world_moon';
+    moonMesh.position.set(-47, 76, -92);
 
     const glowGeo = new THREE.SphereGeometry(7.5, 16, 16);
     const glowMat = new THREE.MeshBasicMaterial({
@@ -300,7 +342,7 @@ export class LevelToyStory {
     });
     const glowMesh = new THREE.Mesh(glowGeo, glowMat);
     moonMesh.add(glowMesh);
-    scene.add(moonMesh);
+    skyAnchor.add(moonMesh);
 
     // Create Procedural AAA Stylized Clouds Dome
     const cloudDomeGeo = new THREE.SphereGeometry(140, 32, 24);
@@ -308,15 +350,14 @@ export class LevelToyStory {
       uniforms: {
         uTime: { value: 0 },
         uSkyColor: { value: new THREE.Color(0x020617) },
-        uCloudColor: { value: new THREE.Color(0x1e293b) },
+        uCloudColor: { value: new THREE.Color(0x52698a) },
         uMoonColor: { value: new THREE.Color(0x93c5fd) },
-        uMoonPos: { value: new THREE.Vector3(40, 80, -60) }
+        uMoonPos: { value: new THREE.Vector3(-47, 76, -92).normalize() }
       },
       vertexShader: `
-        varying vec3 vWorldPosition;
+        varying vec3 vSkyDirection;
         void main() {
-          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-          vWorldPosition = worldPosition.xyz;
+          vSkyDirection = normalize(position);
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
       `,
@@ -327,7 +368,7 @@ export class LevelToyStory {
         uniform vec3 uMoonColor;
         uniform vec3 uMoonPos;
 
-        varying vec3 vWorldPosition;
+        varying vec3 vSkyDirection;
 
         float hash(vec2 p) {
           return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
@@ -351,26 +392,26 @@ export class LevelToyStory {
         }
 
         void main() {
-          vec3 dir = normalize(vWorldPosition);
+          vec3 dir = normalize(vSkyDirection);
           if (dir.y < -0.05) discard;
 
-          vec2 uv1 = dir.xz * 2.5 + vec2(uTime * 0.012, uTime * 0.008);
-          vec2 uv2 = dir.xz * 4.5 + vec2(-uTime * 0.02, uTime * 0.015);
+          vec2 uv1 = dir.xz * 3.1 + vec2(uTime * 0.012, uTime * 0.008);
+          vec2 uv2 = dir.xz * 6.2 + vec2(-uTime * 0.02, uTime * 0.015);
           float broadClouds = cloudNoise(uv1);
           float fineClouds = noise(uv2);
-          float cloudDensity = smoothstep(0.43, 0.72, broadClouds * 0.72 + fineClouds * 0.28);
+          float cloudDensity = smoothstep(0.39, 0.68, broadClouds * 0.76 + fineClouds * 0.24);
           
           float horizonFade = smoothstep(-0.02, 0.3, dir.y);
           cloudDensity *= horizonFade;
 
           vec3 moonDir = normalize(uMoonPos);
           float moonRim = max(0.0, dot(dir, moonDir));
-          float moonGlow = pow(moonRim, 6.0) * cloudDensity * 0.8;
+          float moonGlow = pow(moonRim, 8.0) * 0.34;
 
-          vec3 finalColor = mix(uSkyColor, uCloudColor, cloudDensity * 0.65);
+          vec3 finalColor = mix(uSkyColor, uCloudColor, cloudDensity * 0.82);
           finalColor += uMoonColor * moonGlow;
 
-          gl_FragColor = vec4(finalColor, cloudDensity * 0.55 * horizonFade);
+          gl_FragColor = vec4(finalColor, clamp(cloudDensity * 0.78 + moonGlow * 0.35, 0.0, 0.88) * horizonFade);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }
@@ -381,39 +422,44 @@ export class LevelToyStory {
     });
 
     const skyDome = new THREE.Mesh(cloudDomeGeo, cloudMat);
-    scene.add(skyDome);
+    skyDome.name = 'world_cloud_dome';
+    skyDome.renderOrder = -3;
+    skyAnchor.add(skyDome);
     this.cloudsUniforms = cloudMat.uniforms;
 
     // Constellation points are appended to the ordinary distant star field.
     // The system only brightens these stars; it creates no overlay or lines.
-    const ambientStarCount = 450;
-    const starCount = ambientStarCount;
+    const ambientStarCount = 640;
+    const constellationStarCount = 22;
+    const starCount = ambientStarCount + constellationStarCount;
     const starGeo = new THREE.BufferGeometry();
     const starPositions = new Float32Array(starCount * 3);
     const starColors = new Float32Array(starCount * 3);
 
     for (let i = 0; i < ambientStarCount; i++) {
-      const u = Math.random();
-      const v = Math.random();
-      const theta = u * 2.0 * Math.PI;
-      const phi = Math.acos(2.0 * v - 1.0);
-      
-      const radius = 125 + Math.random() * 15;
-      
-      const x = radius * Math.sin(phi) * Math.cos(theta);
-      const y = Math.abs(radius * Math.sin(phi) * Math.sin(theta)) + 10;
-      const z = radius * Math.cos(phi);
+      const theta = Math.random() * Math.PI * 2;
+      const yFraction = 0.035 + Math.random() * 0.94;
+      const radius = 132 + Math.random() * 7;
+      const ring = Math.sqrt(1 - yFraction * yFraction);
+      const x = radius * ring * Math.cos(theta);
+      const y = radius * yFraction;
+      const z = radius * ring * Math.sin(theta);
       
       starPositions[i * 3] = x;
       starPositions[i * 3 + 1] = y;
       starPositions[i * 3 + 2] = z;
 
-      const intensity = 0.5 + Math.random() * 0.5;
+      const intensity = 0.58 + Math.random() * 0.42;
       starColors[i * 3] = intensity;
       starColors[i * 3 + 1] = intensity;
       starColors[i * 3 + 2] = intensity;
     }
 
+    for (let i = ambientStarCount; i < starCount; i++) {
+      starColors[i * 3] = 0.76;
+      starColors[i * 3 + 1] = 0.76;
+      starColors[i * 3 + 2] = 0.82;
+    }
     this.constellationSystem = new ConstellationSystem(starPositions);
     starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
     const starColorAttribute = new THREE.BufferAttribute(starColors, 3);
@@ -433,7 +479,7 @@ export class LevelToyStory {
     }
     const starMat = new THREE.PointsMaterial({
       map: new THREE.CanvasTexture(starSprite),
-      size: 2.1,
+      size: 2.55,
       vertexColors: true,
       transparent: true,
       opacity: 0.9,
@@ -441,9 +487,13 @@ export class LevelToyStory {
       depthWrite: false,
       alphaTest: 0.02
     });
+    this.starMaterial = starMat;
 
     const starField = new THREE.Points(starGeo, starMat);
-    scene.add(starField);
+    starField.name = 'world_star_field';
+    starField.renderOrder = -2;
+    skyAnchor.add(starField);
+    scene.add(skyAnchor);
 
     // Initialize Dynamic Celestial Day/Night Cycle (Night -> Pre-Dawn -> Dawn -> Sunrise -> Morning)
     this.dayNightCycle = new DayNightCycle(
@@ -557,14 +607,14 @@ export class LevelToyStory {
     }
 
     if (lionResult.status === 'fulfilled') {
-      // Place the guardians on the two marked sides of the entrance landing.
-      // The previous fixed z=-30.4 left them down in front of the steps rather
-      // than beside the upper stair/landing markers.
+      // Place the guardians beside the stair side rails at the marked entrance
+      // locations. Their previous ±(half-width + 3.1 m) offset put them well
+      // outside the marked landing strips and partially off the temple apron.
       const templeScale = this.centralTempleObject?.scale.x ?? 1.4;
       const templeFrontZ = this.centralTempleFloorCenterZ + this.centralTempleFloorDepth * 0.5;
       const stairWidth = Math.max(7.2, Math.min(9.6, 6.1 * templeScale));
-      const guardianZ = templeFrontZ + 0.9;
-      const guardianOffsetX = stairWidth * 0.5 + 3.1;
+      const guardianZ = templeFrontZ + 1.8;
+      const guardianOffsetX = stairWidth * 0.5 + 1.35;
       const guardians = placeAsset(lionResult.value.scene, 'chinese_porcelain_guardian_pair', 7.0, 0, guardianZ, Math.PI);
       guardians.updateMatrixWorld(true);
       const lionNodes = ['Chinese Porcelain Lion.001', 'Chinese Porcelain Lion.002']
@@ -622,6 +672,7 @@ export class LevelToyStory {
         ), invisible);
         blocker.position.set(center.x, bounds.min.y + blockerHeight * 0.5, center.z);
         blocker.name = 'porcelain_guardian_blocker';
+        blocker.userData.solidPlayerBlocker = true;
         lionColliders.add(blocker);
       });
       this.sceneManager.scene.add(lionColliders);
@@ -698,6 +749,41 @@ export class LevelToyStory {
 
   }
 
+  /** Compile the crypt's already-loaded materials during the loading screen,
+   * so its first hidden-room frame does not trigger GPU shader work on entry. */
+  public async precompileCuriosityCrypt(
+    renderer: THREE.WebGLRenderer,
+    camera: THREE.Camera
+  ): Promise<void> {
+    const warmGroup = new THREE.Group();
+    warmGroup.name = 'curiosity_crypt_shader_warmup';
+    this.sceneManager.scene.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      let parent: THREE.Object3D | null = mesh;
+      let belongsToCrypt = false;
+      while (parent && parent !== this.sceneManager.scene) {
+        if (parent.name.startsWith('curiosity_')) {
+          belongsToCrypt = true;
+          break;
+        }
+        parent = parent.parent;
+      }
+      if (!belongsToCrypt) return;
+      const shaderProxy = mesh.clone(false);
+      shaderProxy.frustumCulled = false;
+      warmGroup.add(shaderProxy);
+    });
+
+    if (warmGroup.children.length === 0) return;
+    try {
+      await renderer.compileAsync(warmGroup, camera, this.sceneManager.scene);
+      console.info(`[CuriosityVault] Precompiled ${warmGroup.children.length} crypt mesh materials during loading.`);
+    } finally {
+      warmGroup.clear();
+    }
+  }
+
   /** Use a small set of architectural proxies instead of per-frame raycasts
    * against the 100k-triangle pavilion render mesh. */
   private addPavilionCollision(asset: THREE.Object3D): void {
@@ -741,6 +827,7 @@ export class LevelToyStory {
     const addWall = (name: string, sx: number, sz: number, x: number, y: number, z: number) => {
       const wall = new THREE.Mesh(new THREE.BoxGeometry(sx, wallHeight, sz), material);
       wall.name = name;
+      wall.userData.solidPlayerBlocker = true;
       wall.frustumCulled = false;
       wall.position.set(x, y, z);
       proxy.add(wall);
@@ -3485,6 +3572,7 @@ export class LevelToyStory {
   public update(delta: number, playerPos: THREE.Vector3): void {
     this.syncStructureColliders(playerPos);
     this.loadOptionalArchitectureNearPlayer(playerPos);
+    if (this.skyAnchor) this.skyAnchor.position.copy(playerPos);
     const interactionHud = (window as any).gameInstance?.hud;
     interactionHud?.beginInteractionFrame();
     this.updateCanopyTrial(delta, playerPos);
@@ -3492,7 +3580,14 @@ export class LevelToyStory {
     if (this.dayNightCycle) {
       this.dayNightCycle.update(delta, playerPos);
     }
-    this.constellationSystem?.update(delta, this.dayNightCycle?.phase ?? 0);
+    const skyPhase = this.dayNightCycle?.phase ?? 0.05;
+    const nightAmount = Math.max(
+      1 - THREE.MathUtils.smoothstep(skyPhase, 0.23, 0.64),
+      THREE.MathUtils.smoothstep(skyPhase, 0.87, 0.99)
+    );
+    if (this.moonMaterial) this.moonMaterial.opacity = nightAmount;
+    if (this.starMaterial) this.starMaterial.opacity = 0.9 * nightAmount;
+    this.constellationSystem?.update(delta, skyPhase);
 
     if (this.grassUniforms) {
       this.grassUniforms.uTime.value = performance.now() / 1000.0;
@@ -3947,7 +4042,7 @@ export class LevelToyStory {
     let screenIsFadedOut = false;
     try {
       if (hud) {
-        await hud.fadeScreenOut(180);
+        await hud.fadeScreenOut(100);
         screenIsFadedOut = true;
       }
       if (entering) {
@@ -3961,7 +4056,7 @@ export class LevelToyStory {
       this.player.velocity.set(0, 0, 0);
       cameraController?.snapBehindTarget();
       if (hud) {
-        await hud.fadeScreenIn(220);
+        await hud.fadeScreenIn(140);
         screenIsFadedOut = false;
       }
       this.subtitleSystem.show(
@@ -3971,7 +4066,7 @@ export class LevelToyStory {
     } catch (error) {
       console.error('[CuriosityVault] Entrance transition failed.', error);
     } finally {
-      if (hud && screenIsFadedOut) await hud.fadeScreenIn(120);
+      if (hud && screenIsFadedOut) await hud.fadeScreenIn(100);
       this.player.isControlsLocked = false;
       this.player.isMovementLocked = false;
       this.player.velocity.set(0, 0, 0);

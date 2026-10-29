@@ -242,6 +242,15 @@ export class Game {
       if (this.player.staffHandMesh) this.player.staffHandMesh.visible = handStaffWasVisible;
     }
 
+    // The underground room exists from level initialization but is out of the
+    // starting camera view. Compile its materials now on both desktop and
+    // mobile instead of letting the first cave visit pay that GPU cost.
+    try {
+      await this.level01.precompileCuriosityCrypt(this.sceneManager.renderer, this.sceneManager.camera);
+    } catch (error) {
+      console.warn('[Game] Crypt shader warmup failed; the prepared cave remains available.', error);
+    }
+
     // 6. Bind Player & HUD Status Callbacks
     this.player.onHealthChange = (hp, maxHp) => this.hud.setHealth(hp, maxHp);
     this.hud.setLives(this.player.lives);
