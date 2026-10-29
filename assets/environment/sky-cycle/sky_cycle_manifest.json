@@ -1,0 +1,52 @@
+{
+  "name": "Lisar Studio — Wukong Fantasy Sky LDR Set",
+  "image_type": "PNG RGB, 8-bit, panorama 2:1, artistic LDR (NOT true HDRI / EXR)",
+  "projection_warning": "Review visible seams, sky zenith/nadir and orientation in actual renderer; images are concept-grade, not calibrated equirectangular HDR radiance.",
+  "atlas": {
+    "noche": "wukong_sky_noche.png",
+    "amanecer": "wukong_sky_amanecer.png",
+    "dia": "wukong_sky_dia.png",
+    "atardecer": "wukong_sky_atardecer.png"
+  },
+  "default_cycle_minutes": 48,
+  "phases": [
+    {
+      "key": "noche",
+      "start_hour": 20,
+      "end_hour": 5,
+      "light_color": "#6F91C3",
+      "stars": "visible",
+      "lantern_emission": 1.0
+    },
+    {
+      "key": "amanecer",
+      "start_hour": 5,
+      "end_hour": 8,
+      "light_color": "#F5AE80",
+      "stars": "fade_out",
+      "lantern_emission": 0.35
+    },
+    {
+      "key": "dia",
+      "start_hour": 8,
+      "end_hour": 17,
+      "light_color": "#FFF0D0",
+      "stars": "hidden",
+      "lantern_emission": 0.1
+    },
+    {
+      "key": "atardecer",
+      "start_hour": 17,
+      "end_hour": 20,
+      "light_color": "#FFAA76",
+      "stars": "fade_in",
+      "lantern_emission": 0.65
+    }
+  ],
+  "notes": [
+    "Keep existing code-based constellations, never bake constellation lines into textures.",
+    "Do not use these PNGs as physically valid HDR environment lighting.",
+    "Avoid using a second skybox per frame for mobile; shader crossfade or lightweight staged transitions.",
+    "Test horizon and panorama seam before shipping."
+  ]
+}
