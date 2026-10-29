@@ -384,13 +384,10 @@ export class LevelToyStory {
     scene.add(skyDome);
     this.cloudsUniforms = cloudMat.uniforms;
 
-    // Star-forming constellation members are inserted into this same field;
-    // their animated lines therefore join actual sky points in fixed world
-    // coordinates instead of a camera-facing overlay.
-    this.constellationSystem = new ConstellationSystem(scene);
+    // Constellation points are appended to the ordinary distant star field.
+    // The system only brightens these stars; it creates no overlay or lines.
     const ambientStarCount = 450;
-    const constellationStarCount = this.constellationSystem.skyStarPositions.length / 3;
-    const starCount = ambientStarCount + constellationStarCount;
+    const starCount = ambientStarCount;
     const starGeo = new THREE.BufferGeometry();
     const starPositions = new Float32Array(starCount * 3);
     const starColors = new Float32Array(starCount * 3);
@@ -417,14 +414,11 @@ export class LevelToyStory {
       starColors[i * 3 + 2] = intensity;
     }
 
-    starPositions.set(this.constellationSystem.skyStarPositions, ambientStarCount * 3);
-    for (let i = ambientStarCount; i < starCount; i++) {
-      starColors[i * 3] = 0.66;
-      starColors[i * 3 + 1] = 0.86;
-      starColors[i * 3 + 2] = 1.0;
-    }
+    this.constellationSystem = new ConstellationSystem(starPositions);
     starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
-    starGeo.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
+    const starColorAttribute = new THREE.BufferAttribute(starColors, 3);
+    starGeo.setAttribute('color', starColorAttribute);
+    this.constellationSystem.attachStarColors(starColorAttribute);
 
     const starSprite = document.createElement('canvas');
     starSprite.width = starSprite.height = 32;

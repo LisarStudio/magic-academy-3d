@@ -1,140 +1,128 @@
 import * as THREE from 'three';
 
-type SkyPattern = { name: string; points: [number, number][]; azimuth: number; altitude: number };
+type Pattern = {
+  name: string;
+  azimuth: number;
+  altitude: number;
+  points: Array<[number, number]>;
+  starIndices: number[];
+};
 
-/** Connects fixed members of the actual world star field into occasional constellations. */
+/** Animates existing points in the level star field; no overlay or extra geometry. */
 export class ConstellationSystem {
-  private readonly group = new THREE.Group();
-  private readonly stars: THREE.Points;
-  private readonly lines: THREE.LineSegments;
-  private elapsed = 0;
-  private elapsedSinceChange = 0;
-  private patternDuration = 10;
-  private activeIndex = -1;
-  private activeLineStart = 0;
-  private activeLineCount = 0;
-  private readonly starMaterial: THREE.PointsMaterial;
-  private readonly lineMaterial = new THREE.LineBasicMaterial({
-    color: 0x9be3ff, transparent: true, opacity: 0, depthTest: true,
-    depthWrite: false, toneMapped: false
-  });
-
-  // Positions are fixed in the level sky. Cassiopeia is included; every pattern
-  // shares its points with the general starfield below, rather than following
-  // the camera or drawing a HUD-shaped overlay in front of the player.
-  private readonly patterns: SkyPattern[] = [
-    { name: 'Cassiopeia', azimuth: -0.92, altitude: 0.65, points: [[-3.8, 0.9], [-1.9, -0.7], [0, 1.25], [1.9, -0.75], [3.8, 0.85]] },
-    { name: 'Cisne', azimuth: 0.05, altitude: 0.75, points: [[0, 3], [0, 1], [-1.8, -0.2], [0, 1], [1.8, -0.2], [0, 1], [0, -2.7]] },
-    { name: 'Osa Menor', azimuth: 1.15, altitude: 0.82, points: [[-1.8, 2.1], [0, 2.7], [2.0, 2.0], [1.9, 0], [1.6, -2.0], [-0.2, -2.4], [-1.8, -1.2]] },
-    { name: 'Lira', azimuth: 2.35, altitude: 0.68, points: [[-1.5, 1.7], [1.5, 1.7], [0, 0], [-1.2, -2.0], [1.2, -2.0], [0, 0]] },
+  private readonly patterns: Pattern[] = [
+    { name: 'Casiopea', azimuth: -0.92, altitude: 0.65, points: [[-3.8, 0.9], [-1.9, -0.7], [0, 1.25], [1.9, -0.75], [3.8, 0.85]], starIndices: [] },
+    { name: 'Cisne', azimuth: 0.05, altitude: 0.75, points: [[0, 3], [0, 1], [-1.8, -0.2], [1.8, -0.2], [0, -2.7]], starIndices: [] },
+    { name: 'Osa Menor', azimuth: 1.15, altitude: 0.82, points: [[-1.8, 2.1], [0, 2.7], [2.0, 2.0], [1.9, 0], [1.6, -2.0], [-0.2, -2.4], [-1.8, -1.2]], starIndices: [] },
+    { name: 'Lira', azimuth: 2.35, altitude: 0.68, points: [[-1.5, 1.7], [1.5, 1.7], [0, 0], [-1.2, -2.0], [1.2, -2.0]], starIndices: [] },
   ];
 
-  /** World positions appended to the normal star points so lines meet those same stars. */
-  public readonly skyStarPositions: Float32Array;
+  private colors: THREE.BufferAttribute | null = null;
+  private baseColors: number[] = [];
+  private elapsed = 0;
+  private sinceChange = 0;
+  private duration = 27;
+  private activeIndex = 0;
 
-  constructor(scene: THREE.Scene) {
-    const starPositions: number[] = [];
-    const linePositions: number[] = [];
-    const lineRanges: Array<{ start: number; count: number }> = [];
+  /** Resolve each constellation node to a distinct star already in the sky. */
+  constructor(starPositions: Float32Array) {
     const up = new THREE.Vector3(0, 1, 0);
     const center = new THREE.Vector3();
     const towardLevel = new THREE.Vector3();
     const right = new THREE.Vector3();
     const skyUp = new THREE.Vector3();
-    const previous = new THREE.Vector3();
-    const current = new THREE.Vector3();
+    const target = new THREE.Vector3();
+    const used = new Set<number>();
+    const count = Math.floor(starPositions.length / 3);
 
     for (const pattern of this.patterns) {
-      const horizontal = Math.cos(pattern.azimuth);
-      const depth = Math.sin(pattern.azimuth);
-      center.set(horizontal * 105, Math.sin(pattern.altitude) * 58 + 18, depth * 105);
+      const radius = 132;
+      const horizontal = Math.cos(pattern.altitude) * radius;
+      center.set(
+        Math.cos(pattern.azimuth) * horizontal,
+        Math.sin(pattern.altitude) * radius + 10,
+        Math.sin(pattern.azimuth) * horizontal
+      );
+      center.setLength(radius);
       towardLevel.copy(center).negate().normalize();
       right.crossVectors(up, towardLevel).normalize();
       skyUp.crossVectors(towardLevel, right).normalize();
-      const lineStart = linePositions.length / 3;
-      let first = true;
-      for (const [px, py] of pattern.points) {
-        current.copy(center).addScaledVector(right, px * 1.75).addScaledVector(skyUp, py * 1.75);
-        starPositions.push(current.x, current.y, current.z);
-        if (!first) linePositions.push(previous.x, previous.y, previous.z, current.x, current.y, current.z);
-        previous.copy(current);
-        first = false;
-      }
-      lineRanges.push({ start: lineStart, count: (pattern.points.length - 1) * 2 });
-    }
-    this.skyStarPositions = new Float32Array(starPositions);
 
-    const glow = document.createElement('canvas');
-    glow.width = glow.height = 32;
-    const ctx = glow.getContext('2d');
-    if (ctx) {
-      const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 15);
-      gradient.addColorStop(0, 'rgba(255,255,255,1)');
-      gradient.addColorStop(0.3, 'rgba(255,255,255,.8)');
-      gradient.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, 32, 32);
+      for (const [x, y] of pattern.points) {
+        target.copy(center).addScaledVector(right, x * 4.4).addScaledVector(skyUp, y * 4.4);
+        let bestIndex = -1;
+        let bestDistance = Infinity;
+        for (let i = 0; i < count; i++) {
+          if (used.has(i)) continue;
+          const dx = starPositions[i * 3] - target.x;
+          const dy = starPositions[i * 3 + 1] - target.y;
+          const dz = starPositions[i * 3 + 2] - target.z;
+          const distance = dx * dx + dy * dy + dz * dz;
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            bestIndex = i;
+          }
+        }
+        if (bestIndex >= 0) {
+          pattern.starIndices.push(bestIndex);
+          used.add(bestIndex);
+        }
+      }
     }
-    this.starMaterial = new THREE.PointsMaterial({
-      color: 0xc9edff, map: new THREE.CanvasTexture(glow), size: 8,
-      sizeAttenuation: false, transparent: true, opacity: 0,
-      depthTest: true, depthWrite: false, toneMapped: false, alphaTest: 0.015
-    });
-    const starGeometry = new THREE.BufferGeometry();
-    starGeometry.setAttribute('position', new THREE.BufferAttribute(this.skyStarPositions, 3));
-    const lineGeometry = new THREE.BufferGeometry();
-    lineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
-    this.stars = new THREE.Points(starGeometry, this.starMaterial);
-    this.lines = new THREE.LineSegments(lineGeometry, this.lineMaterial);
-    this.stars.frustumCulled = this.lines.frustumCulled = false;
-    this.group.name = 'world_anchored_night_constellations';
-    this.group.visible = false;
-    this.group.add(this.lines, this.stars);
-    scene.add(this.group);
-    this.lineRanges = lineRanges;
-    this.selectPattern(0);
   }
 
-  private readonly lineRanges: Array<{ start: number; count: number }>;
+  public attachStarColors(attribute: THREE.BufferAttribute): void {
+    this.colors = attribute;
+    const values = attribute.array as Float32Array;
+    this.baseColors = [];
+    for (const pattern of this.patterns) {
+      for (const index of pattern.starIndices) {
+        const offset = index * 3;
+        this.baseColors[offset] = values[offset];
+        this.baseColors[offset + 1] = values[offset + 1];
+        this.baseColors[offset + 2] = values[offset + 2];
+      }
+    }
+  }
 
   public update(delta: number, phase: number): void {
+    if (!this.colors) return;
     const night = phase < 0.24 || phase > 0.95;
-    this.group.visible = night;
     if (!night) {
-      this.setOpacity(0);
+      this.elapsed = this.sinceChange = 0;
+      this.write(0);
       return;
     }
+
     this.elapsed += Math.min(delta, 0.1);
-    this.elapsedSinceChange += delta;
-    if (this.elapsedSinceChange >= this.patternDuration) {
+    this.sinceChange += delta;
+    if (this.sinceChange >= this.duration) {
       let next = Math.floor(Math.random() * this.patterns.length);
       if (next === this.activeIndex) next = (next + 1) % this.patterns.length;
-      this.selectPattern(next);
-      this.elapsed = 0;
-      this.elapsedSinceChange = 0;
-      this.patternDuration = 22 + Math.random() * 14;
+      this.activeIndex = next;
+      this.elapsed = this.sinceChange = 0;
+      this.duration = 23 + Math.random() * 12;
     }
-
-    const fadeIn = THREE.MathUtils.smoothstep(this.elapsed, 0.2, 1.8);
-    const fadeOut = 1 - THREE.MathUtils.smoothstep(this.elapsedSinceChange, this.patternDuration - 2.8, this.patternDuration);
-    const twinkle = 0.86 + Math.sin(this.elapsed * 2.1) * 0.08;
-    this.setOpacity(fadeIn * fadeOut * twinkle);
-    const tracedVertices = Math.ceil(this.activeLineCount * THREE.MathUtils.smoothstep(this.elapsed, 0.3, 3.0));
-    this.lines.geometry.setDrawRange(this.activeLineStart, tracedVertices);
+    const fade = 1 - THREE.MathUtils.smoothstep(this.sinceChange, this.duration - 3.2, this.duration);
+    this.write(fade);
   }
 
-  private selectPattern(index: number): void {
-    this.activeIndex = index;
-    const range = this.lineRanges[index];
-    this.activeLineStart = range.start;
-    this.activeLineCount = range.count;
-    this.lines.geometry.setDrawRange(range.start, 0);
-    this.elapsed = 0;
-    this.elapsedSinceChange = 0;
-  }
-
-  private setOpacity(opacity: number): void {
-    this.starMaterial.opacity = opacity;
-    this.lineMaterial.opacity = opacity * 0.56;
+  private write(envelope: number): void {
+    if (!this.colors) return;
+    const values = this.colors.array as Float32Array;
+    this.patterns.forEach((pattern, patternIndex) => {
+      pattern.starIndices.forEach((starIndex, nodeIndex) => {
+        const offset = starIndex * 3;
+        const revealAt = nodeIndex * 0.34;
+        const reveal = patternIndex === this.activeIndex
+          ? THREE.MathUtils.smoothstep(this.elapsed, revealAt, revealAt + 0.65) * envelope
+          : 0;
+        const glow = reveal * (0.78 + 0.22 * Math.sin(this.elapsed * 2.2 + nodeIndex * 1.4));
+        values[offset] = THREE.MathUtils.lerp(this.baseColors[offset], 0.98, glow);
+        values[offset + 1] = THREE.MathUtils.lerp(this.baseColors[offset + 1], 0.91, glow);
+        values[offset + 2] = THREE.MathUtils.lerp(this.baseColors[offset + 2], 1, glow);
+      });
+    });
+    this.colors.needsUpdate = true;
   }
 }
