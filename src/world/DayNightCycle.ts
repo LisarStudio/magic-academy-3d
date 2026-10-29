@@ -38,8 +38,8 @@ export class DayNightCycle {
   private tempColor2 = new THREE.Color();
   private tempColor3 = new THREE.Color();
   private tempColor4 = new THREE.Color();
-  private cloudDayColor = new THREE.Color(0xffebd2);
-  private cloudNightColor = new THREE.Color(0x354060);
+  private cloudDayColor = new THREE.Color(0xffd9b7);
+  private cloudNightColor = new THREE.Color(0x52698a);
   private readonly nightLights = new Map<THREE.PointLight, number>();
 
   // Phase Color Palettes

@@ -34,6 +34,8 @@ export class SceneManager {
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(renderPixelRatio());
+    // Keep GLTF albedo textures and CSS-authored colors consistent across WebGL platforms.
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     // Dynamic shadow maps are expensive on phones; keep ambient and rim lighting.
     this.renderer.shadowMap.enabled = !isMobile;
     this.renderer.shadowMap.type = isMobile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;

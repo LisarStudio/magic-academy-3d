@@ -45,6 +45,7 @@ export class TextureGenerator {
     }
 
     const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     return texture;
@@ -123,6 +124,7 @@ export class TextureGenerator {
     }
 
     const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     return texture;
@@ -169,6 +171,7 @@ export class TextureGenerator {
     }
 
     const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     return texture;
@@ -195,6 +198,7 @@ export class TextureGenerator {
     }
 
     const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
     return texture;
   }
 
@@ -218,6 +222,7 @@ export class TextureGenerator {
     ctx.strokeRect(16, 16, 224, 224);
 
     const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     return texture;
@@ -248,6 +253,7 @@ export class TextureGenerator {
     ctx.strokeRect(20, 40, 216, 432);
 
     const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
     return texture;
   }
 
@@ -278,6 +284,7 @@ export class TextureGenerator {
     ctx.fillText(name, 128, 220);
 
     const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
     return texture;
   }
 }

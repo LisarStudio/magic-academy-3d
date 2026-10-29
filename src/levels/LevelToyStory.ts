@@ -216,6 +216,7 @@ export class LevelToyStory {
 
   public async init(): Promise<void> {
     this.buildToyStoryLevelGeometry();
+    this.buildMountainBackdrop();
     this.powerOrbSystem = new PowerOrbSystem(this.sceneManager.scene, (count) => {
       const equipment = (window as any).gameInstance?.hud?.equipmentViewer;
       equipment?.refreshProgression();
@@ -233,10 +234,12 @@ export class LevelToyStory {
     scene.background = new THREE.Color(0x020617);
     scene.fog = new THREE.FogExp2(0x020617, 0.007);
 
-    const ambientLight = new THREE.AmbientLight(0x1e293b, 0.5);
-    const hemiLight = new THREE.HemisphereLight(0x1e293b, 0x020617, 0.4);
+    // Broad moonlit fill keeps authored temple textures legible without
+    // adding per-object lights or another shadow pass.
+    const ambientLight = new THREE.AmbientLight(0x61749a, 0.72);
+    const hemiLight = new THREE.HemisphereLight(0x9bb9e4, 0x20271d, 0.72);
     
-    const moonLight = new THREE.DirectionalLight(0xb4d3fe, 1.2);
+    const moonLight = new THREE.DirectionalLight(0xc5dcff, 1.45);
     moonLight.position.set(40, 80, -60);
     // SceneManager's main directional light already provides the gameplay
     // shadow map. A second 2048² shadow pass doubled mobile shadow work without
@@ -252,16 +255,16 @@ export class LevelToyStory {
     moonLight.shadow.bias = -0.0003;
 
     // Warm accent lights for depth & contrast (Castle entrance + Torch warmth)
-    const entranceTorch = new THREE.PointLight(0xffa544, 2.5, 18);
+    const entranceTorch = new THREE.PointLight(0xffad5c, 2.8, 20);
     entranceTorch.position.set(0, 3.0, -25.5);
     scene.add(entranceTorch);
 
-    const entranceTorch2 = new THREE.PointLight(0xffa544, 2.5, 18);
+    const entranceTorch2 = new THREE.PointLight(0xffad5c, 2.8, 20);
     entranceTorch2.position.set(-6, 3.0, -25.5);
     scene.add(entranceTorch2);
 
     // Subtle Rim Light from rear for separation of Wukong and Castle silhouettes
-    const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.2);
+    const rimLight = new THREE.DirectionalLight(0x55c5e8, 0.9);
     rimLight.position.set(-30, 20, -80);
 
     scene.add(ambientLight, hemiLight, moonLight, rimLight);
@@ -326,15 +329,10 @@ export class LevelToyStory {
           return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
         }
 
-        float fbm(vec2 p) {
-          float v = 0.0;
-          float a = 0.5;
-          for (int i = 0; i < 4; i++) {
-            v += a * noise(p);
-            p *= 2.0;
-            a *= 0.5;
-          }
-          return v;
+        // Three octaves define broad cloud masses; a second single sample
+        // adds edge detail. This halves sky fragment noise work vs. two FBMs.
+        float cloudNoise(vec2 p) {
+          return noise(p) * 0.58 + noise(p * 2.03) * 0.29 + noise(p * 4.07) * 0.13;
         }
 
         void main() {
@@ -342,12 +340,10 @@ export class LevelToyStory {
           if (dir.y < -0.05) discard;
 
           vec2 uv1 = dir.xz * 2.5 + vec2(uTime * 0.012, uTime * 0.008);
-          float n1 = fbm(uv1);
-
           vec2 uv2 = dir.xz * 4.5 + vec2(-uTime * 0.02, uTime * 0.015);
-          float n2 = fbm(uv2);
-
-          float cloudDensity = smoothstep(0.45, 0.75, n1 * 0.65 + n2 * 0.35);
+          float broadClouds = cloudNoise(uv1);
+          float fineClouds = noise(uv2);
+          float cloudDensity = smoothstep(0.43, 0.72, broadClouds * 0.72 + fineClouds * 0.28);
           
           float horizonFade = smoothstep(-0.02, 0.3, dir.y);
           cloudDensity *= horizonFade;
@@ -360,6 +356,8 @@ export class LevelToyStory {
           finalColor += uMoonColor * moonGlow;
 
           gl_FragColor = vec4(finalColor, cloudDensity * 0.55 * horizonFade);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
         }
       `,
       side: THREE.BackSide,
@@ -681,7 +679,7 @@ export class LevelToyStory {
 
     // Existing lantern fill, tuned up to reveal the interior timber and floor
     // at night without adding shadow-casting lights or a global color filter.
-    const warmFill = new THREE.PointLight(0xffc98c, 4.8, 30, 2);
+    const warmFill = new THREE.PointLight(0xffc98c, 5.6, 34, 2);
     warmFill.position.set(0, this.getTerrainHeight(0, -34) + 6.2, -34);
     warmFill.castShadow = false;
     scene.add(warmFill);
@@ -1416,6 +1414,7 @@ export class LevelToyStory {
 
     // Generate Textures
     const stoneTex = TextureGenerator.createStoneWallTexture();
+    stoneTex.colorSpace = THREE.SRGBColorSpace;
     stoneTex.repeat.set(4, 4);
     const stoneMat = new THREE.MeshStandardMaterial({ map: stoneTex, roughness: 0.65, bumpScale: 0.04 });
     const groundBaseMat = new THREE.MeshStandardMaterial({ color: 0x526b32, roughness: 0.98 }); // Warm green distant ground LOD
@@ -1723,6 +1722,42 @@ export class LevelToyStory {
     // Configure collision objects in controllers
     this.cameraController.setCollisionObjects(this.levelColliders);
     this.player.setColliders(this.levelColliders);
+  }
+
+  /** Low-poly horizon silhouettes add depth with one draw call and no gameplay collision. */
+  private buildMountainBackdrop(): void {
+    const scene = this.sceneManager.scene;
+    const profiles = [
+      { x: -116, z: -112, width: 32, height: 31, depth: 23 },
+      { x: -82, z: -121, width: 27, height: 22, depth: 20 },
+      { x: -47, z: -125, width: 34, height: 28, depth: 24 },
+      { x: -8, z: -130, width: 27, height: 19, depth: 22 },
+      { x: 30, z: -126, width: 38, height: 32, depth: 24 },
+      { x: 71, z: -119, width: 27, height: 23, depth: 20 },
+      { x: 109, z: -111, width: 34, height: 29, depth: 24 },
+    ];
+    const geometry = new THREE.ConeGeometry(1, 1, 6, 1);
+    const material = new THREE.MeshBasicMaterial({ color: 0x17243d, fog: true });
+    const mountains = new THREE.InstancedMesh(geometry, material, profiles.length);
+    mountains.name = 'distant_low_poly_mountain_silhouettes';
+    mountains.frustumCulled = true;
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const scale = new THREE.Vector3();
+    const rotation = new THREE.Quaternion();
+    profiles.forEach((profile, index) => {
+      const groundX = THREE.MathUtils.clamp(profile.x, -78, 78);
+      const groundY = this.getTerrainHeight(groundX, -119);
+      position.set(profile.x, groundY + profile.height * 0.5 - 1.8, profile.z);
+      scale.set(profile.width, profile.height, profile.depth);
+      rotation.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, (index % 2 ? 0.18 : -0.12));
+      matrix.compose(position, rotation, scale);
+      mountains.setMatrixAt(index, matrix);
+    });
+    mountains.instanceMatrix.needsUpdate = true;
+    mountains.castShadow = false;
+    mountains.receiveShadow = false;
+    scene.add(mountains);
   }
 
   private buildSecretLavaRoute(scene: THREE.Scene): void {
@@ -2369,7 +2404,7 @@ export class LevelToyStory {
     pathMap.wrapS = pathMap.wrapT = THREE.RepeatWrapping;
     pathMap.repeat.set(2.4, 1);
     pathMap.needsUpdate = true;
-    const pathMaterial = new THREE.MeshStandardMaterial({ map: pathMap, color: 0xbdb8ad, roughness: 0.82, metalness: 0.02 });
+    const pathMaterial = new THREE.MeshStandardMaterial({ map: pathMap, color: 0xc9c0ae, roughness: 0.72, metalness: 0.025 });
 
     // Continuous, terrain-conforming stone ribbon. The same surface is the
     // collider, replacing the old overlapping 4.2m square slabs that left
@@ -2414,7 +2449,9 @@ export class LevelToyStory {
       return centers;
     };
     const addRouteLanterns = (centers: THREE.Vector3[], color: number) => {
-      for (let i = 0; i < centers.length; i += 8) {
+      // Preserve the lantern rhythm while halving route point lights; lantern
+      // meshes remain unchanged and share the light pools along each path.
+      for (let i = 0; i < centers.length; i += 16) {
         const point = centers[i];
         const before = centers[Math.max(0, i - 1)];
         const after = centers[Math.min(centers.length - 1, i + 1)];
