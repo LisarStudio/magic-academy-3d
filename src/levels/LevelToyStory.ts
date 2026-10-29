@@ -76,6 +76,8 @@ export class LevelToyStory {
   private grassUniforms: any = null;
   private grassSectors: THREE.InstancedMesh[] = [];
   private terrainGroundMaterial: THREE.MeshStandardMaterial | null = null;
+  /** World-space center lines and safe widths for every authored stone route. */
+  private vegetationPathMasks: Array<{ points: THREE.Vector2[]; halfWidth: number }> = [];
   private grassLoadStarted = false;
   private grassLoadPromise: Promise<void> | null = null;
   private grassCullElapsed = 0;
@@ -146,6 +148,19 @@ export class LevelToyStory {
     const lavaDistance = Math.hypot(x - 66, z + 105);
     const basinBlend = 1 - THREE.MathUtils.smoothstep(lavaDistance, 15, 36);
     return THREE.MathUtils.lerp(naturalHeight, -13.2, basinBlend);
+  }
+
+  private isVegetationNearPath(x: number, z: number, clearance = 1.8): boolean {
+    for (const path of this.vegetationPathMasks) {
+      for (let i = 0; i < path.points.length - 1; i++) {
+        const a = path.points[i], b = path.points[i + 1];
+        const dx = b.x - a.x, dz = b.y - a.y;
+        const lengthSq = dx * dx + dz * dz || 1;
+        const t = THREE.MathUtils.clamp(((x - a.x) * dx + (z - a.y) * dz) / lengthSq, 0, 1);
+        if (Math.hypot(x - (a.x + dx * t), z - (a.y + dz * t)) < path.halfWidth + clearance) return true;
+      }
+    }
+    return false;
   }
 
   /** Applies the same quality choice as the renderer to vegetation LOD ranges. */
@@ -236,8 +251,8 @@ export class LevelToyStory {
 
     // Broad moonlit fill keeps authored temple textures legible without
     // adding per-object lights or another shadow pass.
-    const ambientLight = new THREE.AmbientLight(0x61749a, 0.72);
-    const hemiLight = new THREE.HemisphereLight(0x9bb9e4, 0x20271d, 0.72);
+    const ambientLight = new THREE.AmbientLight(0x7183a6, 0.78);
+    const hemiLight = new THREE.HemisphereLight(0xa8c4e8, 0x272b25, 0.78);
     
     const moonLight = new THREE.DirectionalLight(0xc5dcff, 1.45);
     moonLight.position.set(40, 80, -60);
@@ -1121,25 +1136,28 @@ export class LevelToyStory {
     groundTexture.wrapT = THREE.RepeatWrapping;
     // The same Blender grass albedo provides a subtle continuous carpet under
     // the instanced blades, hiding distance-LOD cutoffs without a new asset.
-    groundTexture.repeat.set(150, 150);
+    // Avoid the tiny, high-contrast repeat that read as a noisy checkerboard.
+    groundTexture.repeat.set(58, 58);
     groundTexture.anisotropy = Math.min(4, this.sceneManager.renderer.capabilities.getMaxAnisotropy());
     groundTexture.needsUpdate = true;
     this.terrainGroundMaterial.map = groundTexture;
-    this.terrainGroundMaterial.color.setHex(0x526b32);
+    this.terrainGroundMaterial.color.setHex(0x657442);
     this.terrainGroundMaterial.needsUpdate = true;
   }
 
   private async buildOriginalGrass(sourceRoot: THREE.Object3D, lodRoot: THREE.Object3D): Promise<void> {
     const sourceNames = ['Grass_Short', 'Grass_Lush', 'Grass_Tall'] as const;
-    const weights = [0.43, 0.43, 0.14];
-    const scaleRanges: Array<[number, number]> = [[0.9, 1.0], [0.7, 2.3], [0.8, 1.6]];
+    const weights = [0.55, 0.39, 0.06];
+    // Keep the source clumps recognizable and under Wukong's ankles. The old
+    // 2.3x lush range made some clumps several times taller and wider.
+    const scaleRanges: Array<[number, number]> = [[0.78, 1.04], [0.68, 1.08], [0.48, 0.82]];
     this.player.visualModel.updateMatrixWorld(true);
     const characterBounds = new THREE.Box3().setFromObject(this.player.visualModel);
     const characterHeight = Math.max(0.1, characterBounds.max.y - characterBounds.min.y);
     // The 1.7 m player scale is measured from the loaded Wukong model. Keep
     // the original blade silhouette and texture, but cap its tallest tip at
     // ankle height instead of uniformly shrinking the clump's width.
-    const ankleGrassHeight = Math.min(0.18, characterHeight * 0.105);
+    const ankleGrassHeight = Math.min(0.12, characterHeight * 0.072);
     this.grassUniforms = {
       uTime: { value: 0 },
       uPlayerPos: { value: new THREE.Vector3(999, 999, 999) },
@@ -1160,39 +1178,6 @@ export class LevelToyStory {
         if (!mesh && (child as THREE.Mesh).isMesh) mesh = child as THREE.Mesh;
       });
       return mesh;
-    };
-
-    const makeDistanceGeometry = (source: THREE.BufferGeometry, keepRatio: number): THREE.BufferGeometry => {
-      const geometry = source.clone();
-      const index = source.index;
-      if (!index || index.count < 12) return geometry;
-      const stride = Math.max(2, Math.round(1 / keepRatio));
-      const sourceGroups = source.groups.length
-        ? source.groups
-        : [{ start: 0, count: index.count, materialIndex: 0 }];
-      const selected: number[] = [];
-      const groups: Array<{ start: number; count: number; materialIndex: number }> = [];
-      for (const group of sourceGroups) {
-        const groupStart = selected.length;
-        const end = Math.min(group.start + group.count, index.count);
-        let face = 0;
-        for (let offset = group.start; offset + 2 < end; offset += 3, face++) {
-          // Stagger each material group's samples to retain a distributed
-          // silhouette without running a runtime simplifier.
-          if (face % stride !== (groups.length % stride)) continue;
-          selected.push(index.getX(offset), index.getX(offset + 1), index.getX(offset + 2));
-        }
-        if (selected.length > groupStart) {
-          groups.push({ start: groupStart, count: selected.length - groupStart, materialIndex: group.materialIndex ?? 0 });
-        }
-      }
-      if (selected.length < 3) return geometry;
-      geometry.setIndex(new THREE.BufferAttribute(Uint32Array.from(selected), 1));
-      geometry.clearGroups();
-      if (source.groups.length) groups.forEach((group) => geometry.addGroup(group.start, group.count, group.materialIndex));
-      geometry.computeBoundingBox();
-      geometry.computeBoundingSphere();
-      return geometry;
     };
 
     const templates = sourceNames.map((name) => {
@@ -1232,9 +1217,11 @@ export class LevelToyStory {
       lodGeometry.scale(fullSize.x / Math.max(lodSize.x, 0.001), fullSize.y / Math.max(lodSize.y, 0.001), fullSize.z / Math.max(lodSize.z, 0.001));
       lodGeometry.computeBoundingBox();
       lodGeometry.computeBoundingSphere();
-      const lowGeometry = makeDistanceGeometry(lodGeometry, lodSource ? 0.18 : 0.04);
-      const mediumGeometry = makeDistanceGeometry(lodGeometry, lodSource ? 0.45 : 0.08);
-      const farGeometry = makeDistanceGeometry(lodGeometry, lodSource ? 0.035 : 0.01);
+      // The supplied Blender LOD is already authored for silhouette quality.
+      // Striding arbitrary triangles through it created broken, spiky blades.
+      const lowGeometry = lodGeometry;
+      const mediumGeometry = lodGeometry;
+      const farGeometry = lodGeometry;
 
       const sourceMaterials = Array.isArray(source.material) ? source.material : [source.material];
       const materials = sourceMaterials.map((original) => {
@@ -1289,15 +1276,6 @@ export class LevelToyStory {
     const normal = new THREE.Vector3();
     const slopeRotation = new THREE.Quaternion();
     const yawRotation = new THREE.Quaternion();
-    const segmentDistance = (x: number, z: number, ax: number, az: number, bx: number, bz: number) => {
-      const dx = bx - ax, dz = bz - az;
-      const t = THREE.MathUtils.clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
-      return Math.hypot(x - (ax + dx * t), z - (az + dz * t));
-    };
-    const roads = [
-      [[-12, -35], [-22, -45], [-35, -58], [-48, -68], [-55, -75]],
-      [[12, -35], [22, -45], [35, -58], [48, -68], [55, -75]],
-    ];
     const excluded = (x: number, z: number): boolean => {
       if (Math.abs(x) < 14.2 && Math.abs(z + 40) < 14.2) return true;
       if (Math.hypot(x - 45, z + 40) < 16.2) return true;
@@ -1305,12 +1283,9 @@ export class LevelToyStory {
       if (Math.hypot(x - 20, z - 24) < 7.5) return true;
       if (Math.hypot(x + 30, z - 10) < 9 || Math.hypot(x + 45, z + 40) < 9) return true;
       if (Math.hypot(x - this.secretLavaCenter.x, z - this.secretLavaCenter.y) < 16.8) return true;
-      if (segmentDistance(x, z, 49, -84, 58, -95) < 2.4) return true;
+      if (Math.hypot(x - 53.5, z + 89.5) < 3.2) return true;
       if (Math.abs(x) < 4.2 && z > -27 && z < 17) return true;
-      if (Math.abs(z + 75) < 2.8 && Math.abs(x) < 56) return true;
-      for (const road of roads) for (let i = 0; i < road.length - 1; i++) {
-        if (segmentDistance(x, z, road[i][0], road[i][1], road[i + 1][0], road[i + 1][1]) < 3.15) return true;
-      }
+      if (this.isVegetationNearPath(x, z, 1.9)) return true;
       return false;
     };
 
@@ -1323,7 +1298,7 @@ export class LevelToyStory {
     // instancing keeps the distribution compact on the GPU.
     // Source clumps contain many fine blades already. A wider mobile sampling
     // interval retains the carpet while reducing instance preparation and draws.
-    const spacing = isMobile ? 0.84 : 0.56;
+    const spacing = isMobile ? 0.92 : 0.72;
     // Offset the X grid so the normal spawn point lies near a cell center,
     // rather than exactly on a seam that would activate two full-detail tiles.
     const xSectorOrigin = -90;
@@ -1466,19 +1441,38 @@ export class LevelToyStory {
         const positions: [number, number, number][] = [
           [-45, 0, 15], [-55, 0, -20], [-60, 0, -55], [55, 0, 10], [60, 0, -20],
           [-25, 0, -90], [25, 0, -90], [-40, 0, -80], [45, 0, -80], [0, 0, -105],
-          [-35, 0, -10], [35, 0, -15], [-20, 0, -75], [20, 0, -75], [-50, 0, -45]
+          [-35, 0, -10], [35, 0, -15], [-20, 0, -84], [20, 0, -84], [-50, 0, -45]
         ];
+        // The paths are built synchronously before these async assets resolve.
+        // Do not let a trunk or its collider intrude into a walkable corridor.
+        const safePositions = positions.filter(([x, , z]) => !this.isVegetationNearPath(x, z, 3.2));
         const dummy = new THREE.Object3D();
         const seed = 81271;
         let randomSeed = seed;
         const rand = () => { randomSeed = (randomSeed * 1664525 + 1013904223) >>> 0; return randomSeed / 4294967296; };
         for (const mesh of meshes) {
           const relative = rootInverse.clone().multiply(mesh.matrixWorld);
-          const instances = new THREE.InstancedMesh(mesh.geometry, mesh.material, positions.length);
+          const treeMaterials = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).map((sourceMaterial) => {
+            const material = sourceMaterial.clone() as THREE.MeshStandardMaterial;
+            const looksLikeFoliage = /leaf|leaves|foliage|needle|hoja|foliage/i.test(material.name)
+              || (material.color.r > 0.68 && material.color.g > 0.68 && material.color.b > 0.68);
+            if (looksLikeFoliage) {
+              // Keep the supplied pine albedo/map, but remove its near-white,
+              // glossy render values that blew out the crown under moonlight.
+              material.color.multiply(new THREE.Color(0.48, 0.78, 0.48));
+              material.roughness = 0.82;
+              material.metalness = 0;
+              material.emissive.set(0x071208);
+              material.emissiveIntensity = 0.08;
+            }
+            return material;
+          });
+          const treeMaterial = Array.isArray(mesh.material) ? treeMaterials : treeMaterials[0];
+          const instances = new THREE.InstancedMesh(mesh.geometry, treeMaterial, safePositions.length);
           instances.name = 'original_pinus_tree_instances';
           instances.castShadow = false;
           instances.receiveShadow = false;
-          positions.forEach(([x, , z], i) => {
+          safePositions.forEach(([x, , z], i) => {
             const ground = this.getTerrainHeight(x, z);
             const scale = 0.78 + rand() * 0.15;
             dummy.position.set(x, ground, z);
@@ -1486,7 +1480,7 @@ export class LevelToyStory {
             dummy.scale.setScalar(scale);
             dummy.updateMatrix();
             instances.setMatrixAt(i, dummy.matrix.multiply(relative));
-            if (mesh.material instanceof THREE.Material && mesh.material.transparent) instances.setColorAt(i, new THREE.Color().setHSL(0.25 + rand() * 0.08, 0.3, 0.76 + rand() * 0.12));
+            if (mesh.material instanceof THREE.Material && mesh.material.transparent) instances.setColorAt(i, new THREE.Color().setHSL(0.29 + rand() * 0.04, 0.42, 0.38 + rand() * 0.08));
           });
           instances.instanceMatrix.needsUpdate = true;
           if (instances.instanceColor) instances.instanceColor.needsUpdate = true;
@@ -1494,7 +1488,7 @@ export class LevelToyStory {
           instances.computeBoundingSphere();
           scene.add(instances);
         }
-        positions.forEach(([x, , z]) => {
+        safePositions.forEach(([x, , z]) => {
           const terrainY = this.getTerrainHeight(x, z);
           const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 2.2, 7), treeColliderMaterial);
           trunk.name = 'pinus_trunk_collision';
@@ -1520,12 +1514,18 @@ export class LevelToyStory {
           [28, 0, -12], [32, 0, -18], [-15, 0, -85], [15, 0, -85],
           [-8, 0, -22], [8, 0, -22], [-14, 0, -12], [14, 0, -12]
         ];
-        const instances = new THREE.InstancedMesh(shrubGeometry, bushSource.material, bushPositions.length);
+        const safeBushPositions = bushPositions.filter(([x, , z]) => !this.isVegetationNearPath(x, z, 2.2));
+        const shrubMaterial = (Array.isArray(bushSource.material) ? bushSource.material : [bushSource.material]).map((m) => {
+          const material = m.clone() as THREE.MeshStandardMaterial;
+          material.roughness = Math.max(material.roughness, 0.76);
+          return material;
+        });
+        const instances = new THREE.InstancedMesh(shrubGeometry, Array.isArray(bushSource.material) ? shrubMaterial : shrubMaterial[0], safeBushPositions.length);
         instances.name = 'original_chinese_croton_instances';
         const dummy = new THREE.Object3D();
         let seed = 32471;
         const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-        bushPositions.forEach(([x, , z], i) => {
+        safeBushPositions.forEach(([x, , z], i) => {
           const scale = 0.72 + rand() * 0.22;
           dummy.position.set(x, this.getTerrainHeight(x, z), z);
           dummy.rotation.set(0, rand() * Math.PI * 2, 0);
@@ -1562,21 +1562,25 @@ export class LevelToyStory {
           const instancedDaisies = new THREE.InstancedMesh((daisyMesh as THREE.Mesh).geometry, (daisyMesh as THREE.Mesh).material, totalDaisies);
           const dummy = new THREE.Object3D();
 
+          let seed = 41357;
+          const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
           let idx = 0;
           daisyPatches.forEach((patch) => {
             for (let i = 0; i < patch.count; i++) {
-              const angle = Math.random() * Math.PI * 2;
-              const dist = Math.random() * 6.0;
+              const angle = rand() * Math.PI * 2;
+              const dist = rand() * 6.0;
               const x = patch.center[0] + Math.cos(angle) * dist;
               const z = patch.center[1] + Math.sin(angle) * dist;
-              dummy.position.set(x, 0.05, z);
-              dummy.rotation.y = Math.random() * Math.PI * 2;
-              const s = 0.8 + Math.random() * 0.5;
+              if (this.isVegetationNearPath(x, z, 0.45) || Math.hypot(x, z + 40) < 17 || Math.hypot(x - 45, z + 40) < 17) continue;
+              dummy.position.set(x, this.getTerrainHeight(x, z) + 0.025, z);
+              dummy.rotation.y = rand() * Math.PI * 2;
+              const s = 0.8 + rand() * 0.5;
               dummy.scale.set(s, s, s);
               dummy.updateMatrix();
               instancedDaisies.setMatrixAt(idx++, dummy.matrix);
             }
           });
+          instancedDaisies.count = idx;
           instancedDaisies.instanceMatrix.needsUpdate = true;
           scene.add(instancedDaisies);
         }
@@ -1600,21 +1604,25 @@ export class LevelToyStory {
           const instancedButtercups = new THREE.InstancedMesh((buttercupMesh as THREE.Mesh).geometry, (buttercupMesh as THREE.Mesh).material, totalButtercups);
           const dummy = new THREE.Object3D();
 
+          let seed = 91817;
+          const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
           let idx = 0;
           buttercupPatches.forEach((patch) => {
             for (let i = 0; i < patch.count; i++) {
-              const angle = Math.random() * Math.PI * 2;
-              const dist = Math.random() * 5.0;
+              const angle = rand() * Math.PI * 2;
+              const dist = rand() * 5.0;
               const x = patch.center[0] + Math.cos(angle) * dist;
               const z = patch.center[1] + Math.sin(angle) * dist;
-              dummy.position.set(x, 0.05, z);
-              dummy.rotation.y = Math.random() * Math.PI * 2;
-              const s = 0.8 + Math.random() * 0.5;
+              if (this.isVegetationNearPath(x, z, 0.45) || Math.hypot(x, z + 40) < 17 || Math.hypot(x - 45, z + 40) < 17) continue;
+              dummy.position.set(x, this.getTerrainHeight(x, z) + 0.025, z);
+              dummy.rotation.y = rand() * Math.PI * 2;
+              const s = 0.8 + rand() * 0.5;
               dummy.scale.set(s, s, s);
               dummy.updateMatrix();
               instancedButtercups.setMatrixAt(idx++, dummy.matrix);
             }
           });
+          instancedButtercups.count = idx;
           instancedButtercups.instanceMatrix.needsUpdate = true;
           scene.add(instancedButtercups);
         }
@@ -1727,34 +1735,38 @@ export class LevelToyStory {
   /** Low-poly horizon silhouettes add depth with one draw call and no gameplay collision. */
   private buildMountainBackdrop(): void {
     const scene = this.sceneManager.scene;
-    const profiles = [
-      { x: -116, z: -112, width: 32, height: 31, depth: 23 },
-      { x: -82, z: -121, width: 27, height: 22, depth: 20 },
-      { x: -47, z: -125, width: 34, height: 28, depth: 24 },
-      { x: -8, z: -130, width: 27, height: 19, depth: 22 },
-      { x: 30, z: -126, width: 38, height: 32, depth: 24 },
-      { x: 71, z: -119, width: 27, height: 23, depth: 20 },
-      { x: 109, z: -111, width: 34, height: 29, depth: 24 },
-    ];
-    const geometry = new THREE.ConeGeometry(1, 1, 6, 1);
-    const material = new THREE.MeshBasicMaterial({ color: 0x17243d, fog: true });
-    const mountains = new THREE.InstancedMesh(geometry, material, profiles.length);
-    mountains.name = 'distant_low_poly_mountain_silhouettes';
+    // One continuous, irregular ridge silhouette replaces the repeated cone
+    // profiles that read as a row of flat triangles. It is visual-only.
+    const ridge = new THREE.Shape();
+    ridge.moveTo(-148, -12);
+    ridge.lineTo(-148, 5);
+    ridge.lineTo(-132, 10);
+    ridge.lineTo(-119, 8);
+    ridge.lineTo(-105, 18);
+    ridge.lineTo(-91, 12);
+    ridge.lineTo(-74, 15);
+    ridge.lineTo(-58, 7);
+    ridge.lineTo(-43, 11);
+    ridge.lineTo(-24, 23);
+    ridge.lineTo(-9, 13);
+    ridge.lineTo(7, 17);
+    ridge.lineTo(24, 8);
+    ridge.lineTo(43, 12);
+    ridge.lineTo(59, 25);
+    ridge.lineTo(74, 15);
+    ridge.lineTo(92, 18);
+    ridge.lineTo(107, 9);
+    ridge.lineTo(123, 14);
+    ridge.lineTo(139, 7);
+    ridge.lineTo(148, 11);
+    ridge.lineTo(148, -12);
+    ridge.closePath();
+    const geometry = new THREE.ShapeGeometry(ridge, 2);
+    const material = new THREE.MeshBasicMaterial({ color: 0x17243d, fog: true, side: THREE.DoubleSide });
+    const mountains = new THREE.Mesh(geometry, material);
+    mountains.name = 'distant_irregular_mountain_ridge';
+    mountains.position.set(0, 0, -137);
     mountains.frustumCulled = true;
-    const matrix = new THREE.Matrix4();
-    const position = new THREE.Vector3();
-    const scale = new THREE.Vector3();
-    const rotation = new THREE.Quaternion();
-    profiles.forEach((profile, index) => {
-      const groundX = THREE.MathUtils.clamp(profile.x, -78, 78);
-      const groundY = this.getTerrainHeight(groundX, -119);
-      position.set(profile.x, groundY + profile.height * 0.5 - 1.8, profile.z);
-      scale.set(profile.width, profile.height, profile.depth);
-      rotation.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, (index % 2 ? 0.18 : -0.12));
-      matrix.compose(position, rotation, scale);
-      mountains.setMatrixAt(index, matrix);
-    });
-    mountains.instanceMatrix.needsUpdate = true;
     mountains.castShadow = false;
     mountains.receiveShadow = false;
     scene.add(mountains);
@@ -2412,6 +2424,7 @@ export class LevelToyStory {
     const addStonePath = (name: string, waypoints: THREE.Vector3[], width: number): THREE.Vector3[] => {
       const curve = new THREE.CatmullRomCurve3(waypoints, false, 'centripetal');
       const sampleCount = Math.max(12, Math.ceil(curve.getLength() / 1.45));
+      const maskPoints: THREE.Vector2[] = [];
       const vertices: number[] = [];
       const uvs: number[] = [];
       const indices: number[] = [];
@@ -2421,6 +2434,7 @@ export class LevelToyStory {
       for (let i = 0; i <= sampleCount; i++) {
         const t = i / sampleCount;
         const point = curve.getPointAt(t);
+        maskPoints.push(new THREE.Vector2(point.x, point.z));
         point.y = this.getTerrainHeight(point.x, point.z) + 0.055;
         const tangent = curve.getTangentAt(t).setY(0).normalize();
         const sideX = -tangent.z * width * 0.5;
@@ -2446,6 +2460,7 @@ export class LevelToyStory {
       path.castShadow = false;
       scene.add(path);
       this.levelColliders.push(path);
+      this.vegetationPathMasks.push({ points: maskPoints, halfWidth: width * 0.5 });
       return centers;
     };
     const addRouteLanterns = (centers: THREE.Vector3[], color: number) => {
@@ -3505,13 +3520,15 @@ export class LevelToyStory {
     this.powerOrbSystem?.update(delta, playerPos);
     this.grassCullElapsed -= delta;
     if (this.grassCullElapsed <= 0) {
-      // Keep original source clumps at close range and switch to derived,
-      // topology-reduced copies in the middle distance. The ground material
-      // carries coverage beyond the vegetation range.
+      // Keep authored Blender LODs at all distances; the ground material
+      // carries coverage beyond the vegetation range. Avoid broken topology.
       const isMobile = isLowPowerDevice();
       const qualityIndex = this.grassQuality === 0.65 ? 0 : this.grassQuality === 1 ? 2 : 1;
-      const midDistances = isMobile ? [8, 10, 12] : [14, 20, 30];
-      const farDistances = isMobile ? [20, 26, 34] : [48, 65, 90];
+      const midDistances = isMobile ? [7, 9, 12] : [12, 16, 24];
+      // Vegetation beyond these ranges is represented by the textured ground.
+      // Keeping distant instanced blades alive was the dominant avoidable
+      // foliage cost, especially in the high desktop profile.
+      const farDistances = isMobile ? [18, 23, 30] : [36, 48, 62];
       const lodDistance = midDistances[qualityIndex];
       const farDistance = farDistances[qualityIndex];
       // The 20 m sectors contain hundreds of clumps. Applying the complete
