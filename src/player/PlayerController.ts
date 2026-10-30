@@ -10,6 +10,8 @@ import { type WeaponType, WEAPON_DEFINITIONS } from './WeaponConfig';
 export const PLAYER_NAME = 'LISAR';
 
 export class PlayerController {
+  /** Pickups may extend the current stock; keep the cap centralized for balance tuning. */
+  public static readonly MAX_LIVES = 99;
   public mesh: THREE.Group;
   public animationController: AnimationController;
   public wandEffect: WandEffect;
@@ -24,10 +26,16 @@ export class PlayerController {
   /** Tracks the top of the current airborne arc so short jumps don't use the
    * supplied free-fall pose. That clip is reserved for genuinely high drops. */
   private airApexY = 0;
+  private doubleJumpPivot: THREE.Group | null = null;
+  private visualModelBasePosition = new THREE.Vector3();
   private dodgeCooldown = 0;
   private dodgeInvulnerability = 0;
   private readonly dodgeDirection = new THREE.Vector3();
   private damageFlinchRemaining = 0;
+  private isDying = false;
+  private snakeAlertRemaining = 0;
+  private snakeAlertElapsed = 0;
+  private snakeAlertSprite: THREE.Sprite | null = null;
   private defaultVisualRotationZ = 0;
   private footstepClock = 0;
 
@@ -72,7 +80,6 @@ export class PlayerController {
   public isAttacking = false;
   
   public visualModel: THREE.Object3D;
-  private defaultVisualRotationX = 0;
 
   public isArmed(): boolean {
     return this.equippedWeapon !== null;
@@ -115,15 +122,17 @@ export class PlayerController {
     this.unequipWeapon();
   }
 
-  constructor(modelOrGroup: THREE.Group, animationController: AnimationController) {
+  constructor(modelOrGroup: THREE.Group, animationController: AnimationController, staffModel: THREE.Group | null = null) {
     this.mesh = modelOrGroup;
     // The AssetManager returns a Group containing the actual playerModel as its first child
     this.visualModel = this.mesh.children.find(c => c.type === 'Group') || this.mesh.children[0] || this.mesh;
-    this.defaultVisualRotationX = this.visualModel.rotation.x;
     this.defaultVisualRotationZ = this.visualModel.rotation.z;
+    this.createDoubleJumpPivot();
     
     this.animationController = animationController;
+    this.staffModelTemplate = staffModel;
     this.mesh.position.set(0, 0, 0);
+    this.createSnakeAlertSprite();
 
     // Create the WandEffect glow (light + particles).
     this.wandEffect = new WandEffect();
@@ -136,8 +145,86 @@ export class PlayerController {
     this.setStaffVisibility(false);
   }
 
+  /**
+   * The imported character's visual root is placed at the feet. Wrap it in a
+   * pivot located at the rig's pelvis so the double-jump spin turns around the
+   * body's center instead of sweeping the whole character around the feet.
+   * The wrapper is neutral at rest, preserving the existing bind pose.
+   */
+  private createDoubleJumpPivot(): void {
+    const model = this.visualModel;
+    const parent = model.parent;
+    if (!parent || parent === model) {
+      this.visualModelBasePosition.copy(model.position);
+      return;
+    }
+
+    this.mesh.updateMatrixWorld(true);
+    const pivotInParent = new THREE.Vector3();
+    let hipsBone: THREE.Object3D | null = null;
+    this.mesh.traverse((object) => {
+      if (hipsBone || !(object as THREE.Bone).isBone) return;
+      if (/(hips|pelvis)/i.test(object.name)) hipsBone = object;
+    });
+
+    if (hipsBone) {
+      (hipsBone as THREE.Object3D).getWorldPosition(pivotInParent);
+      parent.worldToLocal(pivotInParent);
+    } else {
+      // Fallback for alternate rigs: use the vertical midpoint of the visible
+      // character bounds, converted into the visual root's parent space.
+      const bounds = new THREE.Box3().setFromObject(model);
+      const size = bounds.getSize(new THREE.Vector3());
+      pivotInParent.set(
+        (bounds.min.x + bounds.max.x) * 0.5,
+        bounds.min.y + size.y * 0.52,
+        (bounds.min.z + bounds.max.z) * 0.5
+      );
+      parent.worldToLocal(pivotInParent);
+    }
+
+    const originalPosition = model.position.clone();
+    const pivot = new THREE.Group();
+    pivot.name = 'wukong_double_jump_hip_pivot';
+    pivot.position.copy(pivotInParent);
+    parent.add(pivot);
+    parent.remove(model);
+    model.position.copy(originalPosition).sub(pivotInParent);
+    pivot.add(model);
+
+    this.doubleJumpPivot = pivot;
+    this.visualModelBasePosition.copy(model.position);
+  }
+
   public staffBackMesh: THREE.Group | null = null;
   public staffHandMesh: THREE.Group | null = null;
+  private staffModelTemplate: THREE.Group | null = null;
+
+  private createStaffVisual(name: string, scale: number): THREE.Group {
+    const mount = new THREE.Group();
+    mount.name = name;
+    if (this.staffModelTemplate) {
+      // Object3D.clone shares immutable geometry and materials, so the back
+      // and hand sockets do not duplicate GPU buffers or parse the GLB again.
+      const authoredStaff = this.staffModelTemplate.clone(true);
+      authoredStaff.name = `${name}_baculo_glb`;
+      authoredStaff.scale.multiplyScalar(scale);
+      authoredStaff.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (mesh.isMesh) {
+          mesh.castShadow = false;
+          mesh.receiveShadow = false;
+        }
+      });
+      mount.add(authoredStaff);
+    } else {
+      // Keep a known-safe fallback if the optional weapon asset cannot load.
+      const fallback = StaffFactory.createStaff(`${name}_fallback`);
+      fallback.scale.setScalar(scale);
+      mount.add(fallback);
+    }
+    return mount;
+  }
 
   public initStaffMeshes(): void {
     // 1. Permanently hide any embedded Vaculo from player.glb
@@ -154,76 +241,50 @@ export class PlayerController {
 
     const def = WEAPON_DEFINITIONS.STAFF;
 
-    // 2. Find Spine bone for back mounting (targeting Spine2 / Chest upper torso)
-    let spineBone: THREE.Object3D | null = null;
+    // Find the hand for the weapon grip. The back socket is attached in model-root
+    // space below so it cannot inherit an arbitrary spine-bone orientation.
     let rightHandBone: THREE.Object3D | null = null;
 
     this.mesh.traverse((child) => {
       const n = child.name.toLowerCase();
-      if (def.backAttachment.boneNameSubstrings.some(sub => n.includes(sub)) && !spineBone) {
-        spineBone = child;
-      }
       if (def.handAttachment.boneNameSubstrings.some(sub => n.includes(sub)) && !n.includes('thumb') && !n.includes('index') && !n.includes('middle') && !n.includes('ring') && !n.includes('pinky')) {
         rightHandBone = child;
       }
     });
-
-    if (!spineBone) {
-      this.mesh.traverse((child) => {
-        const n = child.name.toLowerCase();
-        if (def.backAttachment.fallbackBoneNames.some(sub => n.includes(sub)) && !spineBone) {
-          spineBone = child;
-        }
-      });
-    }
-
-    const spineName = spineBone ? (spineBone as THREE.Object3D).name : 'root';
     const handName = rightHandBone ? (rightHandBone as THREE.Object3D).name : 'root';
-    console.log(`[PlayerController] Binding staff sockets — Spine: ${spineName}, RightHand: ${handName}`);
+    console.log(`[PlayerController] Binding staff sockets — Back: model root, RightHand: ${handName}`);
 
-    // 3. Create Staff Back Mesh (slanted diagonally across Wukong's back: lower-left to upper-right [/])
+    // 3. Create the carried weapon on a dedicated model-root back socket.
     // 100% CLEAN PHYSICAL PBR — NO aura, NO particles, NO emissive glow
-    const backStaff = StaffFactory.createStaff('staff_on_back');
+    const backStaff = this.createStaffVisual('staff_on_back', 0.62);
     backStaff.visible = false;
     this.staffBackMesh = backStaff;
 
     const backSocket = new THREE.Group();
     backSocket.name = 'wukong_sacred_staff_back_socket';
-    // Keep the carried staff deliberately compact in third person. The source
-    // rig is centimeter based, while StaffFactory is authored in metres.
-    const backMountScale = 0.38;
-    backStaff.scale.setScalar(backMountScale);
+    // The GLB template is normalized to 1.22 m. Carry it at ~0.76 m and
+    // cancel the player visual-root scale exactly once.
+    backStaff.scale.setScalar(1);
     backStaff.position.set(0, 0, 0);
     backStaff.rotation.set(0, 0, 0);
     backSocket.add(backStaff);
 
-    if (spineBone) {
-      this.mesh.updateMatrixWorld(true);
-      const spineWorldScale = new THREE.Vector3();
-      (spineBone as THREE.Object3D).getWorldScale(spineWorldScale);
-      // Cancel only the character's uniform model scale once. The socket then
-      // applies its metre offsets and orientation independently of the mesh.
-      const inverseUniformScale = spineWorldScale.x > 0.00001 ? 1 / spineWorldScale.x : 1;
-      backStaff.scale.multiplyScalar(inverseUniformScale);
-      backSocket.position.copy(def.backAttachment.position).divide(spineWorldScale);
-      backSocket.rotation.copy(def.backAttachment.rotation);
-      (spineBone as THREE.Object3D).add(backSocket);
-    } else {
-      const rootWorldScale = new THREE.Vector3();
-      this.mesh.getWorldScale(rootWorldScale);
-      const safeRootScale = new THREE.Vector3(
-        Math.max(rootWorldScale.x, 0.00001),
-        Math.max(rootWorldScale.y, 0.00001),
-        Math.max(rootWorldScale.z, 0.00001)
-      );
-      backStaff.scale.multiplyScalar(1 / safeRootScale.x);
-      backSocket.position.set(0.035 / safeRootScale.x, 1.05 / safeRootScale.y, -0.24 / safeRootScale.z);
-      backSocket.rotation.copy(def.backAttachment.rotation);
-      this.mesh.add(backSocket);
-    }
+    this.mesh.updateMatrixWorld(true);
+    this.visualModel.updateMatrixWorld(true);
+    const modelWorldScale = new THREE.Vector3();
+    this.visualModel.getWorldScale(modelWorldScale);
+    const safeModelScale = new THREE.Vector3(
+      Math.max(modelWorldScale.x, 0.00001),
+      Math.max(modelWorldScale.y, 0.00001),
+      Math.max(modelWorldScale.z, 0.00001)
+    );
+    backStaff.scale.set(1 / safeModelScale.x, 1 / safeModelScale.y, 1 / safeModelScale.z);
+    backSocket.position.copy(def.backAttachment.position).divide(safeModelScale);
+    backSocket.rotation.copy(def.backAttachment.rotation);
+    this.visualModel.add(backSocket);
 
     // 4. Create Staff Hand Mesh (firmly gripped in right hand for attacking)
-    const handStaff = StaffFactory.createStaff('staff_in_hand');
+    const handStaff = this.createStaffVisual('staff_in_hand', 0.82);
     handStaff.visible = false;
     this.staffHandMesh = handStaff;
 
@@ -304,38 +365,97 @@ export class PlayerController {
   public onLivesChange?: (lives: number) => void;
   public onGameOver?: () => void;
 
+  public grantLife(amount = 1): boolean {
+    const nextLives = Math.min(PlayerController.MAX_LIVES, this.lives + Math.max(0, Math.floor(amount)));
+    if (nextLives === this.lives) return false;
+    this.lives = nextLives;
+    this.onLivesChange?.(this.lives);
+    return true;
+  }
+
   public takeDamage(amount: number, respawnPos?: THREE.Vector3): void {
-    if (this.isInvulnerable || this.isControlsLocked || this.isMovementLocked) {
+    if (this.isDying || this.isInvulnerable || this.isControlsLocked || this.isMovementLocked) {
       // Immune while performing TakeItem animation or watching cinematics
       return;
     }
-    this.damageFlinchRemaining = 0.28;
     this.health = Math.max(0, this.health - amount);
     this.onHealthChange?.(this.health, this.maxHealth);
 
     if (this.health <= 0) {
       this.lives = Math.max(0, this.lives - 1);
       this.onLivesChange?.(this.lives);
-      if (this.lives === 0) {
-        this.health = 0;
+      this.isDying = true;
+      this.isControlsLocked = true;
+      this.isMovementLocked = true;
+      this.isAttacking = false;
+      this.velocity.set(0, 0, 0);
+      this.animationController.playDeathAnimation(() => {
+        this.isDying = false;
+        if (this.lives === 0) {
+          this.onGameOver?.();
+          return;
+        }
+        // Preserve existing life/checkpoint rules; only sequence the supplied death clip first.
+        this.health = this.maxHealth;
+        this.mana = this.maxMana;
         this.onHealthChange?.(this.health, this.maxHealth);
-        this.isControlsLocked = true;
-        this.isMovementLocked = true;
-        this.velocity.set(0, 0, 0);
-        this.onGameOver?.();
-        return;
-      }
-      // Keep the existing checkpoint respawn, now consuming one of three lives.
-      this.health = this.maxHealth;
-      this.mana = this.maxMana;
-      this.onHealthChange?.(this.health, this.maxHealth);
-      this.onManaChange?.(this.mana, this.maxMana);
-
-      if (respawnPos) {
-        this.mesh.position.copy(respawnPos);
-      }
-      this.onRespawn?.();
+        this.onManaChange?.(this.mana, this.maxMana);
+        if (respawnPos) this.mesh.position.copy(respawnPos);
+        this.onRespawn?.();
+        this.isControlsLocked = false;
+        this.isMovementLocked = false;
+        this.forceIdle();
+      });
+      return;
     }
+    this.damageFlinchRemaining = 0.28;
+    this.animationController.playImpactReaction();
+  }
+
+  public reactToSnakeAmbush(onReactionStart: () => void = () => {}): void {
+    this.animationController.playSnakeSurprise(() => {
+      this.showSnakeAlert();
+      onReactionStart();
+    });
+  }
+
+  private createSnakeAlertSprite(): void {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128; canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.shadowColor = '#ff7a22'; ctx.shadowBlur = 18;
+    ctx.fillStyle = '#24120b'; ctx.strokeStyle = '#ffe08a'; ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.roundRect(28, 10, 72, 108, 32); ctx.fill(); ctx.stroke();
+    ctx.shadowBlur = 0; ctx.fillStyle = '#ffcf55'; ctx.font = 'bold 88px system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('!', 64, 62);
+    ctx.fillStyle = '#ff8b36'; ctx.beginPath(); ctx.arc(64, 100, 6, 0, Math.PI * 2); ctx.fill();
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false, opacity: 0 });
+    this.snakeAlertSprite = new THREE.Sprite(material);
+    this.snakeAlertSprite.name = 'snake_surprise_alert';
+    this.snakeAlertSprite.position.set(0, 2.35, 0);
+    this.snakeAlertSprite.scale.set(0.42, 0.42, 1);
+    this.snakeAlertSprite.visible = false;
+    this.mesh.add(this.snakeAlertSprite);
+  }
+
+  private showSnakeAlert(): void {
+    if (!this.snakeAlertSprite) return;
+    this.snakeAlertRemaining = 0.9;
+    this.snakeAlertElapsed = 0;
+    this.snakeAlertSprite.visible = true;
+    this.snakeAlertSprite.material.opacity = 1;
+  }
+
+  private updateSnakeAlert(delta: number): void {
+    if (!this.snakeAlertSprite || this.snakeAlertRemaining <= 0) return;
+    this.snakeAlertElapsed += delta;
+    this.snakeAlertRemaining = Math.max(0, this.snakeAlertRemaining - delta);
+    this.snakeAlertSprite.position.y = 2.35 + Math.sin(this.snakeAlertElapsed * 8) * 0.08;
+    this.snakeAlertSprite.material.opacity = Math.min(1, this.snakeAlertRemaining * 2.2);
+    if (this.snakeAlertRemaining === 0) this.snakeAlertSprite.visible = false;
   }
 
   public setColliders(colliders: THREE.Object3D[]): void {
@@ -371,6 +491,14 @@ export class PlayerController {
   private static readonly TEMP_NORM = new THREE.Vector3();
 
   public update(delta: number, input: InputManager, cameraController: CameraController, animationDelta = delta): void {
+    this.updateSnakeAlert(delta);
+    if (this.isDying) {
+      this.isControlsLocked = true;
+      this.isMovementLocked = true;
+      this.velocity.set(0, 0, 0);
+      this.animationController.update(animationDelta);
+      return;
+    }
     const wasGroundedAtFrameStart = this.isGrounded;
     // ── Fail-Safe Control Recovery ──────────────────────────────────────────
     // If controls are locked but NO cinematic or pickup sequence is active, force-unlock!
@@ -463,10 +591,16 @@ export class PlayerController {
       if (isPlayerChild(hit.object)) continue;
       if (!hit.face) continue;
       PlayerController.TEMP_NORM.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
+      const isAuthoredRecoverySurface = hit.object.userData.walkableSupport === true;
       // Accept walkable floors, including a nearby surface above the terrain.
       // The lower bound also recovers from a shallow fall-through instead of
       // letting the player keep descending below a valid path/floor collider.
-      if (PlayerController.TEMP_NORM.y >= 0.40 && hit.point.y <= this.mesh.position.y + 0.45 && hit.point.y >= this.mesh.position.y - 2.4) {
+      // Explicit temple/stair supports get a larger upward recovery window:
+      // if a landing frame was missed at the doorway, Wukong can settle onto
+      // the deck instead of remaining embedded below it. The snap itself still
+      // only happens while descending, never during an upward jump.
+      const maxSupportAboveRoot = isAuthoredRecoverySurface ? 2.0 : 0.45;
+      if (PlayerController.TEMP_NORM.y >= 0.40 && hit.point.y <= this.mesh.position.y + maxSupportAboveRoot && hit.point.y >= this.mesh.position.y - 2.4) {
         validGroundHit = hit;
         break;
       }
@@ -476,7 +610,17 @@ export class PlayerController {
     const terrainY = level?.getTerrainHeight ? level.getTerrainHeight(this.mesh.position.x, this.mesh.position.z) : 0.0;
     
     // Exact floor level: static collider if walked on, otherwise natural terrain
-    const floorY = validGroundHit ? validGroundHit.point.y : terrainY;
+    // Outdoor floors cannot resolve below the sampled terrain surface: during
+    // fast diagonal movement a nearby decorative/platform collider could
+    // otherwise win the ray and pull Wukong underneath a hillside. The lower
+    // crypt keeps its explicit collision floor without snapping back outdoors.
+    const isInCrypt = level?.isPlayerInsideCuriosityCrypt?.() === true;
+    // Use the same sampled ground and walkable surface regardless of the
+    // character's current height. Previously a fall below -1.5 m switched to
+    // collider-only resolution, which could leave Wukong embedded underground.
+    const floorY = isInCrypt
+      ? (validGroundHit?.point.y ?? terrainY)
+      : Math.max(terrainY, validGroundHit?.point.y ?? -Infinity);
 
     if (this.mesh.position.y <= floorY + 0.45 && this.velocity.y <= 0) {
       this.isGrounded = true;
@@ -488,11 +632,20 @@ export class PlayerController {
 
       this.jumpCount = 0;
       this.doubleJumpSpinTimer = 0;
-      this.visualModel.rotation.x = this.defaultVisualRotationX;
+      if (this.doubleJumpPivot) this.doubleJumpPivot.rotation.x = 0;
 
       if (dangerousFall) {
         this.triggerHardLanding();
       }
+    } else if (!isInCrypt && this.mesh.position.y < floorY - 0.45) {
+      // Recovery for a missed collision frame / steep terrain seam. Clamp the
+      // root to the actual terrain immediately rather than letting gravity
+      // carry the character through the surface for seconds.
+      this.mesh.position.y = floorY;
+      this.velocity.y = 0;
+      this.isGrounded = true;
+      this.jumpCount = 0;
+      this.airApexY = floorY;
     } else {
       this.isGrounded = false;
       if (wasGroundedAtFrameStart) this.airApexY = this.mesh.position.y;
@@ -534,9 +687,9 @@ export class PlayerController {
     if (this.doubleJumpSpinTimer > 0) {
       this.doubleJumpSpinTimer -= delta;
       const progress = 1.0 - (this.doubleJumpSpinTimer / 0.4);
-      this.visualModel.rotation.x = this.defaultVisualRotationX + progress * Math.PI * 2;
+      if (this.doubleJumpPivot) this.doubleJumpPivot.rotation.x = progress * Math.PI * 2;
       if (this.doubleJumpSpinTimer <= 0) {
-        this.visualModel.rotation.x = this.defaultVisualRotationX;
+        if (this.doubleJumpPivot) this.doubleJumpPivot.rotation.x = 0;
       }
     }
 
@@ -658,60 +811,84 @@ export class PlayerController {
 
     }
 
-    // Raycasts alone miss a thin wall if a frame starts with the player already
-    // inside its proxy (Raycaster does not report a hit from inside a mesh).
-    // Resolve the temple shell and guardian statues as expanded solid volumes,
-    // allowing a player who spawned inside to move out but never deeper in.
+    // Sweep the player's horizontal footprint against static temple/guardian
+    // blockers. A ray can miss when a frame starts inside a proxy, and a
+    // destination-only overlap test can tunnel through a thin wall on a long
+    // frame. Axis-separated sweeps also preserve sliding along the wall.
     if (horizontalSpeed > 0.001 && this.solidBlockerBounds.length > 0) {
-      let candidateX = this.mesh.position.x + this.velocity.x * delta;
-      let candidateZ = this.mesh.position.z + this.velocity.z * delta;
       const currentX = this.mesh.position.x;
       const currentZ = this.mesh.position.z;
+      const desiredX = currentX + this.velocity.x * delta;
+      const desiredZ = currentZ + this.velocity.z * delta;
       const bodyBottom = this.mesh.position.y + 0.08;
       const bodyTop = this.mesh.position.y + 1.45;
-      for (const entry of this.solidBlockerBounds) {
-        // Temple shell and statue proxy colliders are static. Their bounds are
-        // captured in setColliders(); rebuilding Box3s for every wall on every
-        // movement frame needlessly traversed geometry around the temple.
-        const box = entry.bounds;
-        if (bodyTop <= box.min.y || bodyBottom >= box.max.y) continue;
-        const minX = box.min.x - this.PLAYER_RADIUS;
-        const maxX = box.max.x + this.PLAYER_RADIUS;
-        const minZ = box.min.z - this.PLAYER_RADIUS;
-        const maxZ = box.max.z + this.PLAYER_RADIUS;
-        const inside = (x: number, z: number) => x >= minX && x <= maxX && z >= minZ && z <= maxZ;
-        const clearance = (x: number, z: number) => Math.min(x - minX, maxX - x, z - minZ, maxZ - z);
-        const wasInside = inside(currentX, currentZ);
-        if (!inside(candidateX, candidateZ)) continue;
+      const axisIsBlocked = (axis: 'x' | 'z', startX: number, startZ: number, endX: number, endZ: number): boolean => {
+        for (const entry of this.solidBlockerBounds) {
+          const box = entry.bounds;
+          if (bodyTop <= box.min.y || bodyBottom >= box.max.y) continue;
+          const minX = box.min.x - this.PLAYER_RADIUS;
+          const maxX = box.max.x + this.PLAYER_RADIUS;
+          const minZ = box.min.z - this.PLAYER_RADIUS;
+          const maxZ = box.max.z + this.PLAYER_RADIUS;
+          const inside = (x: number, z: number) => x >= minX && x <= maxX && z >= minZ && z <= maxZ;
+          if (inside(startX, startZ)) {
+            // If a saved position or earlier frame already put Wukong inside
+            // a wall, permit recovery only through the nearest face. Without
+            // this guard an endpoint outside the box could tunnel completely
+            // through it while starting from an overlap.
+            const faces = [
+              { axis: 'x' as const, distance: startX - minX, edge: minX, direction: -1 },
+              { axis: 'x' as const, distance: maxX - startX, edge: maxX, direction: 1 },
+              { axis: 'z' as const, distance: startZ - minZ, edge: minZ, direction: -1 },
+              { axis: 'z' as const, distance: maxZ - startZ, edge: maxZ, direction: 1 }
+            ].sort((a, b) => a.distance - b.distance);
+            const nearest = faces[0];
+            if (nearest.axis !== axis) return true;
+            const startAxis = axis === 'x' ? startX : startZ;
+            const endAxis = axis === 'x' ? endX : endZ;
+            const otherAxis = axis === 'x' ? endZ : endX;
+            const otherMin = axis === 'x' ? minZ : minX;
+            const otherMax = axis === 'x' ? maxZ : maxX;
+            if (nearest.direction < 0) {
+              if (endAxis >= startAxis || endAxis < nearest.edge || otherAxis < otherMin || otherAxis > otherMax) return true;
+              continue;
+            }
+            if (endAxis <= startAxis || endAxis > nearest.edge || otherAxis < otherMin || otherAxis > otherMax) return true;
+            continue;
+          }
 
-        if (wasInside) {
-          // Only permit movement that reduces penetration toward the nearest
-          // edge; this gives a reliable escape path from an overlap.
-          if (clearance(candidateX, candidateZ) < clearance(currentX, currentZ) - 0.001) continue;
-          this.velocity.x = 0;
-          this.velocity.z = 0;
-          candidateX = currentX;
-          candidateZ = currentZ;
-          continue;
+          // Because this is an axis-only sweep, the orthogonal coordinate is
+          // constant. Test directional entry across either expanded face so
+          // touching a wall while moving away does not trap the player.
+          if (axis === 'x') {
+            const overlapsWall = startZ >= minZ && startZ <= maxZ;
+            const entersWall = (startX <= minX && endX > minX) || (startX >= maxX && endX < maxX);
+            if (overlapsWall && entersWall) return true;
+          } else {
+            const overlapsWall = startX >= minX && startX <= maxX;
+            const entersWall = (startZ <= minZ && endZ > minZ) || (startZ >= maxZ && endZ < maxZ);
+            if (overlapsWall && entersWall) return true;
+          }
         }
+        return false;
+      };
 
-        const xOnlyBlocked = inside(candidateX, currentZ);
-        const zOnlyBlocked = inside(currentX, candidateZ);
-        if (!xOnlyBlocked) {
-          candidateZ = currentZ;
-          this.velocity.z = 0;
-        } else if (!zOnlyBlocked) {
-          candidateX = currentX;
-          this.velocity.x = 0;
-        } else {
-          candidateX = currentX;
-          candidateZ = currentZ;
-          this.velocity.x = 0;
-          this.velocity.z = 0;
-        }
+      let resolvedX = currentX;
+      if (Math.abs(desiredX - currentX) > 1e-6 && !axisIsBlocked('x', currentX, currentZ, desiredX, currentZ)) {
+        resolvedX = desiredX;
+      } else if (Math.abs(desiredX - currentX) > 1e-6) {
+        this.velocity.x = 0;
       }
-      this.velocity.x = (candidateX - currentX) / Math.max(delta, 0.0001);
-      this.velocity.z = (candidateZ - currentZ) / Math.max(delta, 0.0001);
+
+      let resolvedZ = currentZ;
+      if (Math.abs(desiredZ - currentZ) > 1e-6 && !axisIsBlocked('z', resolvedX, currentZ, resolvedX, desiredZ)) {
+        resolvedZ = desiredZ;
+      } else if (Math.abs(desiredZ - currentZ) > 1e-6) {
+        this.velocity.z = 0;
+      }
+
+      this.velocity.x = (resolvedX - currentX) / Math.max(delta, 0.0001);
+      this.velocity.z = (resolvedZ - currentZ) / Math.max(delta, 0.0001);
     }
 
     // Apply final position
@@ -724,22 +901,29 @@ export class PlayerController {
     }
     this.mesh.position.z += this.velocity.z * delta;
 
-    // Post-movement ground re-snap for smooth slope and ramp traversal
-    if (this.isGrounded && this.velocity.y === 0 && this.colliders.length > 0) {
-      PlayerController.TEMP_GROUND_ORIGIN.copy(this.mesh.position).add(PlayerController.RAY_OFFSET);
-      this.groundRaycaster.set(PlayerController.TEMP_GROUND_ORIGIN, PlayerController.DOWN_DIR);
-      this.groundRaycaster.far = 4.8;
-      const rawSnapHits = this.groundRaycaster.intersectObjects(this.colliders, true);
-      for (const hit of rawSnapHits) {
-        if (isPlayerChild(hit.object)) continue;
-        if (!hit.face) continue;
-        const norm = hit.face.normal.clone();
-        norm.transformDirection(hit.object.matrixWorld);
-        if (norm.y >= 0.4 && hit.point.y <= this.mesh.position.y + 0.45 && hit.point.y >= this.mesh.position.y - 2.4) {
-          this.mesh.position.y = hit.point.y;
-          break;
+    // Re-sample support at the *new* X/Z after horizontal movement. Using only
+    // the pre-move height let Wukong trail behind terrain on slopes and sink at
+    // seams, especially where the approach meets the temple apron.
+    if (this.isGrounded && this.velocity.y === 0) {
+      const levelAfterMove = (window as any).gameInstance?.level01;
+      let supportY = levelAfterMove?.getTerrainHeight
+        ? levelAfterMove.getTerrainHeight(this.mesh.position.x, this.mesh.position.z)
+        : 0;
+      if (this.colliders.length > 0) {
+        PlayerController.TEMP_GROUND_ORIGIN.copy(this.mesh.position).add(PlayerController.RAY_OFFSET);
+        this.groundRaycaster.set(PlayerController.TEMP_GROUND_ORIGIN, PlayerController.DOWN_DIR);
+        this.groundRaycaster.far = 4.8;
+        const rawSnapHits = this.groundRaycaster.intersectObjects(this.colliders, true);
+        for (const hit of rawSnapHits) {
+          if (isPlayerChild(hit.object) || !hit.face) continue;
+          const norm = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+          if (norm.y >= 0.4 && hit.point.y <= this.mesh.position.y + 0.55 && hit.point.y >= this.mesh.position.y - 2.4) {
+            supportY = Math.max(supportY, hit.point.y);
+            break;
+          }
         }
       }
+      this.mesh.position.y = supportY;
     }
 
     // Trigger recorded footsteps from grounded locomotion, after movement and
@@ -828,7 +1012,8 @@ export class PlayerController {
 
     // Align visual model to ground perfectly during Hard Landing squat pose
     const targetVisualY = (this.animationController.getCurrentState() === 'Wukong_NoWood_HardLanding') ? -0.18 : 0.0;
-    this.visualModel.position.y = THREE.MathUtils.lerp(this.visualModel.position.y, targetVisualY, delta * 12.0);
+    const targetModelY = this.visualModelBasePosition.y + targetVisualY;
+    this.visualModel.position.y = THREE.MathUtils.lerp(this.visualModel.position.y, targetModelY, delta * 12.0);
     this.damageFlinchRemaining = Math.max(0, this.damageFlinchRemaining - delta);
     const flinchProgress = 1 - this.damageFlinchRemaining / 0.28;
     this.visualModel.rotation.z = this.defaultVisualRotationZ + Math.sin(flinchProgress * Math.PI) * 0.09;

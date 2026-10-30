@@ -60,12 +60,13 @@ export class TreasureChest {
     this.mesh.add(this.lockLight);
   }
 
-  public unlock(audioManager: AudioManager, _collectibleSystem: CollectibleSystem, onCollectStaff?: () => void): void {
+  public unlock(audioManager: AudioManager, _collectibleSystem: CollectibleSystem, onCollectStaff?: () => void, showUnlockedGlow = true): void {
     // isUnlocked flag is now set by ChestCinematic before calling unlock(),
     // so we skip the guard here and allow the lid animation to play.
     audioManager.playChestOpen();
     this.lockMesh.visible = false;
-    this.lockLight.color.setHex(0x3df3ff);
+    this.lockLight.visible = showUnlockedGlow;
+    if (showUnlockedGlow) this.lockLight.color.setHex(0x3df3ff);
 
     // Smooth lid open animation — exactly 0.8 seconds
     const start = Date.now();
@@ -87,10 +88,11 @@ export class TreasureChest {
   }
 
   /** Restore the already-open state from a saved game without replaying audio or animation. */
-  public restoreOpen(): void {
+  public restoreOpen(showUnlockedGlow = true): void {
     this.isUnlocked = true;
     this.lockMesh.visible = false;
-    this.lockLight.color.setHex(0x3df3ff);
+    this.lockLight.visible = showUnlockedGlow;
+    if (showUnlockedGlow) this.lockLight.color.setHex(0x3df3ff);
     this.lidMesh.rotation.x = -Math.PI * 0.55;
   }
 }

@@ -11,7 +11,6 @@ export class MobileTouchControls {
   private btnAttack: HTMLButtonElement | null = null;
   private btnAction: HTMLButtonElement | null = null;
   private btnRun: HTMLButtonElement | null = null;
-  private readonly heldButtons = new Set<HTMLButtonElement>();
   private gameplayEnabled = false;
 
 
@@ -24,6 +23,31 @@ export class MobileTouchControls {
   // Camera touch tracking
   private cameraTouchId: number | null = null;
   private lastCameraPos = { x: 0, y: 0 };
+  private readonly activeButtonPointers = new Map<number, HTMLButtonElement>();
+  private readonly onCameraPointerDown = (event: PointerEvent): void => {
+    if (!this.gameplayEnabled || this.cameraTouchId !== null || event.pointerType === 'mouse') return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('.touch-btn, .touch-joystick-zone, .hud-panel, #spell-hotbar, button, input, .modal-screen')) return;
+    if (event.clientX <= window.innerWidth * 0.35) return;
+    this.cameraTouchId = event.pointerId;
+    this.lastCameraPos = { x: event.clientX, y: event.clientY };
+  };
+  private readonly onCameraPointerMove = (event: PointerEvent): void => {
+    if (event.pointerId !== this.cameraTouchId || !this.gameplayEnabled) return;
+    const dx = event.clientX - this.lastCameraPos.x;
+    const dy = event.clientY - this.lastCameraPos.y;
+    this.lastCameraPos = { x: event.clientX, y: event.clientY };
+    this.inputManager.mouseDeltaX += dx * 1.8;
+    this.inputManager.mouseDeltaY += dy * 1.8;
+  };
+  private readonly onCameraPointerEnd = (event: PointerEvent): void => {
+    if (event.pointerId === this.cameraTouchId) this.cameraTouchId = null;
+    this.releaseButtonPointer(event.pointerId);
+  };
+  private readonly onWindowBlur = (): void => this.releaseAllControls();
+  private readonly onVisibilityChange = (): void => {
+    if (document.visibilityState !== 'visible') this.releaseAllControls();
+  };
 
   constructor(inputManager: InputManager) {
     this.inputManager = inputManager;
@@ -56,44 +80,29 @@ export class MobileTouchControls {
     this.container.className = 'lisar-touch-overlay';
 
     this.container.innerHTML = `
-      <!-- LEFT: 360° Virtual Analog Joystick -->
-      <div id="touch-joystick-zone" class="touch-joystick-zone">
+      <div id="touch-joystick-zone" class="touch-joystick-zone" aria-label="Movimiento">
         <div id="touch-joystick-base" class="touch-joystick-base">
-          <div class="joystick-arrow arrow-n">▲</div>
-          <div class="joystick-arrow arrow-s">▼</div>
-          <div class="joystick-arrow arrow-w">◀</div>
-          <div class="joystick-arrow arrow-e">▶</div>
+          <div class="joystick-arrow arrow-n">&#9650;</div>
+          <div class="joystick-arrow arrow-s">&#9660;</div>
+          <div class="joystick-arrow arrow-w">&#9664;</div>
+          <div class="joystick-arrow arrow-e">&#9654;</div>
           <div id="touch-joystick-stick" class="touch-joystick-stick"></div>
         </div>
       </div>
-
-      <!-- RIGHT: Ergonomic Action Buttons Diamond/Arc -->
       <div id="touch-action-zone" class="touch-action-zone">
-        <!-- JUMP BUTTON (Top) -->
         <button type="button" id="touch-btn-jump" class="touch-btn touch-btn-jump" aria-label="Saltar">
-          <span class="btn-icon">▲</span>
-          <span class="btn-subtext">SALTO</span>
+          <span class="btn-icon">&#9650;</span><span class="btn-subtext">SALTO</span>
         </button>
-
-        <!-- ATTACK BUTTON (Left/Center) -->
         <button type="button" id="touch-btn-attack" class="touch-btn touch-btn-attack" aria-label="Golpe">
-          <span class="btn-icon">⚡</span>
-          <span class="btn-subtext">GOLPE</span>
+          <span class="btn-icon">&#9889;</span><span class="btn-subtext">GOLPE</span>
         </button>
-
-        <!-- ACTION / INTERACT BUTTON (Right/Center) -->
-        <button type="button" id="touch-btn-action" class="touch-btn touch-btn-action" aria-label="Acción">
-          <span class="btn-icon">✋</span>
-          <span class="btn-subtext">ACCIÓN</span>
+        <button type="button" id="touch-btn-action" class="touch-btn touch-btn-action" aria-label="Acci&#243;n">
+          <span class="btn-icon">&#9995;</span><span class="btn-subtext">ACCI&#211;N</span>
         </button>
-
-        <!-- RUN BUTTON (Bottom) -->
         <button type="button" id="touch-btn-run" class="touch-btn touch-btn-run" aria-label="Correr">
-          <span class="btn-icon">🏃</span>
-          <span class="btn-subtext">CORRER</span>
+          <span class="btn-icon">&#127939;</span><span class="btn-subtext">CORRER</span>
         </button>
-      </div>
-    `;
+      </div>`;
 
     document.body.appendChild(this.container);
 
@@ -113,13 +122,7 @@ export class MobileTouchControls {
       if (button) button.disabled = !enabled;
     }
     if (!enabled) {
-      this.resetJoystick();
-      this.cameraTouchId = null;
-      this.heldButtons.clear();
-      for (const button of [this.btnJump, this.btnAttack, this.btnAction, this.btnRun]) {
-        button?.classList.remove('active', 'pressed');
-      }
-      this.inputManager.touchIsRunning = false;
+      this.releaseAllControls();
     }
   }
 
@@ -134,59 +137,31 @@ export class MobileTouchControls {
 
   private bindJoystickEvents(): void {
     if (!this.joystickBase || !this.joystickStick) return;
-
     const zone = document.getElementById('touch-joystick-zone');
     if (!zone) return;
-
-    const handleStart = (e: TouchEvent) => {
-      e.preventDefault();
-      if (this.joystickTouchId !== null) return;
-
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i];
-        const rect = this.joystickBase!.getBoundingClientRect();
-        this.joystickCenter = {
-          x: rect.left + rect.width / 2,
-          y: rect.top + rect.height / 2,
-        };
-
-        this.joystickTouchId = touch.identifier;
-        this.joystickBase!.classList.add('active');
-        this.updateJoystickPosition(touch.clientX, touch.clientY);
-        break;
-      }
+    zone.addEventListener('pointerdown', (event: PointerEvent) => {
+      if (!this.gameplayEnabled || event.button !== 0 || this.joystickTouchId !== null) return;
+      event.preventDefault();
+      const rect = this.joystickBase!.getBoundingClientRect();
+      this.joystickCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      this.maxRadius = Math.min(55, rect.width * 0.34);
+      this.joystickTouchId = event.pointerId;
+      zone.setPointerCapture(event.pointerId);
+      this.joystickBase!.classList.add('active');
+      this.updateJoystickPosition(event.clientX, event.clientY);
+    });
+    zone.addEventListener('pointermove', (event: PointerEvent) => {
+      if (event.pointerId !== this.joystickTouchId) return;
+      event.preventDefault();
+      this.updateJoystickPosition(event.clientX, event.clientY);
+    });
+    const release = (event: PointerEvent) => {
+      if (event.pointerId === this.joystickTouchId) this.resetJoystick();
     };
-
-    const handleMove = (e: TouchEvent) => {
-      e.preventDefault();
-      if (this.joystickTouchId === null) return;
-
-      for (let i = 0; i < e.touches.length; i++) {
-        const touch = e.touches[i];
-        if (touch.identifier === this.joystickTouchId) {
-          this.updateJoystickPosition(touch.clientX, touch.clientY);
-          break;
-        }
-      }
-    };
-
-    const handleEnd = (e: TouchEvent) => {
-      if (this.joystickTouchId === null) return;
-
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        if (e.changedTouches[i].identifier === this.joystickTouchId) {
-          this.resetJoystick();
-          break;
-        }
-      }
-    };
-
-    zone.addEventListener('touchstart', handleStart, { passive: false });
-    window.addEventListener('touchmove', handleMove, { passive: false });
-    window.addEventListener('touchend', handleEnd, { passive: false });
-    window.addEventListener('touchcancel', handleEnd, { passive: false });
+    zone.addEventListener('pointerup', release);
+    zone.addEventListener('pointercancel', release);
+    zone.addEventListener('lostpointercapture', release);
   }
-
   private updateJoystickPosition(clientX: number, clientY: number): void {
     if (!this.joystickStick) return;
 
@@ -235,125 +210,83 @@ export class MobileTouchControls {
   }
 
   private bindButtonEvents(): void {
-    // ── JUMP BUTTON ──────────────────────────────────────────────────────────
-    if (this.btnJump) {
-      const triggerJump = (e: Event) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.animateButtonPress(this.btnJump!);
-        this.inputManager.triggerJump();
-      };
-      this.btnJump.addEventListener('touchstart', triggerJump, { passive: false });
+    const actions: Array<[HTMLButtonElement | null, () => void]> = [
+      [this.btnJump, () => this.inputManager.triggerJump()],
+      [this.btnAttack, () => this.inputManager.triggerAttack()],
+      [this.btnAction, () => this.inputManager.triggerInteract()],
+    ];
+    for (const [button, action] of actions) {
+      if (!button) continue;
+      button.addEventListener('pointerdown', (event: PointerEvent) => {
+        if (!this.gameplayEnabled || event.button !== 0 || button.disabled) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if ([...this.activeButtonPointers.values()].includes(button)) return;
+        this.activeButtonPointers.set(event.pointerId, button);
+        button.setPointerCapture(event.pointerId);
+        button.classList.add('pressed');
+        action();
+      });
+      const release = (event: PointerEvent) => this.releaseButtonPointer(event.pointerId);
+      button.addEventListener('pointerup', release);
+      button.addEventListener('pointercancel', release);
+      button.addEventListener('lostpointercapture', release);
     }
 
-    // ── ATTACK BUTTON ────────────────────────────────────────────────────────
-    if (this.btnAttack) {
-      const triggerAttack = (e: Event) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.animateButtonPress(this.btnAttack!);
-        this.inputManager.triggerAttack();
-      };
-      this.btnAttack.addEventListener('touchstart', triggerAttack, { passive: false });
-    }
-
-    // ── ACTION / INTERACT BUTTON ─────────────────────────────────────────────
-    if (this.btnAction) {
-      const triggerAction = (e: Event) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.animateButtonPress(this.btnAction!);
-        this.inputManager.triggerInteract();
-      };
-      this.btnAction.addEventListener('touchstart', triggerAction, { passive: false });
-    }
-
-    // ── RUN BUTTON (HOLD SUPPORT) ────────────────────────────────────────────
-    if (this.btnRun) {
-      const startRun = (e: Event) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.btnRun!.classList.add('active');
-        this.inputManager.touchIsRunning = true;
-      };
-
-      const stopRun = (e: Event) => {
-        e.preventDefault();
-        this.btnRun!.classList.remove('active');
-        this.inputManager.touchIsRunning = false;
-      };
-
-      this.btnRun.addEventListener('touchstart', startRun, { passive: false });
-      this.btnRun.addEventListener('touchend', stopRun, { passive: false });
-      this.btnRun.addEventListener('touchcancel', stopRun, { passive: false });
-    }
+    const runButton = this.btnRun;
+    runButton?.addEventListener('pointerdown', (event: PointerEvent) => {
+      if (!this.gameplayEnabled || event.button !== 0 || runButton.disabled) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if ([...this.activeButtonPointers.values()].includes(runButton)) return;
+      this.activeButtonPointers.set(event.pointerId, runButton);
+      runButton.setPointerCapture(event.pointerId);
+      runButton.classList.add('active');
+      this.inputManager.touchIsRunning = true;
+    });
+    const releaseRun = (event: PointerEvent) => this.releaseButtonPointer(event.pointerId);
+    runButton?.addEventListener('pointerup', releaseRun);
+    runButton?.addEventListener('pointercancel', releaseRun);
+    runButton?.addEventListener('lostpointercapture', releaseRun);
   }
-
-  private animateButtonPress(btn: HTMLElement): void {
-    btn.classList.add('pressed');
-    setTimeout(() => btn.classList.remove('pressed'), 140);
-  }
-
   private bindCameraEvents(): void {
-    // Touch camera dragging on screen area outside UI buttons
-    window.addEventListener(
-      'touchstart',
-      (e: TouchEvent) => {
-        if (this.cameraTouchId !== null) return;
+    window.addEventListener('pointerdown', this.onCameraPointerDown, { passive: true });
+    window.addEventListener('pointermove', this.onCameraPointerMove, { passive: true });
+    window.addEventListener('pointerup', this.onCameraPointerEnd, { passive: true });
+    window.addEventListener('pointercancel', this.onCameraPointerEnd, { passive: true });
+    window.addEventListener('blur', this.onWindowBlur);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
+  }
 
-        for (let i = 0; i < e.changedTouches.length; i++) {
-          const touch = e.changedTouches[i];
-          const targetEl = touch.target as HTMLElement;
+  private releaseButtonPointer(pointerId: number): void {
+    const button = this.activeButtonPointers.get(pointerId);
+    if (!button) return;
+    this.activeButtonPointers.delete(pointerId);
+    const stillHeld = [...this.activeButtonPointers.values()].includes(button);
+    if (!stillHeld) button.classList.remove('pressed', 'active');
+    if (button === this.btnRun && !stillHeld) this.inputManager.touchIsRunning = false;
+  }
 
-          // Ignore if touch started on UI overlay elements
-          if (targetEl.closest('.touch-btn') || targetEl.closest('.touch-joystick-zone') || targetEl.closest('.hud-panel')) {
-            continue;
-          }
+  private releaseAllControls(): void {
+    this.resetJoystick();
+    this.cameraTouchId = null;
+    for (const pointerId of [...this.activeButtonPointers.keys()]) this.releaseButtonPointer(pointerId);
+    this.activeButtonPointers.clear();
+    this.inputManager.touchIsRunning = false;
+    for (const button of [this.btnJump, this.btnAttack, this.btnAction, this.btnRun]) {
+      button?.classList.remove('active', 'pressed');
+    }
+  }
 
-          // Must start in right 65% of screen
-          if (touch.clientX > window.innerWidth * 0.35) {
-            this.cameraTouchId = touch.identifier;
-            this.lastCameraPos = { x: touch.clientX, y: touch.clientY };
-            break;
-          }
-        }
-      },
-      { passive: true }
-    );
-
-    window.addEventListener(
-      'touchmove',
-      (e: TouchEvent) => {
-        if (this.cameraTouchId === null) return;
-
-        for (let i = 0; i < e.touches.length; i++) {
-          const touch = e.touches[i];
-          if (touch.identifier === this.cameraTouchId) {
-            const dx = touch.clientX - this.lastCameraPos.x;
-            const dy = touch.clientY - this.lastCameraPos.y;
-            this.lastCameraPos = { x: touch.clientX, y: touch.clientY };
-
-            // Feed camera rotation delta directly into InputManager
-            this.inputManager.mouseDeltaX += dx * 1.8;
-            this.inputManager.mouseDeltaY += dy * 1.8;
-            break;
-          }
-        }
-      },
-      { passive: true }
-    );
-
-    const stopCamera = (e: TouchEvent) => {
-      if (this.cameraTouchId === null) return;
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        if (e.changedTouches[i].identifier === this.cameraTouchId) {
-          this.cameraTouchId = null;
-          break;
-        }
-      }
-    };
-
-    window.addEventListener('touchend', stopCamera, { passive: true });
-    window.addEventListener('touchcancel', stopCamera, { passive: true });
+  public destroy(): void {
+    this.releaseAllControls();
+    window.removeEventListener('pointerdown', this.onCameraPointerDown);
+    window.removeEventListener('pointermove', this.onCameraPointerMove);
+    window.removeEventListener('pointerup', this.onCameraPointerEnd);
+    window.removeEventListener('pointercancel', this.onCameraPointerEnd);
+    window.removeEventListener('blur', this.onWindowBlur);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    this.container?.remove();
+    this.container = null;
   }
 }

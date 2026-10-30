@@ -47,10 +47,16 @@ export class AnimationController {
   // Armed/Unarmed state
   public isArmed = false;
   private isPlayingOneShot = false;
+  private cancelActiveStaffAttack: (() => void) | null = null;
   private oneShotAction: THREE.AnimationAction | null = null;
   private oneShotMarkerTime = -1;
   private oneShotOnMarker: (() => void) | null = null;
   private oneShotMarkerFired = false;
+  private pendingReaction: {
+    name: 'Reaction' | 'Step_Backward' | 'Death_From_Right' | 'Death';
+    onComplete: () => void;
+    onStart?: () => void;
+  } | null = null;
 
   constructor(modelOrGroup: THREE.Object3D, clips: THREE.AnimationClip[] = []) {
     if (clips && clips.length > 0) {
@@ -107,7 +113,7 @@ export class AnimationController {
   private registerClip(clip: THREE.AnimationClip): void {
     if (!this.mixer || this.allActions.has(clip.name)) return;
     const action = this.mixer.clipAction(clip);
-    if (['TakeItem', 'CastSpell', 'Wukong_NoWood_Kick', 'Idle_Kick', 'Wukong_NoWood_DoubleJump', 'Wukong_NoWood_HardLanding', 'Atack_Jump', 'Dodge_Back', 'Swing_To_Land', 'Swing_To_Land2', 'Climbing', 'Climbing_To_Top', 'Continue'].includes(clip.name) || clip.name.includes('Jump') || clip.name.startsWith('Idle_')) {
+    if (['TakeItem', 'CastSpell', 'Wukong_NoWood_Kick', 'Idle_Kick', 'Wukong_NoWood_DoubleJump', 'Wukong_NoWood_HardLanding', 'Atack_Jump', 'Dodge_Back', 'Swing_To_Land', 'Swing_To_Land2', 'Climbing', 'Climbing_To_Top', 'Continue', 'Death_From_Right', 'Death', 'Reaction', 'Step_Backward'].includes(clip.name) || clip.name.includes('Jump') || clip.name.startsWith('Idle_')) {
       action.setLoop(THREE.LoopOnce, 1);
       action.clampWhenFinished = true;
     }
@@ -121,6 +127,35 @@ export class AnimationController {
 
   public hasClip(name: string): boolean { return this.allActions.has(name); }
   public getClipDuration(name: string): number { return this.allActions.get(name)?.getClip().duration ?? 1.2; }
+  public isOneShotPlaying(): boolean { return this.isPlayingOneShot; }
+
+  public playImpactReaction(onComplete: () => void = () => {}): boolean {
+    if (!this.allActions.has('Reaction')) return false;
+    // A real hit must be visible immediately. Crossfade out the current action
+    // (kick/idle/etc.) instead of leaving Reaction queued behind it.
+    this.pendingReaction = null;
+    this.playOneShot('Reaction', onComplete, 1.05);
+    return true;
+  }
+
+  public playSnakeSurprise(onStart: () => void = () => {}): boolean {
+    if (!this.allActions.has('Step_Backward')) { onStart(); return false; }
+    if (this.isPlayingOneShot) {
+      this.pendingReaction = { name: 'Step_Backward', onComplete: () => {}, onStart };
+      return true;
+    }
+    this.playOneShot('Step_Backward', () => {}, 1, 0, onStart);
+    return true;
+  }
+
+  public playDeathAnimation(onComplete: () => void): void {
+    // Death has the highest animation priority. Never wait for the remainder
+    // of a long attack or interaction clip before showing the death response.
+    this.pendingReaction = null;
+    const clip = this.allActions.has('Death_From_Right') ? 'Death_From_Right' : 'Death';
+    if (!this.allActions.has(clip)) { onComplete(); return; }
+    this.playOneShot(clip, onComplete, 1);
+  }
 
   /** Softly turns the head toward a nearby NPC while in ordinary gameplay. */
   public setGazeTarget(target: THREE.Vector3 | null): void {
@@ -130,6 +165,10 @@ export class AnimationController {
 
   /** Run a prepared one-shot action without changing gameplay-specific logic. */
   public playOneShot(name: string, onComplete: () => void, speed = 1, markerFraction = -1, onMarker?: () => void): void {
+    // Damage, death, dodges and interactions may supersede a staff swing.
+    // Finish its ownership callback before replacing the mixer action so the
+    // weapon socket and gameplay attack state are never left half-switched.
+    this.cancelActiveStaffAttack?.();
     const action = this.allActions.get(name);
     if (!action || !this.mixer) { onComplete(); return; }
     if (this.currentAction && this.currentAction !== action) this.currentAction.fadeOut(0.1);
@@ -153,8 +192,18 @@ export class AnimationController {
       this.oneShotMarkerTime = -1;
       this.isPlayingOneShot = false;
       onComplete();
+      this.playPendingReaction();
     };
     this.mixer.addEventListener('finished', onFinished as any);
+  }
+
+  private playPendingReaction(): void {
+    if (this.isPlayingOneShot || !this.pendingReaction) return;
+    const pending = this.pendingReaction;
+    this.pendingReaction = null;
+    const speed = pending.name === 'Reaction' ? 1.05 : 1;
+    const marker = pending.name === 'Step_Backward' ? 0 : -1;
+    this.playOneShot(pending.name, pending.onComplete, speed, marker, pending.onStart);
   }
 
   public playAirAttack(onImpact: () => void, onComplete: () => void): void {
@@ -203,6 +252,11 @@ export class AnimationController {
 
     this.isPlayingOneShot = true;
 
+    let hasCast = false;
+    let isFinished = false;
+    let markerFrame = 0;
+    let watchdog = 0;
+
     if (this.currentAction && this.currentAction !== action) {
       this.currentAction.stop();
     }
@@ -217,7 +271,6 @@ export class AnimationController {
     this.currentAction = action;
     this.currentState = 'CastSpell';
 
-    let hasCast = false;
     const clipDuration = action.getClip().duration;
     // Release spell at 30% of atack_wood.glb animation — during the forward swing of the attack, not after
     const castTimeThreshold = clipDuration * 0.42;
@@ -229,16 +282,26 @@ export class AnimationController {
       }
     };
 
-    const onFinished = (e: { action: THREE.AnimationAction }) => {
-      if (e.action === action) {
-        this.mixer?.removeEventListener('finished', onFinished as any);
-        if (!hasCast) {
-          hasCast = true;
-          onCastAtMarker();
-        }
-        this.isPlayingOneShot = false;
-        onComplete();
+    const finishSequence = (applyPendingImpact: boolean) => {
+      if (isFinished) return;
+      isFinished = true;
+      this.mixer?.removeEventListener('finished', onFinished as any);
+      cancelAnimationFrame(markerFrame);
+      window.clearTimeout(watchdog);
+      if (this.cancelActiveStaffAttack === cancelAttack) this.cancelActiveStaffAttack = null;
+      if (applyPendingImpact && !hasCast) {
+        hasCast = true;
+        onCastAtMarker();
       }
+      if (this.currentAction === action) this.isPlayingOneShot = false;
+      onComplete();
+    };
+
+    const cancelAttack = () => finishSequence(false);
+    this.cancelActiveStaffAttack = cancelAttack;
+
+    const onFinished = (e: { action: THREE.AnimationAction }) => {
+      if (e.action === action) finishSequence(true);
     };
 
     this.mixer.addEventListener('finished', onFinished as any);
@@ -247,10 +310,18 @@ export class AnimationController {
     const updateCheck = () => {
       if (this.isPlayingOneShot && this.currentAction === action) {
         checkMarker();
-        if (!hasCast) requestAnimationFrame(updateCheck);
+        if (!isFinished) markerFrame = requestAnimationFrame(updateCheck);
       }
     };
-    requestAnimationFrame(updateCheck);
+    markerFrame = requestAnimationFrame(updateCheck);
+
+    // The deadline follows the actual clip duration and playback speed. It
+    // covers browsers that drop a mixer `finished` event after a tab stall or
+    // rapid action replacement; it is not a fixed interaction delay.
+    watchdog = window.setTimeout(
+      () => finishSequence(action.isRunning()),
+      Math.ceil((clipDuration / 1.7 + 0.35) * 1000)
+    );
   }
 
   public playCastSpellAnimation(onCastAtMarker: () => void, onComplete: () => void): void {
@@ -302,6 +373,7 @@ export class AnimationController {
       }
       this.isPlayingOneShot = false;
       onComplete();
+      this.playPendingReaction();
     };
 
     const onFinished = (e: { action: THREE.AnimationAction }) => {

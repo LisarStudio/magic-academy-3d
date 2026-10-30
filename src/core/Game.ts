@@ -154,7 +154,7 @@ export class Game {
 
     // 2. Setup AnimationController & PlayerController
     this.animationController = new AnimationController(playerData.model, playerData.clips);
-    this.player = new PlayerController(playerData.model as THREE.Group, this.animationController);
+    this.player = new PlayerController(playerData.model as THREE.Group, this.animationController, playerData.staffModel);
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
     this.player.onLivesChange = (lives) => this.hud.setLives(lives);
@@ -240,6 +240,25 @@ export class Game {
     } finally {
       if (this.player.staffBackMesh) this.player.staffBackMesh.visible = backStaffWasVisible;
       if (this.player.staffHandMesh) this.player.staffHandMesh.visible = handStaffWasVisible;
+    }
+
+    // Compile only the already-loaded 3D staff shaders on mobile. This avoids
+    // paying the first-use GPU compilation cost at the chest/first attack
+    // without forcing a synchronous compile of the full level on constrained GPUs.
+    if (isLowPowerDevice()) {
+      let staffWarmup: THREE.Group | null = null;
+      try {
+        const warmScene = new THREE.Scene();
+        staffWarmup = this.player.cloneStaffProp('staff_shader_warmup');
+        if (staffWarmup) {
+          warmScene.add(staffWarmup);
+          await this.sceneManager.renderer.compileAsync(warmScene, this.sceneManager.camera, this.sceneManager.scene);
+        }
+      } catch (error) {
+        console.warn('[Game] Staff shader warmup failed; the model remains loaded and usable.', error);
+      } finally {
+        staffWarmup?.removeFromParent();
+      }
     }
 
     // The underground room exists from level initialization but is out of the
@@ -342,6 +361,7 @@ export class Game {
               }
             }
           });
+          this.level01.damageTreeSnakes(playerPos, forwardDir, 2.8, 1);
         },
         // OnComplete callback — animation finished, return staff to back cleanly and fade aura off
         () => {
@@ -421,6 +441,8 @@ export class Game {
           () => {
             const playerPos = this.player.mesh.position;
             const forwardDir = new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.mesh.quaternion);
+            this.level01.reactToTreeKick(playerPos, forwardDir);
+            this.level01.damageTreeSnakes(playerPos, forwardDir, 2.8, 1);
 
             this.level01.enemies.forEach(enemy => {
               if (enemy.isAlive() && enemy.isBossVulnerable) {
@@ -536,6 +558,7 @@ export class Game {
     if (mode === 'new') {
       this.player.lives = 3;
       this.hud.setLives(3);
+      this.level01.resetLifePickups();
       document.getElementById('game-over-screen')?.classList.add('hidden');
     }
 
@@ -581,6 +604,7 @@ export class Game {
     this.animationController.playAirAttack(() => {
       const origin = this.player.mesh.position;
       const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.mesh.quaternion);
+      this.level01.damageTreeSnakes(origin, forward, 2.8, 1);
       for (const enemy of this.level01.enemies) {
         if (!enemy.isAlive() || !enemy.isBossVulnerable) continue;
         const target = enemy.getPosition();
@@ -814,9 +838,9 @@ export class Game {
 
   public isGameOver(): boolean { return this.gameOverActive; }
 
-  public saveGame(): void {
+  public saveGame(showNotification = true): void {
     const saveData = {
-      version: 4,
+      version: 5,
       levelId: 'magic-academy-3d',
       playerPos: { x: this.player.mesh.position.x, y: this.player.mesh.position.y, z: this.player.mesh.position.z },
       playerRotY: this.player.mesh.rotation.y,
@@ -835,6 +859,7 @@ export class Game {
       totalKeysCount: this.level01.totalKeysCount,
       curiosityHatchOpen: this.level01.isLavaVaultOpen,
       curiosityChestOpen: this.level01.curiosityChestOpen,
+      collectedLifePickupIds: this.level01.getCollectedLifePickupIds(),
       stateFlags: {
         staffFound: this.level01.stateFlags.staffFound,
         gekkoTalked: this.level01.stateFlags.gekkoTalked,
@@ -844,7 +869,7 @@ export class Game {
       timestamp: Date.now()
     };
     localStorage.setItem('lisar_savegame', JSON.stringify(saveData));
-    this.subtitleSystem.show('Guardado', '¡Partida guardada exitosamente!');
+    if (showNotification) this.subtitleSystem.show('Guardado', '¡Partida guardada exitosamente!');
     console.log('[SaveSystem] Game saved:', saveData);
   }
 
@@ -856,8 +881,8 @@ export class Game {
     }
     try {
       const data = JSON.parse(raw);
-      if (data.version !== undefined && data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4) throw new Error('Versión de partida no compatible.');
-      if (Number.isFinite(data.lives)) this.player.lives = THREE.MathUtils.clamp(Math.floor(data.lives), 1, 3);
+      if (data.version !== undefined && ![1, 2, 3, 4, 5].includes(data.version)) throw new Error('Versión de partida no compatible.');
+      if (Number.isFinite(data.lives)) this.player.lives = THREE.MathUtils.clamp(Math.floor(data.lives), 0, PlayerController.MAX_LIVES);
       this.hud.setLives(this.player.lives);
       if (data.playerPos) {
         this.player.mesh.position.set(data.playerPos.x, data.playerPos.y, data.playerPos.z);
@@ -880,6 +905,7 @@ export class Game {
         if (data.staffEquipped === false) this.player.unequipStaff();
       }
       this.level01.restoreStaffProgression(Number(data.powerOrbs) || 0, Number(data.staffUpgradeLevel) || 1);
+      this.level01.restoreCollectedLifePickupIds(data.collectedLifePickupIds);
       if (data.coinsCount !== undefined) {
         this.collectibleSystem.coinCount = data.coinsCount;
         this.hud.setCoinCount(this.collectibleSystem.coinCount);

@@ -716,6 +716,13 @@ export class MainMenu {
       return;
     }
 
+    // The game scene is now prepared and the start cinematic still covers the
+    // frame. Remove every menu surface before uncovering gameplay so the logo,
+    // buttons, dialog or menu background can never flash over the first frame.
+    this.mainMenu.classList.add('hidden');
+    this.dialog.classList.add('hidden');
+    document.getElementById('start-screen')?.classList.add('hidden');
+
     this.introVideo.pause();
     this.idleVideo.pause();
     this.introVideo.classList.remove('is-visible');
@@ -733,7 +740,6 @@ export class MainMenu {
     backdrop?.classList.remove('is-ending');
     await this.completeInGameLoading();
     this.setState('Playing');
-    document.getElementById('start-screen')!.classList.add('hidden');
   }
 
   private hasValidSave(): boolean {

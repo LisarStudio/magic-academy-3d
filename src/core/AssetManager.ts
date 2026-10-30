@@ -7,6 +7,8 @@ import { isLowPowerDevice } from './DevicePerformance';
 export interface LoadedPlayerData {
   model: THREE.Object3D;
   clips: THREE.AnimationClip[];
+  /** Normalized, preloaded 3D weapon asset used by both player sockets. */
+  staffModel: THREE.Group | null;
 }
 
 export class AssetManager {
@@ -298,6 +300,10 @@ export class AssetManager {
           child.scale.set(1.0, 1.0, 1.0);
         }
       });
+
+      // Load and normalize the authored weapon before gameplay. Equipping it
+      // must only clone an already-parsed GLB, never fetch or parse a model.
+      const staffModelPromise = this.loadStaffModel();
       playerModel.updateMatrixWorld(true);
       console.log('[AssetManager] Skeleton bones normalized and verified (1.0, 1.0, 1.0 scale):', boneNames.slice(0, 15).join(', '));
 
@@ -414,7 +420,11 @@ export class AssetManager {
         wukongKick,
         wukongHardLanding,
         idleArmed,
-        castSpellData
+        castSpellData,
+        deathFromRight,
+        hitReaction,
+        stepBackward,
+        staffModel
       ] = await Promise.all([
         // iddle_2.fbx is the calm second idle supplied for the gameplay loop.
         // Keep the first iddle.fbx as its decorative kick variation; the
@@ -431,7 +441,11 @@ export class AssetManager {
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Falling To Landing.fbx', 'Wukong_NoWood_HardLanding', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle.fbx', 'Idle_Armed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_atack_baculo.fbx', 'atack_wood', playerModel, translationScaleFactor)
-          .then(async (clip) => clip || (await this.loadAndRetargetGltfClip(import.meta.env.BASE_URL + 'assets/characters/atack_wood.glb', 'atack_wood', playerModel!))?.clip || null)
+          .then(async (clip) => clip || (await this.loadAndRetargetGltfClip(import.meta.env.BASE_URL + 'assets/characters/atack_wood.glb', 'atack_wood', playerModel!))?.clip || null),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Death From Right.fbx?v=20261029-death', 'Death_From_Right', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Reaction.fbx?v=20261029-reaction', 'Reaction', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Step Backward.fbx?v=20261029-step-backward', 'Step_Backward', playerModel, translationScaleFactor),
+        staffModelPromise
       ]);
 
       // Armed and unarmed movement use the same source FBX clips. Clone the
@@ -469,13 +483,50 @@ export class AssetManager {
         aliasClip.name = 'CastSpell';
         clips.push(aliasClip);
       }
+      if (deathFromRight?.tracks.length) clips.push(deathFromRight);
+      if (hitReaction?.tracks.length) clips.push(hitReaction);
+      if (stepBackward?.tracks.length) clips.push(stepBackward);
 
       console.log(`[AssetManager] 🎬 Total clips loaded: ${clips.length} → [${clips.map((c) => c.name).join(', ')}]`);
 
-      return { model: playerModel, clips };
+      return { model: playerModel, clips, staffModel };
     } catch (err) {
       console.error('[AssetManager] Failed to load player model:', err);
-      return { model: this.createProceduralPlayer(), clips: [] };
+      return { model: this.createProceduralPlayer(), clips: [], staffModel: null };
+    }
+  }
+
+  private async loadStaffModel(): Promise<THREE.Group | null> {
+    const url = `${import.meta.env.BASE_URL}assets/characters/baculo.glb?v=${__APP_VERSION__}-staff3d`;
+    try {
+      const gltf = await this.withAssetTimeout(this.gltfLoader.loadAsync(url), url);
+      const model = gltf.scene;
+      model.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(model);
+      const size = bounds.getSize(new THREE.Vector3());
+      const length = Math.max(size.x, size.y, size.z);
+      if (!Number.isFinite(length) || length < 0.001) throw new Error('baculo.glb has empty or invalid bounds');
+
+      // The supplied GLB has a negative node scale and is authored at about
+      // 2.9 m. Normalize once to a 1.22 m carried staff and center its origin;
+      // socket transforms can then be tuned in character metres.
+      const normalization = 1.22 / length;
+      const center = bounds.getCenter(new THREE.Vector3());
+      model.scale.multiplyScalar(normalization);
+      model.position.addScaledVector(center, -normalization);
+      model.name = 'baculo_glb_normalized';
+      model.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+      });
+      model.updateMatrixWorld(true);
+      console.info(`[AssetManager] Loaded baculo.glb (normalized to 1.22 m; source ${length.toFixed(2)} m).`);
+      return model;
+    } catch (error) {
+      console.error('[AssetManager] Could not preload baculo.glb; gameplay will use its safe fallback staff.', error);
+      return null;
     }
   }
 

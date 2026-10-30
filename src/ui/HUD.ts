@@ -212,7 +212,6 @@ export class HUD {
         if (game) game.togglePause();
       };
       this.btnMobilePauseEl.addEventListener('click', toggle);
-      this.btnMobilePauseEl.addEventListener('touchstart', toggle);
     }
   }
 
@@ -244,8 +243,12 @@ export class HUD {
   public updateBossHealth(health: number, maxHealth: number): void {
     const safeMax = Math.max(1, maxHealth);
     const safeHealth = Math.max(0, Math.min(safeMax, health));
-    this.bossHealthFillEl.style.width = `${(safeHealth / safeMax) * 100}%`;
+    const ratio = safeHealth / safeMax;
+    this.bossHealthFillEl.style.width = `${ratio * 100}%`;
+    this.bossHealthFillEl.style.backgroundColor = healthFillColor(ratio);
     this.bossHealthValueEl.textContent = `${Math.ceil(safeHealth)} / ${safeMax}`;
+    this.bossHealthFillEl.parentElement?.setAttribute('aria-valuenow', String(Math.ceil(safeHealth)));
+    this.bossHealthFillEl.parentElement?.setAttribute('aria-valuemax', String(safeMax));
   }
 
   public hideBossHealth(): void {
@@ -259,6 +262,7 @@ export class HUD {
   private lastMaxMp = -1;
   private lastCoins = -1;
   private lastKeys = -1;
+  private hpImpactTimer = 0;
 
   /**
    * HP bar with dynamic color: green (high) → orange (medium) → red (low)
@@ -267,13 +271,13 @@ export class HUD {
   public setHealth(hp: number, maxHp = 100): void {
     const safeHp = Math.max(0, Math.ceil(hp));
     if (safeHp === this.lastHp && maxHp === this.lastMaxHp) return;
+    if (this.lastHp >= 0 && safeHp < this.lastHp) this.flashHealthBarImpact();
     this.lastHp = safeHp;
     this.lastMaxHp = maxHp;
 
     const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
     this.hpBarFillEl.style.clipPath = `inset(0 ${100 - pct}% 0 0 round 999px)`;
-    this.hpBarFillEl.style.background = 'linear-gradient(180deg, #fff8ad 0%, #ffda56 28%, #ffae24 65%, #f56a15 100%)';
-    this.hpBarFillEl.style.boxShadow = '0 0 9px #ffb52a, inset 0 1px 2px #fff9';
+    this.hpBarFillEl.style.background = healthFillColor(pct / 100);
     this.hpBarFillEl.setAttribute('aria-valuenow', String(safeHp));
     this.hpBarFillEl.setAttribute('aria-valuemax', String(maxHp));
     this.hpBarFillEl.parentElement?.setAttribute('aria-valuenow', String(safeHp));
@@ -283,12 +287,18 @@ export class HUD {
     if (hpTextEl) hpTextEl.textContent = `${safeHp} / ${maxHp}`;
   }
 
+  private flashHealthBarImpact(): void {
+    this.hpBarFillEl.classList.remove('hp-impact-flash');
+    void this.hpBarFillEl.offsetWidth;
+    this.hpBarFillEl.classList.add('hp-impact-flash');
+    window.clearTimeout(this.hpImpactTimer);
+    this.hpImpactTimer = window.setTimeout(() => this.hpBarFillEl.classList.remove('hp-impact-flash'), 520);
+  }
+
   public setLives(lives: number): void {
     if (!this.lifeCountEl) return;
-    const safeLives = Math.max(0, Math.min(3, Math.floor(lives)));
-    this.lifeCountEl.innerHTML = Array.from({ length: 3 }, (_, index) =>
-      `<span class="imperial-life-socket"><img class="${index >= safeLives ? 'lost-life' : ''}" src="./assets/ui/hud-baculo-vida.png" alt="" aria-hidden="true" /></span>`
-    ).join('');
+    const safeLives = Math.max(0, Math.floor(lives));
+    this.lifeCountEl.textContent = `×${safeLives}`;
     this.lifeCountEl.setAttribute('aria-label', `Vidas restantes: ${safeLives}`);
   }
 
@@ -547,4 +557,26 @@ export class HUD {
       }, half);
     });
   }
+}
+
+/** One solid color across the health fill, interpolated from actual health. */
+function healthFillColor(ratio: number): string {
+  const stops = [
+    { at: 0.10, rgb: [235, 48, 48] },
+    { at: 0.25, rgb: [255, 137, 36] },
+    { at: 0.50, rgb: [255, 218, 61] },
+    { at: 0.75, rgb: [174, 220, 65] },
+    { at: 1.00, rgb: [54, 208, 95] },
+  ];
+  const value = Math.max(0, Math.min(1, ratio));
+  if (value <= stops[0].at) return `rgb(${stops[0].rgb.join(',')})`;
+  for (let i = 1; i < stops.length; i++) {
+    const low = stops[i - 1], high = stops[i];
+    if (value <= high.at) {
+      const t = (value - low.at) / (high.at - low.at);
+      const rgb = low.rgb.map((channel, index) => Math.round(channel + (high.rgb[index] - channel) * t));
+      return `rgb(${rgb.join(',')})`;
+    }
+  }
+  return 'rgb(54,208,95)';
 }

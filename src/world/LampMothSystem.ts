@@ -13,18 +13,22 @@ export class LampMothSystem {
   private readonly agents: MothAgent[] = [];
   private readonly bodyMesh: THREE.InstancedMesh;
   private readonly wingMesh: THREE.InstancedMesh;
+  private readonly glowMesh: THREE.InstancedMesh;
   private readonly helper = new THREE.Object3D();
   private elapsed = 0;
   private lastUpdate = 0;
   private readonly interval = 1 / 30;
 
   constructor(scene: THREE.Scene, anchors: THREE.Vector3[], mobile: boolean) {
-    const perAnchor = mobile ? 5 : 7;
+    const perAnchor = mobile ? 6 : 9;
     const count = anchors.length * perAnchor;
-    const bodyGeometry = new THREE.SphereGeometry(0.05, 6, 5);
-    const wingGeometry = new THREE.SphereGeometry(0.09, 6, 4);
+    const bodyGeometry = new THREE.SphereGeometry(0.043, 8, 6);
+    // Two small flattened wings read as fluttering insects, not as a large
+    // translucent oval around the lantern.
+    const wingGeometry = new THREE.SphereGeometry(0.052, 8, 5);
+    const glowGeometry = new THREE.SphereGeometry(0.085, 8, 6);
     const bodyMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffbd57,
+      color: 0xfff1bd,
       toneMapped: false,
     });
     const wingMaterial = new THREE.MeshBasicMaterial({
@@ -34,16 +38,33 @@ export class LampMothSystem {
       toneMapped: false,
       side: THREE.DoubleSide,
     });
+    const glowMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffb83f,
+      transparent: true,
+      opacity: 0.32,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
 
     this.bodyMesh = new THREE.InstancedMesh(bodyGeometry, bodyMaterial, count);
     this.wingMesh = new THREE.InstancedMesh(wingGeometry, wingMaterial, count * 2);
+    this.glowMesh = new THREE.InstancedMesh(glowGeometry, glowMaterial, count);
     this.bodyMesh.name = 'lantern_moth_bodies';
     this.wingMesh.name = 'lantern_moth_wings';
+    this.glowMesh.name = 'lantern_moth_warm_halos';
     this.bodyMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.wingMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.glowMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    // Fixed per-lantern bounds allow renderer frustum culling while retaining
+    // one draw call for each moth layer.
     this.bodyMesh.frustumCulled = false;
     this.wingMesh.frustumCulled = false;
-    scene.add(this.bodyMesh, this.wingMesh);
+    this.glowMesh.frustumCulled = false;
+    this.glowMesh.renderOrder = 1;
+    this.bodyMesh.renderOrder = 2;
+    this.wingMesh.renderOrder = 2;
+    scene.add(this.glowMesh, this.bodyMesh, this.wingMesh);
 
     anchors.forEach((anchor, anchorIndex) => {
       for (let i = 0; i < perAnchor; i++) {
@@ -51,8 +72,8 @@ export class LampMothSystem {
           anchor: anchor.clone(),
           phase: anchorIndex * 1.37 + i * 2.41,
           speed: 0.62 + ((i * 13 + anchorIndex * 7) % 9) * 0.045,
-          radius: 0.42 + (i % 3) * 0.16,
-          height: 0.32 + (i % 2) * 0.28,
+          radius: 0.52 + (i % 3) * 0.18,
+          height: 0.48 + (i % 3) * 0.24,
         });
       }
     });
@@ -62,7 +83,7 @@ export class LampMothSystem {
   update(delta: number, playerPosition: THREE.Vector3): void {
     const maxDistance = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0 ? 42 : 78;
     const inRange = this.agents.some(agent => agent.anchor.distanceToSquared(playerPosition) < maxDistance * maxDistance);
-    this.bodyMesh.visible = this.wingMesh.visible = inRange;
+    this.glowMesh.visible = this.bodyMesh.visible = this.wingMesh.visible = inRange;
     if (!inRange) return;
 
     this.elapsed += Math.min(delta, 0.1);
@@ -75,10 +96,13 @@ export class LampMothSystem {
   dispose(): void {
     this.bodyMesh.removeFromParent();
     this.wingMesh.removeFromParent();
+    this.glowMesh.removeFromParent();
     this.bodyMesh.geometry.dispose();
     this.wingMesh.geometry.dispose();
+    this.glowMesh.geometry.dispose();
     (this.bodyMesh.material as THREE.Material).dispose();
     (this.wingMesh.material as THREE.Material).dispose();
+    (this.glowMesh.material as THREE.Material).dispose();
   }
 
   private updateMatrices(): void {
@@ -97,17 +121,25 @@ export class LampMothSystem {
       this.helper.updateMatrix();
       this.bodyMesh.setMatrixAt(i, this.helper.matrix);
 
+      const haloPulse = 0.72 + (Math.sin(time * 2.4 + agent.phase) + 1) * 0.2;
+      this.helper.position.set(x, y, z);
+      this.helper.rotation.set(0, phase * 0.35, 0);
+      this.helper.scale.setScalar(haloPulse);
+      this.helper.updateMatrix();
+      this.glowMesh.setMatrixAt(i, this.helper.matrix);
+
       for (let side = 0; side < 2; side++) {
         const wingIndex = i * 2 + side;
         const sign = side === 0 ? -1 : 1;
-        this.helper.position.set(x + sign * 0.035, y + 0.012, z);
+        this.helper.position.set(x + sign * 0.03, y + 0.012, z);
         this.helper.rotation.set(0, phase, sign * (0.5 + flutter * 0.35));
-        this.helper.scale.set(1.2, 0.42, 0.75);
+        this.helper.scale.set(1.15, 0.34, 0.62);
         this.helper.updateMatrix();
         this.wingMesh.setMatrixAt(wingIndex, this.helper.matrix);
       }
     }
     this.bodyMesh.instanceMatrix.needsUpdate = true;
     this.wingMesh.instanceMatrix.needsUpdate = true;
+    this.glowMesh.instanceMatrix.needsUpdate = true;
   }
 }

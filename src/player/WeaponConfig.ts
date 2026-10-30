@@ -39,10 +39,13 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDefinition> = {
     backAttachment: {
       boneNameSubstrings: ['spine2', 'chest', 'upperchest'],
       fallbackBoneNames: ['spine1', 'spine'],
-      // Dedicated upper-back socket, shifted to Wukong's right and onto the
-      // back-facing side of the rig. Offsets are metres in bone-local axes.
-      position: new THREE.Vector3(0.15, -0.10, 0.18),
-      rotation: new THREE.Euler(0.04, -0.04, 0.62, 'XYZ')
+      // baculo.glb is authored along its local Y axis. Wukong's visual root is
+      // itself rotated +90° around X to match the game rig, so rotate the staff
+      // axis onto the local Z axis first; this makes it upright in world space
+      // and then gives it the requested shoulder-to-hip diagonal. The negative
+      // depth keeps the 3D weapon just behind the shirt.
+      position: new THREE.Vector3(-0.035, 0.91, -0.17),
+      rotation: new THREE.Euler(-Math.PI * 0.5, 0, -0.58, 'XYZ')
     },
     handAttachment: {
       boneNameSubstrings: ['righthand'],
