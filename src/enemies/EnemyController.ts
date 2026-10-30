@@ -135,7 +135,7 @@ export class EnemyController {
     this.masterPromise = (async () => {
       try {
         const loader = new GLTFLoader();
-        const gltf = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/enemies/crab.glb');
+        const gltf = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/enemies/crab.glb?v=0.0.32');
         const model = gltf.scene;
 
         const bbox = new THREE.Box3().setFromObject(model);
@@ -176,7 +176,18 @@ export class EnemyController {
       if (!EnemyController.masterTemplate) return;
 
       const model = EnemyController.masterTemplate.clone(true);
-      if (scaleMultiplier !== 1.0) {
+      if (this.id === 'crab_boss') {
+        // Scale from the model's actual vertical bounds, not its longest axis.
+        // The supplied GLB is very wide; max-dimension normalization made its
+        // body look like an ordinary small crab in the arena.
+        const currentBounds = new THREE.Box3().setFromObject(model);
+        const currentSize = currentBounds.getSize(new THREE.Vector3());
+        const targetBossHeight = 5.1; // 3x the measured 1.7 m Wukong rig
+        const heightScale = targetBossHeight / Math.max(0.001, currentSize.y);
+        model.scale.multiplyScalar(heightScale);
+        const scaledBBox = new THREE.Box3().setFromObject(model);
+        model.position.set(0, -scaledBBox.min.y, 0);
+      } else if (scaleMultiplier !== 1.0) {
         model.scale.multiplyScalar(scaleMultiplier);
         const scaledBBox = new THREE.Box3().setFromObject(model);
         model.position.set(0, -scaledBBox.min.y, 0);

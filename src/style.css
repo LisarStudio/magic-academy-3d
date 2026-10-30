@@ -468,14 +468,13 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 .boss-health-panel {
   position: absolute;
   z-index: 130;
-  top: max(16px, env(safe-area-inset-top));
-  left: 50%;
-  transform: translateX(-50%);
+  right: clamp(20px, 3vw, 48px);
+  bottom: clamp(28px, 5.5vh, 56px);
   display: flex;
   align-items: center;
   gap: 12px;
-  width: min(570px, calc(100vw - 340px));
-  min-width: 300px;
+  width: min(460px, calc(100vw - 32px));
+  min-width: 0;
   padding: 9px 17px 10px 11px;
   border: 1px solid #a5473f;
   clip-path: polygon(2% 0, 98% 0, 100% 14%, 98.7% 50%, 100% 86%, 98% 100%, 2% 100%, 0 86%, 1.3% 50%, 0 14%);
@@ -493,7 +492,8 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 #boss-health-name { color: #ffe0d1; font-size: clamp(13px, 1.8vw, 17px); letter-spacing: .5px; }
 #boss-health-value { margin-left: auto; color: #fff6db; font-size: 13px; font-variant-numeric: tabular-nums; }
 .boss-health-track { width: 100%; height: 17px; overflow: hidden; border: 2px solid #b8473d; border-radius: 5px; background: #190e17; box-shadow: inset 0 2px 5px #000c, 0 0 0 1px #32131b; }
-.boss-health-fill { width: 100%; height: 100%; border-radius: 2px; background-color: #36d05f; box-shadow: 0 0 10px currentColor, inset 0 1px 0 #fff8; transition: width 220ms ease, background-color 220ms ease; }
+.boss-health-fill { width: 100%; height: 100%; border-radius: 2px; background: linear-gradient(90deg, #f23b2e 0%, #ff9a27 58%, #ffd448 100%); box-shadow: 0 0 10px rgba(255, 91, 45, .62), inset 0 1px 0 #fff8; transition: width 260ms ease, background-color 220ms ease; }
+.boss-health-panel.boss-health-reveal .boss-health-fill { transition: width 1250ms cubic-bezier(.16,.78,.2,1); }
 
 .damage-flash-screen {
   position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -994,7 +994,7 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
   .in-game-loading-tip strong { font-size: clamp(11px, 3vw, 14px); }
   .in-game-loading-tip p { font-size: clamp(9px, 2.5vw, 11px); line-height: 1.2; overflow-wrap: anywhere; }
   #btn-retry-in-game-loading { position: absolute; left: 10%; bottom: 31%; width: 80%; }
-  .boss-health-panel { top: max(76px, calc(env(safe-area-inset-top) + 70px)); width: calc(100vw - 32px); min-width: 0; padding: 7px 12px 9px; }
+  .boss-health-panel { top: max(76px, calc(env(safe-area-inset-top) + 70px)); right: 16px; bottom: auto; left: 16px; width: auto; min-width: 0; padding: 7px 12px 9px; }
   .boss-health-track { height: 14px; }
   .cinematic-video { object-position: 60% center; }
   #idle-video { object-position: 74% center; }

@@ -32,6 +32,7 @@ export class HUD {
   private bossHealthPanelEl: HTMLElement;
   private bossHealthFillEl: HTMLElement;
   private bossHealthValueEl: HTMLElement;
+  private bossHealthRevealTimer: number | null = null;
   private lifeCountEl: HTMLElement | null = null;
   private dodgeWarningEl: HTMLElement | null = null;
 
@@ -240,6 +241,31 @@ export class HUD {
     this.updateBossHealth(health, maxHealth);
   }
 
+  /** Reveals the boss meter only after its entrance dialogue has finished. */
+  public revealBossHealth(health: number, maxHealth: number): void {
+    this.bossHealthPanelEl.classList.remove('hidden');
+    this.updateBossHealth(health, maxHealth);
+
+    const targetWidth = this.bossHealthFillEl.style.width;
+    if (this.bossHealthRevealTimer !== null) window.clearTimeout(this.bossHealthRevealTimer);
+    this.bossHealthPanelEl.classList.remove('boss-health-reveal');
+    this.bossHealthFillEl.style.transition = 'none';
+    this.bossHealthFillEl.style.width = '0%';
+    void this.bossHealthFillEl.offsetWidth;
+    this.bossHealthPanelEl.classList.add('boss-health-reveal');
+    this.bossHealthFillEl.style.removeProperty('transition');
+    this.bossHealthFillEl.parentElement?.setAttribute('aria-valuetext', `Jefe: ${Math.ceil(health)} de ${Math.max(1, maxHealth)}`);
+
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (this.bossHealthPanelEl.classList.contains('hidden')) return;
+      this.bossHealthFillEl.style.width = targetWidth;
+    }));
+    this.bossHealthRevealTimer = window.setTimeout(() => {
+      this.bossHealthPanelEl.classList.remove('boss-health-reveal');
+      this.bossHealthRevealTimer = null;
+    }, 1350);
+  }
+
   public updateBossHealth(health: number, maxHealth: number): void {
     const safeMax = Math.max(1, maxHealth);
     const safeHealth = Math.max(0, Math.min(safeMax, health));
@@ -253,6 +279,10 @@ export class HUD {
 
   public hideBossHealth(): void {
     this.bossHealthPanelEl.classList.add('hidden');
+    this.bossHealthPanelEl.classList.remove('boss-health-reveal');
+    if (this.bossHealthRevealTimer !== null) window.clearTimeout(this.bossHealthRevealTimer);
+    this.bossHealthRevealTimer = null;
+    this.bossHealthFillEl.style.width = '';
   }
 
   // Cached values to avoid redundant DOM operations

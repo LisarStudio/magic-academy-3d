@@ -3912,10 +3912,9 @@ export class LevelToyStory {
     this.enemies.push(patrol1, patrol2, patrol3, patrol4, patrol5, lavaGuard1, lavaGuard2, cryptGuard1, cryptGuard2, this.bossEnemy);
 
     this.enemies.forEach(e => {
-      // crab.glb is normalized to a 0.8 m maximum bound. Wukong measures
-      // 1.7 m in the gameplay rig, so 6.375x yields a boss about 3x his height.
-      const scaleMult = e.id === 'crab_boss' ? 6.375 : 1.0;
-      e.loadModel(scaleMult);
+      // The boss loader scales the supplied crab.glb from its measured height
+      // to 3x Wukong. Normal enemies keep the compact shared-template scale.
+      e.loadModel();
       e.setScene(scene); // Give each enemy direct scene access for death VFX
       scene.add(e.mesh);
       this.spellSystem.registerEnemy(e);
@@ -5303,7 +5302,7 @@ export class LevelToyStory {
     this.bossEnemy.isPaused = true;
     this.bossEnemy.mesh.position.copy(this.bossEnemy.arenaCenter!);
     this.bossEnemy.mesh.rotation.set(0, 0, 0);
-    hud.showBossHealth(this.bossEnemy.health, this.bossEnemy.maxHealth);
+    hud.hideBossHealth();
     this.subtitleSystem.hide();
     void this.audioManager.startBossMusic();
 
@@ -5342,7 +5341,7 @@ export class LevelToyStory {
       this.bossEnemy.isPaused = false;
       this.bossEncounterActive = true;
       this.isCinematicPlaying = false;
-      hud.showBossHealth(this.bossEnemy.health, this.bossEnemy.maxHealth);
+      hud.revealBossHealth(this.bossEnemy.health, this.bossEnemy.maxHealth);
     };
     const skipHandler = (event: KeyboardEvent) => {
       if (event.code === 'Space' || event.code === 'Enter' || event.code === 'Escape') {
