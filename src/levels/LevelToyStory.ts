@@ -2146,17 +2146,18 @@ export class LevelToyStory {
     this.player.setColliders(this.levelColliders);
   }
 
-  /** Small terrain-following pond under the authored bridge; never cuts terrain. */
+  /** A compact, muted creek crossing beneath the bridge, never a broad cyan overlay. */
   private createBridgePond(): void {
     const scene = this.sceneManager.scene;
     const centerX = -41.5, centerZ = -63;
     const yaw = Math.atan2(13, 10);
     const axisX = Math.sin(yaw), axisZ = Math.cos(yaw);
-    const halfLength = 5.75, halfWidth = 3.1;
-    const radialSegments = 96, rings = 12;
-    const positions: number[] = [centerX, this.getTerrainHeight(centerX, centerZ) + 0.035, centerZ];
+    // The water crosses the bridge at right angles. The previous 11.5 x 6.2 m
+    // sheet covered the landscape and read as a flat blue platform.
+    const halfLength = 1.35, halfWidth = 3.65;
+    const radialSegments = 56, rings = 7;
+    const positions: number[] = [centerX, this.getTerrainHeight(centerX, centerZ) + 0.012, centerZ];
     const indices: number[] = [];
-
     for (let ring = 1; ring <= rings; ring++) {
       const radius = ring / rings;
       for (let segment = 0; segment < radialSegments; segment++) {
@@ -2165,12 +2166,9 @@ export class LevelToyStory {
         const v = Math.sin(angle) * halfWidth * radius;
         const x = centerX + axisX * u + axisZ * v;
         const z = centerZ + axisZ * u - axisX * v;
-        // Follow the analytic terrain and lift slightly to prevent z-fighting.
-        const y = this.getTerrainHeight(x, z) + 0.035;
-        positions.push(x, y, z);
+        positions.push(x, this.getTerrainHeight(x, z) + 0.012, z);
       }
     }
-
     for (let segment = 0; segment < radialSegments; segment++) {
       const next = (segment + 1) % radialSegments;
       indices.push(0, 1 + segment, 1 + next);
@@ -2185,34 +2183,22 @@ export class LevelToyStory {
         indices.push(a, c, b, b, c, d);
       }
     }
-
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setIndex(indices);
     geometry.computeVertexNormals();
     const material = new THREE.MeshStandardMaterial({
-      color: 0x234c56,
-      roughness: 0.31,
-      metalness: 0.12,
-      emissive: 0x061b21,
-      emissiveIntensity: 0.18,
-      transparent: true,
-      opacity: 0.9,
-      depthWrite: false,
-      side: THREE.DoubleSide,
+      color: 0x54796d, roughness: 0.48, metalness: 0.025,
+      emissive: 0x06100d, emissiveIntensity: 0.035,
+      transparent: true, opacity: 0.56, depthWrite: false, side: THREE.DoubleSide,
     });
     const uniforms = { uTime: { value: 0 } };
     material.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = uniforms.uTime;
-      shader.vertexShader = shader.vertexShader.replace(
-        '#include <common>',
-        '#include <common>\nuniform float uTime;'
-      ).replace(
-        '#include <begin_vertex>',
-        '#include <begin_vertex>\ntransformed.y += 0.0025 * sin(position.x * 1.25 + uTime * 0.75) * cos(position.z * 1.1 - uTime * 0.62);'
-      );
+      shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTime;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed.y += 0.0012 * sin(position.x * 1.6 + uTime * 0.55) * cos(position.z * 1.35 - uTime * 0.42);');
     };
-    material.customProgramCacheKey = () => 'bridge-pond-soft-ripple-v1';
+    material.customProgramCacheKey = () => 'bridge-creek-soft-ripple-v2';
     const water = new THREE.Mesh(geometry, material);
     water.name = 'bridge_pond_water';
     water.frustumCulled = true;
@@ -2221,47 +2207,42 @@ export class LevelToyStory {
     scene.add(water);
     this.bridgeWaterUniforms = uniforms;
 
-    // A restrained warm lantern makes the bridge and its water readable at
-    // night without adding per-rock lights or changing the authored bridge.
-    const centerTerrain = this.getTerrainHeight(centerX, centerZ);
-    const bridgeLantern = new THREE.PointLight(0xffbd72, 1.2, 10, 2);
-    bridgeLantern.position.set(centerX, centerTerrain + 1.6, centerZ);
-    bridgeLantern.castShadow = false;
-    bridgeLantern.name = 'bridge_pond_warm_fill';
-    scene.add(bridgeLantern);
-
-    // Small shared low-poly stones frame the bank. Their positions stay
-    // outside the bridge approaches and they have no individual collisions.
-    const rockGeometry = new THREE.IcosahedronGeometry(0.48, 1);
+    // Small flattened stones frame just the two creek banks; instanced so the
+    // detail costs one draw call and leaves the bridge approaches clear.
+    const rockGeometry = new THREE.IcosahedronGeometry(0.34, 1);
     const rockPositions = rockGeometry.getAttribute('position');
     for (let i = 0; i < rockPositions.count; i++) {
-      const wobble = 0.9 + ((i * 37) % 17) / 100;
-      rockPositions.setXYZ(i, rockPositions.getX(i) * wobble, rockPositions.getY(i) * (0.82 + (i % 5) * 0.035), rockPositions.getZ(i) * wobble);
+      const wobble = 0.82 + ((i * 37) % 23) / 100;
+      rockPositions.setXYZ(i, rockPositions.getX(i) * wobble, rockPositions.getY(i) * (0.58 + (i % 5) * 0.055), rockPositions.getZ(i) * (0.9 + (i % 3) * 0.04));
     }
     rockGeometry.computeVertexNormals();
-    const rockMaterial = new THREE.MeshStandardMaterial({ color: 0x596168, roughness: 0.94, metalness: 0.02 });
-    const rockCount = 16;
-    const rocks = new THREE.InstancedMesh(rockGeometry, rockMaterial, rockCount);
+    const rocks = new THREE.InstancedMesh(
+      rockGeometry,
+      new THREE.MeshStandardMaterial({ color: 0x77776b, roughness: 0.95, metalness: 0.01, vertexColors: true }),
+      12,
+    );
     rocks.name = 'bridge_pond_bank_rocks';
     rocks.castShadow = false;
     rocks.receiveShadow = true;
     const dummy = new THREE.Object3D();
-    for (let i = 0; i < rockCount; i++) {
-      const side = i < rockCount / 2 ? -1 : 1;
-      const sideIndex = i % (rockCount / 2);
-      // Frame the long banks but leave both bridge approaches open.
-      const u = -4.75 + sideIndex * 1.35;
-      const v = side * (halfWidth + 0.32 + (sideIndex % 2) * 0.16);
+    const tints = [0x858276, 0x74766e, 0x8b8171, 0x6f7771];
+    for (let i = 0; i < 12; i++) {
+      const side = i < 6 ? -1 : 1;
+      const sideIndex = i % 6;
+      const u = -0.98 + sideIndex * 0.39 + (sideIndex % 2) * 0.1;
+      const v = side * (halfWidth + 0.17 + (sideIndex % 3) * 0.1);
       const x = centerX + axisX * u + axisZ * v;
       const z = centerZ + axisZ * u - axisX * v;
-      dummy.position.set(x, this.getTerrainHeight(x, z) + 0.08, z);
+      dummy.position.set(x, this.getTerrainHeight(x, z) - 0.015, z);
       dummy.rotation.set(((i * 17) % 13) * 0.035, i * 1.73, ((i * 11) % 9) * 0.04);
-      const scale = 0.55 + ((i * 7) % 5) * 0.12;
-      dummy.scale.set(scale * 1.15, scale * 0.72, scale);
+      const scale = 0.65 + ((i * 7) % 5) * 0.15;
+      dummy.scale.set(scale * 1.2, scale * 0.58, scale * 0.9);
       dummy.updateMatrix();
       rocks.setMatrixAt(i, dummy.matrix);
+      rocks.setColorAt(i, new THREE.Color(tints[i % tints.length]));
     }
     rocks.instanceMatrix.needsUpdate = true;
+    if (rocks.instanceColor) rocks.instanceColor.needsUpdate = true;
     scene.add(rocks);
   }
 
@@ -3525,78 +3506,200 @@ export class LevelToyStory {
   private loadBridgeAsset(): void {
     if (this.bridgeAsset) return;
     new GLTFLoader().load(import.meta.env.BASE_URL + `assets/environment/wukong-bridge-original.glb?v=${__APP_VERSION__}`, (gltf) => {
-      const bridge = gltf.scene;
-      bridge.name = 'A_bridge_original_asset';
-      bridge.updateMatrixWorld(true);
-      const sourceBounds = new THREE.Box3().setFromObject(bridge);
+      const source = gltf.scene;
+      source.name = 'A_bridge_original_asset_source';
+      source.updateMatrixWorld(true);
+      const sourceBounds = new THREE.Box3().setFromObject(source);
       const sourceSize = sourceBounds.getSize(new THREE.Vector3());
-      // Preserve the source asset's proportions and roughly 10 m authored span.
       const scale = 9.5 / Math.max(sourceSize.x, sourceSize.z, 0.0001);
-      bridge.scale.setScalar(scale);
-      bridge.rotation.y = Math.PI * 0.5;
-      // Bring the supplied bridge onto the traversed west garden route so it
-      // reads as a deliberate landmark instead of disappearing at the far edge.
+      const deckSource = source.getObjectByName('bridge_mesh_3') as THREE.Mesh | null;
+      const sourceMaterial = deckSource?.material;
+      const woodMaterial = (Array.isArray(sourceMaterial) ? sourceMaterial[0] : sourceMaterial)?.clone() as THREE.MeshStandardMaterial | undefined;
+      if (!deckSource?.isMesh || !woodMaterial) {
+        console.error('[LevelToyStory] Original A bridge lacks the exported timber deck mesh/material');
+        return;
+      }
+
+      // The supplied GLB contains the authored wood plank and texture but the
+      // deck is exported as one loose board, with a thin curve and no complete
+      // rail assembly. Repeat that real plank as an instanced arched deck and
+      // finish the missing red lacquer rails/supports in the same wood finish.
+      const deckGeometry = deckSource.geometry.clone();
+      deckGeometry.computeBoundingBox();
+      const deckCenter = deckGeometry.boundingBox!.getCenter(new THREE.Vector3());
+      deckGeometry.translate(-deckCenter.x, -deckCenter.y, -deckCenter.z);
+      deckGeometry.scale(scale * 1.38, scale, scale);
+      woodMaterial.color.set(0xd2aa79);
+      woodMaterial.roughness = Math.max(0.72, woodMaterial.roughness);
+      woodMaterial.metalness = 0;
+      woodMaterial.side = THREE.DoubleSide;
+      woodMaterial.needsUpdate = true;
+
+      const bridge = new THREE.Group();
+      bridge.name = 'A_bridge_original_asset';
       const bridgeX = -41.5, bridgeZ = -63;
       const bridgeYaw = Math.atan2(13, 10);
-      const halfSpan = 4.45;
+      const halfSpan = 5.7;
       const axisX = Math.sin(bridgeYaw), axisZ = Math.cos(bridgeYaw);
       const lowEnd = this.getTerrainHeight(bridgeX - axisX * halfSpan, bridgeZ - axisZ * halfSpan);
       const highEnd = this.getTerrainHeight(bridgeX + axisX * halfSpan, bridgeZ + axisZ * halfSpan);
       const grade = (highEnd - lowEnd) / (halfSpan * 2);
-      // Follow the actual garden route and its grade. This preserves the
-      // Blender mesh proportions while bringing both deck ends to the banks.
-      bridge.rotation.set(-Math.atan(grade), bridgeYaw, 0);
-      bridge.position.set(bridgeX, this.getTerrainHeight(bridgeX, bridgeZ), bridgeZ);
-      bridge.updateMatrixWorld(true);
-      const bounds = new THREE.Box3().setFromObject(bridge);
-      bridge.position.y += Math.min(lowEnd, highEnd) - bounds.min.y + 0.015;
+      bridge.position.set(bridgeX, (lowEnd + highEnd) * 0.5, bridgeZ);
+      // The local deck profile already follows the grade; only rotate it into
+      // the route direction so slope is not applied twice.
+      bridge.rotation.y = bridgeYaw;
 
-      // Preserve every authored mesh/material. Add only hidden collision
-      // proxies: the GLB's thin deck is not a reliable continuous walk surface
-      // for the player's downward ray, and decorative rails are not wall colliders.
-      const deckSource = bridge.getObjectByName('bridge_mesh_3') as THREE.Mesh | null;
-      if (deckSource?.isMesh) deckSource.userData.bridgeWalkableSurface = true;
+      const deckHeight = (z: number) => grade * z + 0.82 * (1 - (z * z) / (halfSpan * halfSpan));
+      const deckCount = 55;
+      const deck = new THREE.InstancedMesh(deckGeometry, woodMaterial, deckCount);
+      deck.name = 'bridge_arched_deck_original_wood_instanced';
+      deck.castShadow = true;
+      deck.receiveShadow = true;
+      const dummy = new THREE.Object3D();
+      for (let i = 0; i < deckCount; i++) {
+        const z = -halfSpan + ((i + 0.5) / deckCount) * (halfSpan * 2);
+        const slope = grade - (1.64 * z) / (halfSpan * halfSpan);
+        dummy.position.set(0, deckHeight(z), z);
+        dummy.rotation.set(-Math.atan(slope), 0, 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        deck.setMatrixAt(i, dummy.matrix);
+      }
+      deck.instanceMatrix.needsUpdate = true;
+      bridge.add(deck);
 
-      const collisionRoot = new THREE.Group();
-      collisionRoot.name = 'bridge_collision_and_original_visual';
-      collisionRoot.add(bridge);
-      bridge.updateMatrixWorld(true);
-      const deckBounds = deckSource?.isMesh
-        ? new THREE.Box3().setFromObject(deckSource)
-        : new THREE.Box3().setFromObject(bridge);
-      const deckY = deckBounds.max.y - 0.09;
-      const collisionMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
-      const deckCollider = new THREE.Mesh(new THREE.BoxGeometry(8.7, 0.22, 2.25), collisionMaterial);
-      deckCollider.name = 'bridge_walkable_deck_collider';
-      deckCollider.position.set(bridgeX, deckY, bridgeZ);
-      deckCollider.rotation.set(-Math.atan(grade), bridgeYaw, 0);
-      deckCollider.userData.walkableSurface = true;
-      collisionRoot.add(deckCollider);
-
-      // Solid side guards stop walking through the bridge structure while
-      // leaving both deck approaches open. They are not walkable surfaces.
+      const railMaterial = woodMaterial.clone();
+      railMaterial.color.set(0x783125);
+      railMaterial.roughness = 0.78;
+      const topRailMaterial = woodMaterial.clone();
+      topRailMaterial.color.set(0x9b4b32);
+      topRailMaterial.roughness = 0.72;
+      const railHalfWidth = 1.18;
+      const railHeight = 0.92;
+      const railCurvePoints = (side: number, lift: number) => Array.from({ length: 25 }, (_, i) => {
+        const z = -halfSpan + (i / 24) * (halfSpan * 2);
+        return new THREE.Vector3(side * railHalfWidth, deckHeight(z) + lift, z);
+      });
       for (const side of [-1, 1]) {
-        const railCollider = new THREE.Mesh(new THREE.BoxGeometry(8.7, 0.9, 0.18), collisionMaterial);
-        railCollider.name = `bridge_solid_side_${side}`;
-        railCollider.position.set(
-          bridgeX + Math.cos(bridgeYaw) * side * 1.02,
-          deckY + 0.47,
-          bridgeZ - Math.sin(bridgeYaw) * side * 1.02,
+        const upper = new THREE.Mesh(
+          new THREE.TubeGeometry(new THREE.CatmullRomCurve3(railCurvePoints(side, railHeight)), 56, 0.105, 8, false),
+          topRailMaterial,
         );
-        railCollider.rotation.set(-Math.atan(grade), bridgeYaw, 0);
-        railCollider.userData.solidPlayerBlocker = true;
-        collisionRoot.add(railCollider);
+        upper.name = `bridge_lacquered_arch_handrail_${side}`;
+        upper.castShadow = true;
+        upper.receiveShadow = true;
+        bridge.add(upper);
+        const lower = new THREE.Mesh(
+          new THREE.TubeGeometry(new THREE.CatmullRomCurve3(railCurvePoints(side, 0.22)), 56, 0.06, 6, false),
+          railMaterial,
+        );
+        lower.name = `bridge_lower_rail_${side}`;
+        lower.castShadow = true;
+        bridge.add(lower);
+
+        const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.13, 0.84, 0.13), railMaterial, 9);
+        posts.name = `bridge_balusters_${side}`;
+        posts.castShadow = true;
+        posts.receiveShadow = true;
+        for (let i = 0; i < 9; i++) {
+          const z = -halfSpan + 0.2 + (i / 8) * (halfSpan * 2 - 0.4);
+          const slope = grade - (1.64 * z) / (halfSpan * halfSpan);
+          dummy.position.set(side * railHalfWidth, deckHeight(z) + 0.48, z);
+          dummy.rotation.set(-Math.atan(slope), 0, 0);
+          dummy.scale.set(1, 1, 1);
+          dummy.updateMatrix();
+          posts.setMatrixAt(i, dummy.matrix);
+        }
+        posts.instanceMatrix.needsUpdate = true;
+        bridge.add(posts);
       }
 
-      this.sceneManager.scene.add(collisionRoot);
-      this.bridgeAsset = collisionRoot;
+      const stringerMaterial = railMaterial.clone();
+      stringerMaterial.color.set(0x4f261e);
+      for (const side of [-1, 1]) {
+        const points = Array.from({ length: 21 }, (_, i) => {
+          const z = -halfSpan + (i / 20) * (halfSpan * 2);
+          return new THREE.Vector3(side * 0.98, deckHeight(z) - 0.17, z);
+        });
+        const stringer = new THREE.Mesh(
+          new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 48, 0.12, 8, false),
+          stringerMaterial,
+        );
+        stringer.name = `bridge_arch_stringer_${side}`;
+        stringer.castShadow = true;
+        stringer.receiveShadow = true;
+        bridge.add(stringer);
+      }
+
+      // Curved mesh collider makes the feet follow the actual arch instead of
+      // snapping into a flat box or sinking through gaps between the planks.
+      const collisionMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+      const positions: number[] = [];
+      const indices: number[] = [];
+      const steps = 32;
+      for (let i = 0; i <= steps; i++) {
+        const z = -halfSpan + (i / steps) * (halfSpan * 2);
+        const y = deckHeight(z) + 0.045;
+        positions.push(-1.14, y, z, 1.14, y, z);
+        if (i < steps) {
+          const a = i * 2;
+          indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+        }
+      }
+      const walkGeometry = new THREE.BufferGeometry();
+      walkGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      walkGeometry.setIndex(indices);
+      walkGeometry.computeVertexNormals();
+      const deckCollider = new THREE.Mesh(walkGeometry, collisionMaterial);
+      deckCollider.name = 'bridge_curved_walkable_deck_collider';
+      deckCollider.userData.walkableSurface = true;
+      bridge.add(deckCollider);
+
+      source.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.geometry.dispose();
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const material of materials) material.dispose();
+      });
+
+      // Curved sidewall colliders follow the arched deck, blocking walks through
+      // the rails without placing a flat invisible wall across the approach.
+      for (const side of [-1, 1]) {
+        const wallPositions: number[] = [];
+        const wallIndices: number[] = [];
+        const wallSegments = 32;
+        for (let i = 0; i <= wallSegments; i++) {
+          const z = -halfSpan + (i / wallSegments) * (halfSpan * 2);
+          const xInner = side * (railHalfWidth - 0.07);
+          const xOuter = side * (railHalfWidth + 0.07);
+          const bottom = deckHeight(z) + 0.08;
+          const top = deckHeight(z) + 0.84;
+          wallPositions.push(xInner, bottom, z, xOuter, bottom, z, xInner, top, z, xOuter, top, z);
+          if (i < wallSegments) {
+            const a = i * 4, b = a + 4;
+            wallIndices.push(a, b, a + 2, b, b + 2, a + 2, a + 1, a + 3, b + 1, b + 1, a + 3, b + 3);
+          }
+        }
+        const wallGeometry = new THREE.BufferGeometry();
+        wallGeometry.setAttribute('position', new THREE.Float32BufferAttribute(wallPositions, 3));
+        wallGeometry.setIndex(wallIndices);
+        wallGeometry.computeVertexNormals();
+        const railCollider = new THREE.Mesh(wallGeometry, collisionMaterial);
+        railCollider.name = `bridge_solid_side_${side}`;
+        railCollider.userData.solidPlayerBlocker = true;
+        bridge.add(railCollider);
+      }
+
+      this.sceneManager.scene.add(bridge);
+      this.bridgeAsset = bridge;
       const center = new THREE.Vector3(bridgeX, 0, bridgeZ);
       const playerPosition = this.player.mesh.position;
       const dx = playerPosition.x - bridgeX, dz = playerPosition.z - bridgeZ;
       const active = dx * dx + dz * dz <= 18 * 18;
-      this.structureColliderCandidates.push({ root: collisionRoot, center, radius: 18, active });
+      this.structureColliderCandidates.push({ root: bridge, center, radius: 18, active });
       if (active) {
-        this.levelColliders.push(collisionRoot);
+        this.levelColliders.push(bridge);
         this.player.setColliders(this.levelColliders);
         this.cameraController.setCollisionObjects(this.levelColliders);
       }
