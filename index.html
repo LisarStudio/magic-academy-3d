@@ -13,9 +13,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/magic-academy-3d/assets/index-ChH4-bqL.js"></script>
+    <script type="module" crossorigin src="/magic-academy-3d/assets/index-Ck7hvSGp.js"></script>
     <link rel="modulepreload" crossorigin href="/magic-academy-3d/assets/three-vendor-C-fLVj9_.js">
-    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-DU7EStaV.css">
+    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-JUWYGOKP.css">
   </head>
   <body>
     <div id="app">
@@ -67,9 +67,12 @@
         <!-- Fade to Black Overlay -->
         <div id="screen-fade" class="screen-fade-overlay hidden"></div>
 
-        <section id="boss-health-panel" class="boss-health-panel hidden" role="status" aria-label="Vida del jefe Cangrejo">
-          <div class="boss-health-heading"><span>🦀</span><span id="boss-health-name">Cangrejo</span><span id="boss-health-value">9 / 9</span></div>
-          <div class="boss-health-track"><div id="boss-health-fill" class="boss-health-fill"></div></div>
+        <section id="boss-health-panel" class="boss-health-panel hidden" role="status" aria-label="Salud del General Cangrejo Demonio">
+          <div class="boss-health-portrait"><img src="./assets/ui/crab-boss-portrait.png" alt="" /></div>
+          <div class="boss-health-content">
+            <div class="boss-health-heading"><span id="boss-health-name">GENERAL CANGREJO DEMONIO</span><span id="boss-health-value">9 / 9</span></div>
+            <div class="boss-health-track" role="progressbar" aria-label="Salud del jefe" aria-valuemin="0" aria-valuemax="9" aria-valuenow="9"><div id="boss-health-fill" class="boss-health-fill"></div></div>
+          </div>
         </section>
 
         <!-- Objectives & Status HUD Top Left -->
@@ -88,7 +91,12 @@
                 <span id="mp-text" class="bar-text imperial-mana-value">100 / 100</span>
             </div>
           </div>
-          <div id="life-count" class="life-count imperial-life-count" aria-label="Vidas restantes">♥ ♥ ♥</div>
+          <div id="life-count" class="life-count imperial-life-count" aria-label="Vidas restantes">×3</div>
+          <div id="hud-skill-baculos" class="hud-skill-baculos" aria-label="Habilidades de báculo">
+            <span class="imperial-life-socket"><img src="./assets/ui/hud-baculo-vida.png" alt="" aria-hidden="true" /></span>
+            <span class="imperial-life-socket"><img src="./assets/ui/hud-baculo-vida.png" alt="" aria-hidden="true" /></span>
+            <span class="imperial-life-socket"><img src="./assets/ui/hud-baculo-vida.png" alt="" aria-hidden="true" /></span>
+          </div>
         </div>
         
         <div id="objective-container" class="hud-panel hidden">
