@@ -1,11 +1,13 @@
 {
   "name": "magic-academy-3d",
   "private": true,
-  "version": "0.0.32",
+  "version": "0.0.33",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:developer": "vite --host 0.0.0.0",
     "build": "tsc && vite build",
+    "build:public": "tsc && vite build --mode production",
     "preview": "vite preview"
   },
   "devDependencies": {

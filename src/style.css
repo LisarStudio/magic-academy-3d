@@ -492,7 +492,7 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 #boss-health-name { color: #ffe0d1; font-size: clamp(13px, 1.8vw, 17px); letter-spacing: .5px; }
 #boss-health-value { margin-left: auto; color: #fff6db; font-size: 13px; font-variant-numeric: tabular-nums; }
 .boss-health-track { width: 100%; height: 17px; overflow: hidden; border: 2px solid #b8473d; border-radius: 5px; background: #190e17; box-shadow: inset 0 2px 5px #000c, 0 0 0 1px #32131b; }
-.boss-health-fill { width: 100%; height: 100%; border-radius: 2px; background: linear-gradient(90deg, #f23b2e 0%, #ff9a27 58%, #ffd448 100%); box-shadow: 0 0 10px rgba(255, 91, 45, .62), inset 0 1px 0 #fff8; transition: width 260ms ease, background-color 220ms ease; }
+.boss-health-fill { width: 100%; height: 100%; border-radius: 2px; background-color: #36d05f; background-image: none; box-shadow: 0 0 10px rgba(54, 208, 95, .46), inset 0 1px 0 #fff8; transition: width 260ms ease, background-color 220ms ease, box-shadow 220ms ease; }
 .boss-health-panel.boss-health-reveal .boss-health-fill { transition: width 1250ms cubic-bezier(.16,.78,.2,1); }
 
 .damage-flash-screen {

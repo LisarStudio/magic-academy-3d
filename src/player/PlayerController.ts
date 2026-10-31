@@ -142,6 +142,10 @@ export class PlayerController {
 
     // Initialize proportional dual-mount staff system (back mount & hand mount)
     this.initStaffMeshes();
+    // Prepare the chest presentation mesh up front. The weapon pickup must not
+    // clone/rebuild a rigged attachment during the interaction.
+    this.staffPickupProp = this.createStaffVisual('staff_pickup_prop', 0.62);
+    this.staffPickupProp.visible = false;
     this.setStaffVisibility(false);
   }
 
@@ -199,6 +203,7 @@ export class PlayerController {
   public staffBackMesh: THREE.Group | null = null;
   public staffHandMesh: THREE.Group | null = null;
   private staffModelTemplate: THREE.Group | null = null;
+  private staffPickupProp: THREE.Group | null = null;
 
   private createStaffVisual(name: string, scale: number): THREE.Group {
     const mount = new THREE.Group();
@@ -326,7 +331,10 @@ export class PlayerController {
 
   /** Clone the already-built staff geometry/materials for chest presentation. */
   public cloneStaffProp(name = 'staff_pickup_prop'): THREE.Group | null {
-    const source = this.staffBackMesh || this.staffHandMesh;
+    // Shader warmup gets a cheap shared-geometry clone of the neutral pickup
+    // prefab. Never clone the back socket: its inverse parent-scale is specific
+    // to that mount and sends the chest prop to the wrong transform space.
+    const source = this.staffPickupProp;
     if (!source) return null;
     const prop = source.clone(true);
     prop.name = name;
@@ -335,6 +343,28 @@ export class PlayerController {
     prop.scale.set(1, 1, 1);
     prop.visible = true;
     return prop;
+  }
+
+  /** Reuse the prebuilt 3D pickup prop; ownership transfers to the chest scene. */
+  public takePreparedStaffPickupProp(): THREE.Group | null {
+    const prop = this.staffPickupProp;
+    if (!prop) return null;
+    if (prop.parent) prop.parent.remove(prop);
+    prop.name = 'chest_staff_prop';
+    prop.position.set(0, 0, 0);
+    prop.rotation.set(0, 0, 0);
+    prop.scale.set(1, 1, 1);
+    prop.visible = true;
+    return prop;
+  }
+
+  public releasePreparedStaffPickupProp(): void {
+    if (!this.staffPickupProp) return;
+    if (this.staffPickupProp.parent) this.staffPickupProp.parent.remove(this.staffPickupProp);
+    this.staffPickupProp.visible = false;
+    this.staffPickupProp.position.set(0, 0, 0);
+    this.staffPickupProp.rotation.set(0, 0, 0);
+    this.staffPickupProp.scale.set(1, 1, 1);
   }
 
   public useMana(amount: number): boolean {
@@ -723,6 +753,10 @@ export class PlayerController {
     const isSprinting = input.isRunning || touchMag > 0.45;
     const currentSpeed = isSprinting ? this.runSpeed : this.moveSpeed;
 
+    // A hit flinch is interruptible: movement should switch the pose on this
+    // same simulation tick instead of sliding with Reaction still clamped.
+    if (isMoving) this.interruptHitReactionForCommand(input);
+
     if (isMoving) {
       this.velocity.x = moveDir.x * currentSpeed;
       this.velocity.z = moveDir.z * currentSpeed;
@@ -1047,6 +1081,28 @@ export class PlayerController {
     if (this.mesh.position.y < -10 && !this.isMovementLocked) {
       this.respawnFromAbyss();
     }
+  }
+
+  /** Let a new player command cancel only the temporary damage reaction. */
+  public interruptHitReactionForCommand(input?: InputManager): void {
+    if (this.isDying || this.isControlsLocked || this.isMovementLocked) return;
+
+    let nextState: 'Idle' | 'Run' | 'Sprint' | 'Jump' | 'Fall' = 'Idle';
+    if (!this.isGrounded) {
+      const highFall = this.velocity.y < -8 && this.airApexY - this.mesh.position.y > 2;
+      nextState = highFall ? 'Fall' : 'Jump';
+    } else if (input) {
+      const moving = input.moveForward || input.moveBackward || input.moveLeft || input.moveRight ||
+        Math.hypot(input.touchAnalogX, input.touchAnalogZ) > 0.15;
+      if (moving) {
+        const touchMagnitude = Math.hypot(input.touchAnalogX, input.touchAnalogZ);
+        nextState = input.isRunning || touchMagnitude > 0.45 ? 'Sprint' : 'Run';
+      }
+    } else if (Math.hypot(this.velocity.x, this.velocity.z) > 0.08) {
+      nextState = 'Run';
+    }
+
+    this.animationController.interruptHitReaction(nextState);
   }
 
   public triggerAttackAura(): void {

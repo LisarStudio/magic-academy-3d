@@ -20,28 +20,28 @@ export class LampMothSystem {
   private readonly interval = 1 / 30;
 
   constructor(scene: THREE.Scene, anchors: THREE.Vector3[], mobile: boolean) {
-    const perAnchor = mobile ? 6 : 9;
+    const perAnchor = mobile ? 12 : 18;
     const count = anchors.length * perAnchor;
-    const bodyGeometry = new THREE.SphereGeometry(0.043, 8, 6);
+    const bodyGeometry = new THREE.SphereGeometry(0.065, 8, 6);
     // Two small flattened wings read as fluttering insects, not as a large
     // translucent oval around the lantern.
     const wingGeometry = new THREE.SphereGeometry(0.052, 8, 5);
-    const glowGeometry = new THREE.SphereGeometry(0.085, 8, 6);
+    const glowGeometry = new THREE.SphereGeometry(0.15, 8, 6);
     const bodyMaterial = new THREE.MeshBasicMaterial({
-      color: 0xfff1bd,
+      color: 0xffffdc,
       toneMapped: false,
     });
     const wingMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffe2a0,
+      color: 0xffedaa,
       transparent: true,
-      opacity: 0.86,
+      opacity: 0.94,
       toneMapped: false,
       side: THREE.DoubleSide,
     });
     const glowMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffb83f,
+      color: 0xffcf51,
       transparent: true,
-      opacity: 0.32,
+      opacity: 0.78,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       toneMapped: false,
@@ -72,20 +72,15 @@ export class LampMothSystem {
           anchor: anchor.clone(),
           phase: anchorIndex * 1.37 + i * 2.41,
           speed: 0.62 + ((i * 13 + anchorIndex * 7) % 9) * 0.045,
-          radius: 0.52 + (i % 3) * 0.18,
-          height: 0.48 + (i % 3) * 0.24,
+          radius: 0.48 + (i % 3) * 0.17,
+          height: 0.38 + (i % 3) * 0.24,
         });
       }
     });
     this.updateMatrices();
   }
 
-  update(delta: number, playerPosition: THREE.Vector3): void {
-    const maxDistance = window.innerWidth <= 1024 || navigator.maxTouchPoints > 0 ? 42 : 78;
-    const inRange = this.agents.some(agent => agent.anchor.distanceToSquared(playerPosition) < maxDistance * maxDistance);
-    this.glowMesh.visible = this.bodyMesh.visible = this.wingMesh.visible = inRange;
-    if (!inRange) return;
-
+  update(delta: number): void {
     this.elapsed += Math.min(delta, 0.1);
     this.lastUpdate += Math.min(delta, 0.1);
     if (this.lastUpdate < this.interval) return;

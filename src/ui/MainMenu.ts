@@ -13,6 +13,7 @@ interface MainMenuCallbacks {
   onStateChange: (state: MenuState) => void;
   onStartIntroMusic: () => Promise<boolean>;
   onBeginTransition: (mode: StartMode) => void;
+  onTransitionVideoReady?: () => void;
   onTransitionComplete: (mode: StartMode) => Promise<void> | void;
   onPreferences: (preferences: MenuPreferences) => void;
   onSelect: () => void;
@@ -65,18 +66,18 @@ export class MainMenu {
     const base = import.meta.env.BASE_URL;
     const mobileMedia = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
     const introPath = mobileMedia
-      ? 'assets/cinematics/optimized/wukong-intro-mobile.mp4'
-      : 'assets/cinematics/optimized/wukong-intro-desktop.mp4';
+      ? 'assets/cinematics/optimized/wukong-intro-mobile-celestial.mp4'
+      : 'assets/cinematics/optimized/wukong-intro-desktop-celestial.mp4';
     const idlePath = mobileMedia
-      ? 'assets/cinematics/optimized/wukong-menu-idle-mobile.mp4'
-      : 'assets/cinematics/optimized/wukong-menu-idle-desktop.mp4';
+      ? 'assets/cinematics/optimized/wukong-menu-idle-mobile-celestial.mp4'
+      : 'assets/cinematics/optimized/wukong-menu-idle-desktop-celestial.mp4';
     this.introVideo.setAttribute('fetchpriority', 'high');
     this.introVideo.src = `${base}${introPath}?v=${__APP_VERSION__}`;
     this.idleVideo.preload = 'none';
     this.idleVideo.src = `${base}${idlePath}?v=${__APP_VERSION__}`;
     this.idleVideo.loop = true;
     this.startVideo.preload = 'none';
-    this.startVideo.src = `${base}assets/cinematics/wukong-start.mp4?v=${__APP_VERSION__}`;
+    this.startVideo.src = `${base}assets/cinematics/wukong-start-celestial.mp4?v=${__APP_VERSION__}`;
     this.introVideo.addEventListener('progress', () => this.updateIntroProgress());
     this.introVideo.addEventListener('loadedmetadata', () => this.updateIntroProgress());
     this.loadPreferences();
@@ -581,6 +582,10 @@ export class MainMenu {
       // Keep the levitating menu visible until a decoded start-video frame is presented.
       this.startVideo.classList.add('is-visible');
       this.mainMenu.classList.add('is-leaving');
+      // Start preparing gameplay only after the first cinematic frame is on
+      // screen. This overlaps level setup with the transition without delaying
+      // video startup or starving its initial decode.
+      this.callbacks.onTransitionVideoReady?.();
       await Promise.all([
         this.waitForOpacityTransition(this.startVideo),
         this.waitForOpacityTransition(this.mainMenu)

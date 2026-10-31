@@ -46,6 +46,8 @@ export class Game {
   private isPaused = false;
   private renderQuality = 1;
   private gameplayPrepared = false;
+  private gameplayPreparation: Promise<void> | null = null;
+  private gameplayWarmupScheduled = false;
   private frameTimeAverageMs = 16.67;
   private renderScale = 1;
   private performanceSampleElapsed = 0;
@@ -72,9 +74,14 @@ export class Game {
         this.inputManager.resetInputs();
         if (!this.hud.isTouchDevice()) this.inputManager.requestPointerLock();
       },
+      onTransitionVideoReady: () => {
+        void this.ensureGameplayPrepared().catch((error: unknown) => {
+          console.error('[Game] Gameplay preparation failed during the start cinematic:', error);
+        });
+      },
       onTransitionComplete: async (mode) => {
         this.mainMenu.setInGameLoadingIndeterminate('Cargando a Wukong…');
-        await this.prepareGameplay();
+        await this.ensureGameplayPrepared();
         this.beginGameplay(mode);
         this.sceneManager.render();
       },
@@ -159,6 +166,7 @@ export class Game {
     this.player.isMovementLocked = true;
     this.player.onLivesChange = (lives) => this.hud.setLives(lives);
     this.player.onGameOver = () => this.enterGameOver();
+    this.inputManager.onPlayerCommand = () => this.player?.interruptHitReactionForCommand(this.inputManager);
     this.inputManager.canInteract = () => this.canUseGameplayActions();
     this.inputManager.canAttack = () => this.canUseGameplayActions();
 
@@ -206,41 +214,12 @@ export class Game {
     );
     this.level01.setGrassQuality(this.renderQuality);
 
+    // The continue pose is presentation-only. Do not hold the first playable
+    // frame for another multi-megabyte FBX download and retarget pass.
     await this.level01.init();
-
-    // Continue is needed only at the rare final-life transition, but it must
-    // already be retargeted when that transition happens. This is still inside
-    // the in-game loading screen, before controls and hazard damage are enabled.
-    const continueClip = await this.assetManager.loadContinueAnimation(this.player.mesh);
-    if (continueClip?.tracks.length) {
-      this.animationController.addClips([continueClip]);
-    } else {
-      console.warn('[Game] Continue animation unavailable; game-over will use the prepared idle fallback.');
-    }
 
     // Focus camera on target AFTER the level is initialized and player is spawned at Checkpoint 0!
     this.cameraController.setTarget(this.player.mesh);
-
-    // Pre-compile WebGL shaders & pipeline into GPU memory to eliminate runtime shader compilation stutter
-    const backStaffWasVisible = this.player.staffBackMesh?.visible ?? false;
-    const handStaffWasVisible = this.player.staffHandMesh?.visible ?? false;
-    try {
-      if (isLowPowerDevice()) {
-        console.info('[Game] Skipping full-scene shader compilation on a constrained device.');
-      } else {
-        // The sockets are normally hidden until pickup. Compile their shared
-        // materials before the player can interact with the chest.
-        if (this.player.staffBackMesh) this.player.staffBackMesh.visible = true;
-        if (this.player.staffHandMesh) this.player.staffHandMesh.visible = true;
-        this.sceneManager.renderer.compile(this.sceneManager.scene, this.sceneManager.camera);
-      }
-      if (!isLowPowerDevice()) console.log('[Game] Pre-compiled scene shaders.');
-    } catch (e) {
-      console.warn('[Game] Shader precompilation warning:', e);
-    } finally {
-      if (this.player.staffBackMesh) this.player.staffBackMesh.visible = backStaffWasVisible;
-      if (this.player.staffHandMesh) this.player.staffHandMesh.visible = handStaffWasVisible;
-    }
 
     // Compile only the already-loaded 3D staff shaders on mobile. This avoids
     // paying the first-use GPU compilation cost at the chest/first attack
@@ -261,14 +240,8 @@ export class Game {
       }
     }
 
-    // The underground room exists from level initialization but is out of the
-    // starting camera view. Compile its materials now on both desktop and
-    // mobile instead of letting the first cave visit pay that GPU cost.
-    try {
-      await this.level01.precompileCuriosityCrypt(this.sceneManager.renderer, this.sceneManager.camera);
-    } catch (error) {
-      console.warn('[Game] Crypt shader warmup failed; the prepared cave remains available.', error);
-    }
+    // Full-scene and crypt shaders are compiled asynchronously during browser
+    // idle time after the first playable frame (see scheduleGameplayWarmup).
 
     // 6. Bind Player & HUD Status Callbacks
     this.player.onHealthChange = (hp, maxHp) => this.hud.setHealth(hp, maxHp);
@@ -327,7 +300,7 @@ export class Game {
           this.level01.enemies.forEach(enemy => {
             if (enemy.isAlive() && enemy.isBossVulnerable) {
               const enemyPos = enemy.getPosition();
-              const dist = playerPos.distanceTo(enemyPos);
+              const dist = enemy.id === 'crab_boss' ? enemy.distanceToBossHurtbox(playerPos) : playerPos.distanceTo(enemyPos);
               const maxHitDist = enemy.id === 'crab_boss' ? 5.2 : 3.0;
               if (dist < maxHitDist) {
                 const toEnemy = enemyPos.clone().sub(playerPos);
@@ -447,7 +420,7 @@ export class Game {
             this.level01.enemies.forEach(enemy => {
               if (enemy.isAlive() && enemy.isBossVulnerable) {
                 const enemyPos = enemy.getPosition();
-                const dist = playerPos.distanceTo(enemyPos);
+                const dist = enemy.id === 'crab_boss' ? enemy.distanceToBossHurtbox(playerPos) : playerPos.distanceTo(enemyPos);
                 const maxHitDist = enemy.id === 'crab_boss' ? 5.2 : 2.6;
                 if (dist < maxHitDist) {
                   const dirToEnemy = enemyPos.clone().sub(playerPos);
@@ -512,6 +485,57 @@ export class Game {
       }
     };
     this.gameplayPrepared = true;
+  }
+
+  /** Share one in-flight preparation between the cinematic and its end event.
+   * Without this guard both callbacks could build a second player/level while
+   * the first request was still loading. */
+  private ensureGameplayPrepared(): Promise<void> {
+    if (this.gameplayPrepared) return Promise.resolve();
+    if (!this.gameplayPreparation) {
+      const preparation = this.prepareGameplay();
+      this.gameplayPreparation = preparation;
+      void preparation.catch(() => {
+        if (this.gameplayPreparation === preparation) this.gameplayPreparation = null;
+      });
+    }
+    return this.gameplayPreparation!;
+  }
+
+  /** Compile remaining scene variants only when the browser has spare time.
+   * Synchronous full-scene renderer.compile() used to block the main thread
+   * during startup, producing the long freeze before the first playable frame. */
+  private scheduleGameplayWarmup(): void {
+    if (this.gameplayWarmupScheduled || !this.gameplayPrepared || !this.level01) return;
+    this.gameplayWarmupScheduled = true;
+
+    const warm = async (): Promise<void> => {
+      try {
+        await this.sceneManager.renderer.compileAsync(
+          this.sceneManager.scene,
+          this.sceneManager.camera
+        );
+      } catch (error) {
+        console.warn('[Game] Deferred scene shader warmup failed; materials will compile on demand.', error);
+      }
+      try {
+        await this.level01.precompileCuriosityCrypt(
+          this.sceneManager.renderer,
+          this.sceneManager.camera
+        );
+      } catch (error) {
+        console.warn('[Game] Deferred crypt shader warmup failed; the crypt remains available.', error);
+      }
+    };
+
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    };
+    if (idleWindow.requestIdleCallback) {
+      idleWindow.requestIdleCallback(() => { void warm(); }, { timeout: 12000 });
+    } else {
+      window.setTimeout(() => { void warm(); }, 3000);
+    }
   }
 
   private initUIListeners(): void {
@@ -585,14 +609,16 @@ export class Game {
     void this.level01.loadGrassInBackground();
     // These optional, larger FBX clips are parsed and retargeted one at a time
     // after play starts, so they don't delay mobile startup or the first frame.
-    void this.assetManager.loadSupplementalPlayerClips(this.player.mesh)
-      .then((clips) => {
-        this.animationController.addClips(clips);
-        // The camera and choice panel start as soon as the last life is lost.
-        // If Continue was still being decoded, play it when it becomes ready.
+    void this.assetManager.loadContinueAnimation(this.player.mesh)
+      .then((continueClip) => {
+        if (continueClip?.tracks.length) this.animationController.addClips([continueClip]);
         if (this.gameOverActive && this.animationController.hasClip('Continue')) {
           this.animationController.playOneShot('Continue', () => {}, 1);
         }
+      })
+      .then(() => this.assetManager.loadSupplementalPlayerClips(this.player.mesh))
+      .then((clips) => {
+        this.animationController.addClips(clips);
       })
       .catch((error) => console.warn('[Game] Some optional Wukong animations could not be prepared:', error));
   }
@@ -609,7 +635,7 @@ export class Game {
         if (!enemy.isAlive() || !enemy.isBossVulnerable) continue;
         const target = enemy.getPosition();
         const toTarget = target.clone().sub(origin);
-        const distance = toTarget.length();
+        const distance = enemy.id === 'crab_boss' ? enemy.distanceToBossHurtbox(origin) : toTarget.length();
         toTarget.y = 0;
         if (distance < 2.8 && (toTarget.lengthSq() < 0.001 || forward.dot(toTarget.normalize()) > 0.05)) {
           enemy.takeHit(origin, this.player.isArmed() ? this.level01.getStaffDamage(1) : 1);
@@ -738,7 +764,10 @@ export class Game {
     // HTML video owns the Loading, Intro, MenuIdle and StartingGame screens.
     // Redrawing an empty/covered WebGL scene at 60 Hz competes with video
     // decoding on phones; render continuously only after gameplay begins.
-    if (this.menuState === 'Playing') this.sceneManager.render();
+    if (this.menuState === 'Playing') {
+      this.scheduleGameplayWarmup();
+      this.sceneManager.render();
+    }
 
     // Calculate FPS
     this.frameCount++;

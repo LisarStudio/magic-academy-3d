@@ -5,6 +5,7 @@ export type SpellType = 'FLIPENDO' | 'ALOHOMORA' | 'LUMOS';
 export class SpellProjectile {
   public mesh: THREE.Group;
   public velocity: THREE.Vector3;
+  public readonly previousPosition = new THREE.Vector3();
   public isDead = false;
   public spellType: SpellType;
 
@@ -18,6 +19,7 @@ export class SpellProjectile {
     this.spellType = spellType;
     this.mesh = new THREE.Group();
     this.mesh.position.copy(position);
+    this.previousPosition.copy(position);
 
     let mainColor = 0x3df3ff; // Flipendo Cyan
     let trailColor = 0x88f5ff;
@@ -75,6 +77,7 @@ export class SpellProjectile {
     }
 
     // Move forward
+    this.previousPosition.copy(this.mesh.position);
     this.mesh.position.addScaledVector(this.velocity, delta);
 
     // Animate particle trail

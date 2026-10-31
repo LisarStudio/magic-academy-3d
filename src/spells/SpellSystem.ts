@@ -266,7 +266,10 @@ export class SpellSystem {
       for (const enemy of this.enemies) {
         if (enemy.isAlive() && enemy.isBossVulnerable) {
           const enemyPos = enemy.getPosition();
-          if (proj.mesh.position.distanceTo(enemyPos) < 1.2) {
+          const hit = enemy.id === 'crab_boss'
+            ? enemy.intersectsBossHurtbox(proj.previousPosition, proj.mesh.position, 0.22)
+            : proj.mesh.position.distanceTo(enemyPos) < 1.2;
+          if (hit) {
             enemy.takeHit(proj.mesh.position, 2); // Staff spell deals DOUBLE DAMAGE (2) compared to Kick (1)
             this.audioManager.playEnemyStun();
             this.createImpactParticles(proj.mesh.position, 0x3df3ff);

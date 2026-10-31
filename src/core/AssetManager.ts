@@ -416,9 +416,7 @@ export class AssetManager {
         wukongDoubleJump,
         wukongFall,
         takeItem,
-        idleKick,
         wukongKick,
-        wukongHardLanding,
         idleArmed,
         castSpellData,
         deathFromRight,
@@ -436,9 +434,7 @@ export class AssetManager {
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong_no_wood_double_jumpFront Flip.fbx?v=7', 'Wukong_NoWood_DoubleJump', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_falling_air.fbx', 'Fall_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Taking_item_nowood.fbx?v=7', 'TakeItem', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle.fbx', 'Idle_Kick', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_kick.fbx', 'Wukong_NoWood_Kick', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Falling To Landing.fbx', 'Wukong_NoWood_HardLanding', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle.fbx', 'Idle_Armed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_atack_baculo.fbx', 'atack_wood', playerModel, translationScaleFactor)
           .then(async (clip) => clip || (await this.loadAndRetargetGltfClip(import.meta.env.BASE_URL + 'assets/characters/atack_wood.glb', 'atack_wood', playerModel!))?.clip || null),
@@ -458,7 +454,6 @@ export class AssetManager {
 
       const clips: THREE.AnimationClip[] = [];
       if (idleUnarmed) clips.push(idleUnarmed);
-      if (idleKick) clips.push(idleKick);
       if (runUnarmed) clips.push(runUnarmed);
       if (narutoRun) clips.push(narutoRun);
       if (jumpUnarmed) clips.push(jumpUnarmed);
@@ -471,7 +466,6 @@ export class AssetManager {
       }
       if (takeItem) clips.push(takeItem);
       if (wukongKick) clips.push(wukongKick);
-      if (wukongHardLanding) clips.push(wukongHardLanding);
       if (idleArmed) clips.push(idleArmed);
       if (runArmed) clips.push(runArmed);
       if (jumpArmed) clips.push(jumpArmed);
@@ -500,21 +494,24 @@ export class AssetManager {
     const url = `${import.meta.env.BASE_URL}assets/characters/baculo.glb?v=${__APP_VERSION__}-staff3d`;
     try {
       const gltf = await this.withAssetTimeout(this.gltfLoader.loadAsync(url), url);
-      const model = gltf.scene;
+      const source = gltf.scene;
+      const model = new THREE.Group();
+      model.name = 'baculo_glb_normalized';
+      model.add(source);
       model.updateMatrixWorld(true);
-      const bounds = new THREE.Box3().setFromObject(model);
+      const bounds = new THREE.Box3().setFromObject(source);
       const size = bounds.getSize(new THREE.Vector3());
       const length = Math.max(size.x, size.y, size.z);
       if (!Number.isFinite(length) || length < 0.001) throw new Error('baculo.glb has empty or invalid bounds');
 
-      // The supplied GLB has a negative node scale and is authored at about
-      // 2.9 m. Normalize once to a 1.22 m carried staff and center its origin;
-      // socket transforms can then be tuned in character metres.
+      // Normalize and center in a clean wrapper space. Applying a world-space
+      // Box3 center directly to gltf.scene.position mixes coordinate spaces
+      // when the GLB contains transformed/negative-scale child nodes; the
+      // socket then sits on Wukong while the actual baculo geometry flies away.
       const normalization = 1.22 / length;
       const center = bounds.getCenter(new THREE.Vector3());
-      model.scale.multiplyScalar(normalization);
-      model.position.addScaledVector(center, -normalization);
-      model.name = 'baculo_glb_normalized';
+      model.position.copy(center).multiplyScalar(-normalization);
+      model.scale.setScalar(normalization);
       model.traverse((object) => {
         const mesh = object as THREE.Mesh;
         if (!mesh.isMesh) return;
@@ -539,6 +536,8 @@ export class AssetManager {
   /** Load the larger optional traversal/combat clips after the first playable frame. */
   public async loadSupplementalPlayerClips(targetRoot: THREE.Object3D): Promise<THREE.AnimationClip[]> {
     const specs: Array<[string, string]> = [
+      ['iddle.fbx', 'Idle_Kick'],
+      ['Falling To Landing.fbx', 'Wukong_NoWood_HardLanding'],
       ['atack_jump.fbx', 'Atack_Jump'],
       ['esquivar_paso_atras.fbx', 'Dodge_Back'],
       ['Swing To Land.fbx', 'Swing_To_Land'],

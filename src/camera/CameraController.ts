@@ -13,8 +13,9 @@ export class CameraController {
   public distance = 5.5;
   public heightOffset = 1.65;
 
-  private minPitch = -0.45;
-  private maxPitch = 1.15;
+  /** Gameplay-only vertical limits, in radians. Positive pitch raises the camera. */
+  public minPitch = -0.22;
+  public maxPitch = 0.62;
 
   private currentPosition = new THREE.Vector3();
   private currentLookAt   = new THREE.Vector3();
@@ -33,11 +34,22 @@ export class CameraController {
   private isManual = false;
 
   // Camera collision
-  private collisionRaycaster = new THREE.Raycaster();
-  private collisionObjects: THREE.Object3D[] = [];
+  private readonly collisionRaycaster = new THREE.Raycaster();
+  private readonly collisionObjects: THREE.Mesh[] = [];
+  private readonly collisionBounds: THREE.Sphere[] = [];
+  private readonly nearbyCollisionObjects: THREE.Mesh[] = [];
+  private readonly cameraCollisionMaterial = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+  private static readonly CAMERA_CLEARANCE = 0.24;
+  private static readonly CAMERA_COLLISION_PADDING = 0.08;
+  private static readonly MIN_CAMERA_DISTANCE = 0.025;
+  private static readonly TERRAIN_CLEARANCE = 0.22;
+  private static readonly TERRAIN_SAMPLE_STEP = 0.24;
+  private terrainHeightAt: ((x: number, z: number) => number) | null = null;
+  private readonly defaultNearPlane: number;
 
   constructor(camera: THREE.PerspectiveCamera) {
     this.camera = camera;
+    this.defaultNearPlane = camera.near;
   }
 
   public setTarget(target: THREE.Object3D): void {
@@ -55,7 +67,6 @@ export class CameraController {
     this.yaw = this.target.rotation.y + Math.PI;
     this.pitch = showTempleOverview ? 0.18 : 0.22;
     this.distance = showTempleOverview ? 16.5 : 5.5;
-    this.currentDistance = this.distance;
     this.overviewRemaining = showTempleOverview ? this.overviewDuration : 0;
     const overviewFov = window.innerWidth < window.innerHeight ? 70 : 64;
     if (showTempleOverview && Math.abs(this.camera.fov - overviewFov) > 0.05) {
@@ -64,12 +75,21 @@ export class CameraController {
     }
     this.currentLookAt.copy(this.target.position).add(new THREE.Vector3(0, this.heightOffset, 0));
     
-    const dir = new THREE.Vector3(
+    const dir = CameraController.TEMP_DIR.set(
       Math.sin(this.yaw) * Math.cos(this.pitch),
       Math.sin(this.pitch),
       Math.cos(this.yaw) * Math.cos(this.pitch),
     );
-    this.currentPosition.copy(this.currentLookAt).addScaledVector(dir, this.currentDistance);
+    const safeDistance = this.collisionObjects.length || this.terrainHeightAt
+      ? this.getSafeBoomDistance(
+        this.currentLookAt,
+        dir,
+        this.distance,
+        CameraController.TEMP_RIGHT.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)),
+      )
+      : this.distance;
+    this.currentDistance = safeDistance;
+    this.currentPosition.copy(this.currentLookAt).addScaledVector(dir, safeDistance);
     this.camera.position.copy(this.currentPosition);
     this.camera.lookAt(this.currentLookAt);
   }
@@ -85,8 +105,22 @@ export class CameraController {
     this.yaw = Math.atan2(CameraController.TEMP_DIR.x, CameraController.TEMP_DIR.z);
     this.pitch = THREE.MathUtils.clamp(Math.asin(THREE.MathUtils.clamp(CameraController.TEMP_DIR.y, -1, 1)), this.minPitch, this.maxPitch);
     this.distance = distance;
-    this.currentDistance = distance;
-    this.currentPosition.copy(this.camera.position);
+    CameraController.TEMP_DIR.set(
+      Math.sin(this.yaw) * Math.cos(this.pitch),
+      Math.sin(this.pitch),
+      Math.cos(this.yaw) * Math.cos(this.pitch),
+    );
+    this.currentDistance = this.collisionObjects.length || this.terrainHeightAt
+      ? this.getSafeBoomDistance(
+        this.currentLookAt,
+        CameraController.TEMP_DIR,
+        distance,
+        CameraController.TEMP_RIGHT.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)),
+      )
+      : distance;
+    this.currentPosition.copy(this.currentLookAt).addScaledVector(CameraController.TEMP_DIR, this.currentDistance);
+    this.camera.position.copy(this.currentPosition);
+    this.camera.lookAt(this.currentLookAt);
     this.idleTimer = 0;
     this.isManual = false;
   }
@@ -113,8 +147,36 @@ export class CameraController {
   }
 
   public setCollisionObjects(objects: THREE.Object3D[]): void {
-    // Only store major solid structural meshes (filter out small sub-children)
-    this.collisionObjects = objects.filter(o => o.type === 'Mesh' && (o as THREE.Mesh).geometry);
+    // Level collision entries often wrap their solids in Groups (temple wall
+    // proxies, pavilions and the bridge). Flatten once at registration time.
+    this.collisionObjects.length = 0;
+    this.collisionBounds.length = 0;
+    const seen = new Set<THREE.Mesh>();
+    for (const object of objects) {
+      object.updateWorldMatrix(true, true);
+      object.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.geometry || seen.has(mesh)) return;
+        seen.add(mesh);
+        if (!mesh.geometry.boundingSphere) mesh.geometry.computeBoundingSphere();
+        const proxy = new THREE.Mesh(mesh.geometry, this.cameraCollisionMaterial);
+        proxy.name = `camera_collision:${mesh.name || mesh.uuid}`;
+        proxy.matrixAutoUpdate = false;
+        proxy.matrixWorldAutoUpdate = false;
+        proxy.frustumCulled = false;
+        proxy.matrixWorld.copy(mesh.matrixWorld);
+        this.collisionObjects.push(proxy);
+        const sphere = mesh.geometry.boundingSphere!.clone();
+        sphere.center.applyMatrix4(mesh.matrixWorld);
+        sphere.radius *= mesh.matrixWorld.getMaxScaleOnAxis();
+        this.collisionBounds.push(sphere);
+      });
+    }
+  }
+
+  /** Supplies the level's procedural ground height without raycasting its full terrain mesh. */
+  public setTerrainHeightProvider(provider: ((x: number, z: number) => number) | null): void {
+    this.terrainHeightAt = provider;
   }
 
   public update(delta: number, input: InputManager): void {
@@ -150,7 +212,11 @@ export class CameraController {
         const progress = pan.elapsed / pan.duration;
         const eased = progress * progress * (3 - 2 * progress);
         this.yaw = THREE.MathUtils.lerp(pan.fromYaw, pan.toYaw, eased);
-        this.pitch = THREE.MathUtils.lerp(pan.fromPitch, pan.toPitch, eased);
+        this.pitch = THREE.MathUtils.clamp(
+          THREE.MathUtils.lerp(pan.fromPitch, pan.toPitch, eased),
+          this.minPitch,
+          this.maxPitch,
+        );
         if (pan.elapsed >= pan.duration) this.scriptedPan = null;
       }
     }
@@ -191,6 +257,11 @@ export class CameraController {
   private static readonly TEMP_IDEAL = new THREE.Vector3();
   private static readonly TEMP_FORWARD = new THREE.Vector3();
   private static readonly TEMP_RIGHT = new THREE.Vector3();
+  private static readonly TEMP_UP = new THREE.Vector3();
+  private static readonly TEMP_RAY_ORIGIN = new THREE.Vector3();
+  private static readonly TEMP_SEGMENT_CENTER = new THREE.Vector3();
+  private static readonly TEMP_FINAL_OFFSET = new THREE.Vector3();
+  private static readonly CAMERA_RAY_OFFSETS = Array.from({ length: 5 }, () => new THREE.Vector3());
 
   private updatePosition(delta: number, input: InputManager | null): void {
     if (!this.target) return;
@@ -211,21 +282,44 @@ export class CameraController {
 
     // ── Fast Collision avoidance ────────────────────────────────────────────────
     let targetDist = this.distance;
-    if (this.collisionObjects.length > 0) {
-      this.collisionRaycaster.set(this.currentLookAt, CameraController.TEMP_DIR);
-      // Non-recursive raycast against top-level meshes for maximum performance!
-      const hits = this.collisionRaycaster.intersectObjects(this.collisionObjects, false);
-      if (hits.length > 0 && hits[0].distance < this.distance) {
-        targetDist = Math.max(0.8, hits[0].distance - 0.3);
-      }
+    if (this.collisionObjects.length > 0 || this.terrainHeightAt) {
+      targetDist = this.getSafeBoomDistance(
+        this.currentLookAt,
+        CameraController.TEMP_DIR,
+        this.distance,
+        CameraController.TEMP_RIGHT.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)),
+      );
     }
 
-    const pushIn  = targetDist < this.currentDistance;
-    const dLerp   = Math.min(1.0, delta * (pushIn ? 28.0 : 8.0));
-    this.currentDistance = THREE.MathUtils.lerp(this.currentDistance, targetDist, dLerp);
+    const pushIn = targetDist < this.currentDistance;
+    if (pushIn) {
+      // Resolve obstruction immediately; smoothing inward can leave the camera
+      // on the far side of a wall for several frames.
+      this.currentDistance = targetDist;
+    } else {
+      this.currentDistance = THREE.MathUtils.damp(this.currentDistance, targetDist, 8.0, delta);
+    }
 
     CameraController.TEMP_IDEAL.copy(this.currentLookAt).addScaledVector(CameraController.TEMP_DIR, this.currentDistance);
-    this.currentPosition.lerp(CameraController.TEMP_IDEAL, lerpSpeed);
+    if (pushIn) this.currentPosition.copy(CameraController.TEMP_IDEAL);
+    else this.currentPosition.lerp(CameraController.TEMP_IDEAL, lerpSpeed);
+
+    // Position smoothing can arc through a corner while yaw changes. Validate
+    // the interpolated camera point too, not only the ideal boom endpoint.
+    const finalOffset = CameraController.TEMP_FINAL_OFFSET.subVectors(this.currentPosition, this.currentLookAt);
+    const finalDistance = finalOffset.length();
+    if (finalDistance > 0.001 && (this.collisionObjects.length > 0 || this.terrainHeightAt)) {
+      finalOffset.multiplyScalar(1 / finalDistance);
+      const safeDistance = this.getSafeBoomDistance(
+        this.currentLookAt,
+        finalOffset,
+        finalDistance,
+        CameraController.TEMP_RIGHT.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)),
+      );
+      if (safeDistance < finalDistance) {
+        this.currentPosition.copy(this.currentLookAt).addScaledVector(finalOffset, safeDistance);
+      }
+    }
 
     // ── Dynamic FOV (Only update matrix when FOV changes) ────────────────────
     const isRunning = input
@@ -241,6 +335,7 @@ export class CameraController {
 
     this.camera.position.copy(this.currentPosition);
     this.camera.lookAt(this.currentLookAt);
+    this.updateNearPlane(this.currentPosition.distanceTo(this.currentLookAt));
   }
 
   public getForwardVector(): THREE.Vector3 {
@@ -249,6 +344,77 @@ export class CameraController {
 
   public getRightVector(): THREE.Vector3 {
     return CameraController.TEMP_RIGHT.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)).normalize();
+  }
+
+  /** Five parallel rays approximate a small swept camera sphere along the boom. */
+  private getSafeBoomDistance(origin: THREE.Vector3, direction: THREE.Vector3, desiredDistance: number, right: THREE.Vector3): number {
+    const up = CameraController.TEMP_UP.crossVectors(direction, right).normalize();
+    const radius = CameraController.CAMERA_CLEARANCE;
+    const offsets = CameraController.CAMERA_RAY_OFFSETS;
+    offsets[0].set(0, 0, 0);
+    offsets[1].copy(right).multiplyScalar(radius);
+    offsets[2].copy(right).multiplyScalar(-radius);
+    offsets[3].copy(up).multiplyScalar(radius);
+    offsets[4].copy(up).multiplyScalar(-radius);
+
+    this.collectNearbyCollisionObjects(origin, direction, desiredDistance, radius);
+    let safeDistance = desiredDistance;
+    if (this.nearbyCollisionObjects.length) {
+      this.collisionRaycaster.near = 0;
+      this.collisionRaycaster.far = desiredDistance;
+      for (const offset of offsets) {
+        CameraController.TEMP_RAY_ORIGIN.copy(origin).add(offset);
+        this.collisionRaycaster.set(CameraController.TEMP_RAY_ORIGIN, direction);
+        const hits = this.collisionRaycaster.intersectObjects(this.nearbyCollisionObjects, false);
+        if (hits.length) safeDistance = Math.min(safeDistance, hits[0].distance - CameraController.CAMERA_COLLISION_PADDING);
+      }
+    }
+
+    // The world ground is generated from a height function rather than entered
+    // in levelColliders. Sample only a downward boom, avoiding a per-frame
+    // raycast against the entire terrain mesh and leaving underground rooms valid.
+    if (this.terrainHeightAt && direction.y < -0.001) {
+      const groundAtTarget = this.terrainHeightAt(origin.x, origin.z);
+      const targetIsAboveGround = origin.y >= groundAtTarget + 0.75;
+      if (targetIsAboveGround) {
+        const sampleEnd = Math.min(desiredDistance, safeDistance);
+        const sampleCount = Math.ceil(sampleEnd / CameraController.TERRAIN_SAMPLE_STEP);
+        for (let i = 1; i <= sampleCount; i++) {
+          const distance = Math.min(sampleEnd, i * CameraController.TERRAIN_SAMPLE_STEP);
+          const sampleX = origin.x + direction.x * distance;
+          const sampleZ = origin.z + direction.z * distance;
+          const sampleY = origin.y + direction.y * distance;
+          const groundY = this.terrainHeightAt(sampleX, sampleZ);
+          if (sampleY < groundY + CameraController.TERRAIN_CLEARANCE) {
+            safeDistance = Math.min(safeDistance, distance - CameraController.CAMERA_COLLISION_PADDING);
+            break;
+          }
+        }
+      }
+    }
+    return safeDistance < desiredDistance
+      ? Math.max(CameraController.MIN_CAMERA_DISTANCE, safeDistance)
+      : desiredDistance;
+  }
+
+  /** Keep the near plane ahead of very close collision-corrected camera positions. */
+  private updateNearPlane(distance: number): void {
+    const near = Math.min(this.defaultNearPlane, Math.max(0.01, distance * 0.45));
+    if (Math.abs(this.camera.near - near) < 0.001) return;
+    this.camera.near = near;
+    this.camera.updateProjectionMatrix();
+  }
+
+  private collectNearbyCollisionObjects(origin: THREE.Vector3, direction: THREE.Vector3, distance: number, radius: number): void {
+    const midpoint = CameraController.TEMP_SEGMENT_CENTER.copy(origin).addScaledVector(direction, distance * 0.5);
+    const broadRadius = distance * 0.5 + radius;
+    this.nearbyCollisionObjects.length = 0;
+    for (let i = 0; i < this.collisionObjects.length; i++) {
+      const bounds = this.collisionBounds[i];
+      if (bounds.distanceToPoint(midpoint) > broadRadius + bounds.radius) continue;
+      const proxy = this.collisionObjects[i];
+      this.nearbyCollisionObjects.push(proxy);
+    }
   }
 }
 

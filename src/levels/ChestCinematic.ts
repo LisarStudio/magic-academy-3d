@@ -1,7 +1,5 @@
 import * as THREE from 'three';
 import type { PlayerController } from '../player/PlayerController';
-import { ItemPickupVFX } from '../player/ItemPickupVFX';
-import { WEAPON_DEFINITIONS } from '../player/WeaponConfig';
 
 export interface ChestCinematicDeps {
   scene: THREE.Scene;
@@ -40,10 +38,13 @@ export class ChestCinematic {
       this.spawnChestStaff();
       await new Promise<void>((resolve) => {
         player.animationController.playTakeItemAnimation(
-          () => {
+          async () => {
             if (this.contacted) return;
             this.contacted = true;
-            this.moveStaffToHand();
+            // Finish the visible handoff before the pickup prop is detached.
+            // The armature's separate baculo.glb hand/back mounts remain the
+            // only equipped weapon meshes; no HUD PNG enters this 3D flow.
+            await this.moveStaffToHand();
             // The acquisition is committed once, at the clip's hand-contact marker.
             player.obtainWeapon('STAFF', false);
           },
@@ -57,6 +58,7 @@ export class ChestCinematic {
       this.stopStaffBob();
       if (this.staffInChest?.parent) this.staffInChest.parent.remove(this.staffInChest);
       this.staffInChest = null;
+      player.releasePreparedStaffPickupProp();
       player.equipWeapon('STAFF');
       player.animationController.playState('Idle', 0.18);
       hud.setObjective('Explora el Reino y reúne 4 llaves para abrir el portal');
@@ -65,6 +67,7 @@ export class ChestCinematic {
       this.stopStaffBob();
       if (this.staffInChest?.parent) this.staffInChest.parent.remove(this.staffInChest);
       this.staffInChest = null;
+      player.releasePreparedStaffPickupProp();
       // The chest has already opened, so preserve the acquired item on recovery.
       if (!player.hasStaff) player.obtainWeapon('STAFF', false);
       player.equipWeapon('STAFF');
@@ -112,7 +115,7 @@ export class ChestCinematic {
 
   private spawnChestStaff(): void {
     const { scene, chestPosition } = this.deps;
-    const staff = this.deps.player.cloneStaffProp('chest_staff_prop');
+    const staff = this.deps.player.takePreparedStaffPickupProp();
     if (!staff) throw new Error('The player staff mesh was not prepared before chest interaction.');
     staff.position.set(chestPosition.x, chestPosition.y + 0.82, chestPosition.z);
     staff.rotation.set(0, Math.PI * 0.25, Math.PI * 0.35);
@@ -131,33 +134,58 @@ export class ChestCinematic {
     this.bobAnimId = requestAnimationFrame(bob);
   }
 
-  private moveStaffToHand(): void {
+  private moveStaffToHand(): Promise<void> {
     const { player } = this.deps;
     const staff = this.staffInChest;
-    const hand = ItemPickupVFX.findHandNode(player);
-    if (!staff || !hand) return;
+    // Use the exact pre-bound baculo.glb hand mount. A generic hierarchy search
+    // can return a wrist/helper node with a different transform and send the
+    // pickup prop far away when it is reparented.
+    const handMount = player.staffHandMesh;
+    if (!staff || !handMount?.parent) return Promise.resolve();
     this.stopStaffBob();
 
-    hand.attach(staff); // Object3D.attach preserves the chest prop's current world transform.
-    const config = WEAPON_DEFINITIONS.STAFF.handAttachment;
-    const targetPosition = player.staffHandMesh?.position ?? config.position;
-    const targetQuaternion = player.staffHandMesh?.quaternion ?? new THREE.Quaternion().setFromEuler(config.rotation);
-    const targetScale = player.staffHandMesh?.scale ?? new THREE.Vector3(1, 1, 1);
+    // Parent the pickup to the exact hand bone used by the equipped 3D weapon.
+    // A world-space destination becomes stale while TakeItem continues moving
+    // the arm; following the bone keeps the prop in the hand for every frame.
+    // Object3D.attach preserves its current chest-space transform on transfer.
+    const handBone = handMount.parent;
+    this.deps.scene.updateMatrixWorld(true);
+    player.mesh.updateMatrixWorld(true);
+    handBone.updateWorldMatrix(true, false);
+    handBone.attach(staff);
+
+    // handMount is the actual grip socket under this same bone. Its local
+    // transform is the target; account for the pickup child being authored at
+    // 0.62 and the equipped hand model at 0.82, without reusing HUD artwork.
+    const targetPosition = handMount.position.clone();
+    const targetQuaternion = handMount.quaternion.clone();
+    const targetScale = handMount.scale.clone().multiplyScalar(0.82 / 0.62);
     const fromPosition = staff.position.clone();
     const fromQuaternion = staff.quaternion.clone();
     const fromScale = staff.scale.clone();
     const started = performance.now();
     const duration = 320;
 
-    const animate = (now: number) => {
-      const t = Math.min(1, (now - started) / duration);
-      const eased = t * t * (3 - 2 * t);
-      staff.position.lerpVectors(fromPosition, targetPosition, eased);
-      staff.quaternion.slerpQuaternions(fromQuaternion, targetQuaternion, eased);
-      staff.scale.lerpVectors(fromScale, targetScale, eased);
-      if (t < 1) requestAnimationFrame(animate);
-    };
-    requestAnimationFrame(animate);
+    return new Promise<void>((resolve) => {
+      const animate = (now: number) => {
+        const t = Math.min(1, (now - started) / duration);
+        const eased = t * t * (3 - 2 * t);
+        staff.position.lerpVectors(fromPosition, targetPosition, eased);
+        staff.quaternion.slerpQuaternions(fromQuaternion, targetQuaternion, eased);
+        staff.scale.lerpVectors(fromScale, targetScale, eased);
+        if (t < 1) {
+          requestAnimationFrame(animate);
+        } else {
+          // End at the real 3D hand socket. It now tracks the animated hand;
+          // the cinematic swaps to the independent back socket at clip end.
+          staff.position.copy(targetPosition);
+          staff.quaternion.copy(targetQuaternion);
+          staff.scale.copy(targetScale);
+          resolve();
+        }
+      };
+      requestAnimationFrame(animate);
+    });
   }
 
   private stopStaffBob(): void {

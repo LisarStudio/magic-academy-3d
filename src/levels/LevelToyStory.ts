@@ -592,29 +592,40 @@ export class LevelToyStory {
       { cycleDuration: 48 * 60, initialHour: 21, renderer: this.sceneManager.renderer, moonLight }
     );
     this.skyPanorama = new SkyPanoramaSystem(skyAnchor);
-    try {
-      await this.skyPanorama.loadInitial(this.sceneManager.renderer, skyBlendForHour(this.dayNightCycle.hour));
-    } catch (error) {
-      console.error('[Sky] Initial panorama could not be prepared; the level fallback sky remains active.', error);
-      this.skyPanorama.mesh.visible = false;
-    }
+    // The procedural sky is already valid on frame one. Do not hold the
+    // playable transition while two panorama images download and upload; the
+    // panorama replaces it as soon as its initial pair is ready.
+    void this.skyPanorama.loadInitial(this.sceneManager.renderer, skyBlendForHour(this.dayNightCycle.hour))
+      .catch((error) => console.error('[Sky] Initial panorama could not be prepared; the procedural sky remains active.', error));
     this.createSkyDebugPanel();
     // Add key visual hints
     this.spawnKeysInWorld();
 
-    const portalAsset = await portalAssetPromise;
-    if (portalAsset) this.installCelestialPortal(portalAsset);
+    // The portal is not needed to move, collect or fight. Load it without
+    // blocking the level's playable handoff.
+    void portalAssetPromise.then((portalAsset) => {
+      if (portalAsset) this.installCelestialPortal(portalAsset);
+    });
 
     // Warm only the key/reward materials against the real light configuration.
     // Do this before gameplay on every device so first collection never pays
     // shader compilation or GPU resource creation costs.
-    const pickupWarmups = await Promise.allSettled([
-      KeyPickupSequence.precompileShaders(this.sceneManager.renderer, this.sceneManager.camera, scene),
-      this.powerOrbSystem.precompileShaders(this.sceneManager.renderer, this.sceneManager.camera, scene),
-    ]);
-    pickupWarmups.forEach((result) => {
-      if (result.status === 'rejected') console.warn('[Level] Pickup shader warmup failed; cached emissive fallback remains active.', result.reason);
-    });
+    // Shader warmup is useful, but awaiting it here keeps even the intro
+    // transition behind GPU compilation. Schedule it after the first playable
+    // frame so it can no longer extend the loading screen.
+    const powerOrbSystem = this.powerOrbSystem;
+    const warmPickups = () => {
+      if (!powerOrbSystem) return;
+      void Promise.allSettled([
+        KeyPickupSequence.precompileShaders(this.sceneManager.renderer, this.sceneManager.camera, scene),
+        powerOrbSystem.precompileShaders(this.sceneManager.renderer, this.sceneManager.camera, scene),
+      ]).then((results) => results.forEach((result) => {
+        if (result.status === 'rejected') console.warn('[Level] Pickup shader warmup failed; runtime compilation remains available.', result.reason);
+      }));
+    };
+    const idleWindow = window as Window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number };
+    if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(warmPickups, { timeout: 1800 });
+    else window.setTimeout(warmPickups, 900);
 
     this.checkpointManager.respawnPlayer(this.player);
     // Load the visual identity before play so the in-game loader can report real
@@ -632,15 +643,24 @@ export class LevelToyStory {
     const loadingManager = new THREE.LoadingManager();
     loadingManager.onProgress = (url, loaded, total) => this.onResourceProgress?.(loaded, total, url);
     const loader = new GLTFLoader(loadingManager);
-    const [pavilionResult, templeResult, lionResult, lampResult, lifeResult] = await Promise.allSettled([
+    const [pavilionResult, templeResult, lionResult, lampResult] = await Promise.allSettled([
       loader.loadAsync(`${base}${mobileTextures ? 'chinese-pavilion-mobile.glb' : 'chinese-pavilion.glb'}${version}`),
       // Restored PBR maps exported from the supplied Blender source; the legacy
       // GLB had materials but zero image textures and rendered almost white.
       loader.loadAsync(`${base}${mobileTextures ? 'wukong-chinese-temple-mobile.glb' : 'wukong-chinese-temple-textured.glb'}?v=temple-pbr-2`),
       loader.loadAsync(`${base}wukong-porcelain-lion.glb${version}`),
       loader.loadAsync(`${base}wukong-red-lamp.glb${version}`),
-      loader.loadAsync(`${import.meta.env.BASE_URL}assets/collectibles/teara-wukong-vida.glb${version}`),
     ]);
+
+    // Life rewards do not participate in the first playable route. Keep their
+    // model download and parse out of the critical path while preserving the
+    // existing placements and collection rules once ready.
+    void loader.loadAsync(`${import.meta.env.BASE_URL}assets/collectibles/teara-wukong-vida.glb${version}`)
+      .then((gltf) => {
+        this.lifePickupSource = gltf.scene;
+        this.createLifePickups();
+      })
+      .catch((error) => console.warn('[LevelToyStory] Life pickup asset could not be loaded.', error));
 
     const terrain = this.sceneManager.scene.getObjectByName('world-terrain') as THREE.Mesh | null;
     if (terrain && terrain.material instanceof THREE.MeshStandardMaterial) {
@@ -655,12 +675,6 @@ export class LevelToyStory {
     }
 
     const scene = this.sceneManager.scene;
-    if (lifeResult.status === 'fulfilled') {
-      this.lifePickupSource = lifeResult.value.scene;
-      this.createLifePickups();
-    } else {
-      console.warn('[LevelToyStory] Life pickup asset could not be loaded.', lifeResult.reason);
-    }
     const placeAsset = (source: THREE.Object3D, name: string, targetWidth: number, x: number, z: number, rotationY = 0): THREE.Object3D => {
       const asset = source.clone(true);
       asset.name = name;
@@ -737,11 +751,32 @@ export class LevelToyStory {
       guardians.updateMatrixWorld(true);
       const lionNodes = ['Chinese Porcelain Lion.001', 'Chinese Porcelain Lion.002']
         .map((name) => guardians.getObjectByName(name)).filter((node): node is THREE.Object3D => !!node);
-      const lionHalfWidth = lionNodes.length
-        ? Math.max(...lionNodes.map((node) => new THREE.Box3().setFromObject(node).getSize(new THREE.Vector3()).x * 0.5))
-        : 1.6;
+      // Measure each statue's actual projected width along the stair's side
+      // axis. A world-AABB X width was too small for the rotated temple/lion
+      // meshes, so the plinths could overlap the outer treads.
+      const projectedHalfWidths = lionNodes.map((node) => {
+        const bounds = new THREE.Box3().setFromObject(node);
+        const corners = [
+          new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
+          new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.max.z),
+          new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+          new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.max.z),
+          new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z),
+          new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.max.z),
+          new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z),
+          new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.max.z)
+        ];
+        const projections = corners.map((corner) => corner.dot(stairSide));
+        return (Math.max(...projections) - Math.min(...projections)) * 0.5;
+      });
+      // The stair proxy is 8.54 m wide at this temple scale. Add a visible
+      // grassy gap so the guardian plinths sit beside the stair, never on it.
+      // Keep the bases immediately outside the stair's outer edge, matching
+      // the marked lawn positions. The former extra 0.72 m gap pushed each
+      // guardian too far away and, depending on the source pair's bounds,
+      // could also leave them visually overlapping the stair rails.
       const guardianClearance = 0.18;
-      const guardianOffset = stairWidth * 0.5 + lionHalfWidth + guardianClearance;
+      const guardianOffset = stairWidth * 0.5 + Math.max(1.35, ...projectedHalfWidths) + guardianClearance;
       const guardianBounds: THREE.Box3[] = [];
       lionNodes.forEach((node, index) => {
         const side = index === 0 ? -1 : 1;
@@ -798,7 +833,7 @@ export class LevelToyStory {
         // barrier extending across the stair approach.
         const blockerHeight = Math.max(1.65, Math.min(2.25, size.y * 0.86));
         const blocker = new THREE.Mesh(new THREE.BoxGeometry(
-          Math.max(1.35, size.x * 0.78), blockerHeight, Math.max(1.35, size.z * 0.78)
+          Math.max(1.4, size.x * 0.9), blockerHeight, Math.max(1.4, size.z * 0.9)
         ), invisible);
         blocker.position.set(center.x, bounds.min.y + blockerHeight * 0.5, center.z);
         blocker.name = 'porcelain_guardian_blocker';
@@ -812,9 +847,8 @@ export class LevelToyStory {
     }
 
     if (lampResult.status === 'fulfilled') {
-      // Place each lantern in temple-local coordinates so both stay attached
-      // to the same front eave even if the temple is rotated or moved. The old
-      // world-Z guess could put them under the wrong roof section.
+      // Keep the authored pair spacing and the suspension offset from the
+      // original pavilion placement. Each lamp gets its own roof anchor below.
       const templeFootprint = this.centralTempleObject?.userData.templeLocalFootprint;
       const lampLocalZ = -5.35;
       const lampLocalOffset = (templeFootprint?.halfW ?? 5.4) * 0.62;
@@ -839,21 +873,25 @@ export class LevelToyStory {
       lamps.updateMatrixWorld(true);
       const cordMaterial = new THREE.MeshStandardMaterial({ color: 0x68432d, roughness: 0.88, metalness: 0.08 });
       const anchorMaterial = new THREE.MeshStandardMaterial({ color: 0xb7833c, roughness: 0.38, metalness: 0.64, emissive: 0x4a2605, emissiveIntensity: 0.16 });
-      for (const node of lampNodes) {
-        let bounds = new THREE.Box3().setFromObject(node);
-        let center = bounds.getCenter(new THREE.Vector3());
-        // The cord's lower end must coincide with the actual top centre of
-        // this individual lantern, and its upper end with the roof above it.
+      const roofHeights = lampNodes.map((node) => {
+        const bounds = new THREE.Box3().setFromObject(node);
+        const center = bounds.getCenter(new THREE.Vector3());
         const ray = new THREE.Raycaster(new THREE.Vector3(center.x, lampGround + 32, center.z), new THREE.Vector3(0, -1, 0), 0, 32);
         const roofHit = this.centralTempleObject
           ? ray.intersectObject(this.centralTempleObject, true).find(hit => hit.point.y > bounds.max.y && hit.point.y < lampGround + 16)
           : undefined;
-        const roofY = roofHit?.point.y ?? lampGround + 8.5;
-        // Align the top of the actual lamp mesh to a short suspension below
-        // the sampled eave. This removes the detached-looking gap caused by
-        // the previous fixed +4.8 m root offset.
-        const desiredLampTop = roofY - 0.92;
-        const lift = desiredLampTop - bounds.max.y;
+        return roofHit?.point.y ?? lampGround + 8.5;
+      });
+      // Both lanterns are a designed pair: keep their bodies on the same
+      // horizontal line, while each cord still terminates at its own roof point.
+      // The previous per-lamp height adjustment made one lantern jump to a
+      // higher roof tier and visibly broke the pair in gameplay.
+      const sharedLampTop = Math.min(...roofHeights) - 0.92;
+      lampNodes.forEach((node, index) => {
+        let bounds = new THREE.Box3().setFromObject(node);
+        let center = bounds.getCenter(new THREE.Vector3());
+        const roofY = roofHeights[index] ?? lampGround + 8.5;
+        const lift = sharedLampTop - bounds.max.y;
         if (Math.abs(lift) > 0.001 && node.parent) {
           const from = node.parent.worldToLocal(center.clone());
           const to = node.parent.worldToLocal(center.clone().add(new THREE.Vector3(0, lift, 0)));
@@ -884,7 +922,7 @@ export class LevelToyStory {
         ceilingEye.position.copy(cordEnd);
         ceilingEye.castShadow = false;
         scene.add(ceilingEye);
-      }
+      });
       anchors.forEach((position) => {
         const light = new THREE.PointLight(0xffb85f, 1.25, 9, 2);
         light.position.copy(position);
@@ -907,6 +945,7 @@ export class LevelToyStory {
     this.dayNightCycle?.registerNightLight(warmFill);
     this.player.setColliders(this.levelColliders);
     this.cameraController.setCollisionObjects(this.levelColliders);
+    this.cameraController.setTerrainHeightProvider((x, z) => this.getTerrainHeight(x, z));
 
   }
 
@@ -1088,6 +1127,83 @@ export class LevelToyStory {
     // the temple before the walls were added to PlayerController's cache.
     this.levelColliders.push(proxy);
     this.openTempleEntrance(asset);
+    this.addTempleBalconyCollision(asset);
+  }
+
+  /** Add collision only to the narrow exterior balcony strips. The central
+   * deck and entrance stairs are handled by addTempleStoneFloor and are left
+   * untouched here. Supports are sampled from the real asset so they cannot
+   * create a guessed slab over grass or furniture. */
+  private addTempleBalconyCollision(asset: THREE.Object3D): void {
+    asset.updateMatrixWorld(true);
+    const root = new THREE.Group();
+    root.name = 'central_temple_exterior_balcony_collision';
+    const invisible = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide });
+    const ray = new THREE.Raycaster();
+    const down = new THREE.Vector3(0, -1, 0);
+    const normal = new THREE.Vector3();
+    const vertices: number[] = [];
+    const normals: number[] = [];
+    const step = 0.24;
+    const half = step * 0.53;
+    // Two side galleries outside the temple wall shell. The front stair and
+    // the existing central floor are intentionally excluded.
+    for (const side of [-1, 1]) {
+      for (let x = 5.45; x <= 7.05; x += step) {
+        for (let z = -4.25; z <= 4.25; z += step) {
+          const sample = asset.localToWorld(new THREE.Vector3(side * x, 5.0, z));
+          ray.set(sample, down);
+          ray.far = 5.0;
+          const hit = ray.intersectObject(asset, true).find((candidate) => {
+            if (!candidate.face) return false;
+            normal.copy(candidate.face.normal).transformDirection(candidate.object.matrixWorld);
+            if (normal.y < 0.82) return false;
+            const local = asset.worldToLocal(candidate.point.clone());
+            return local.y >= 0.88 && local.y <= 1.16 &&
+              Math.abs(local.x) >= 5.38 && Math.abs(local.x) <= 7.15 &&
+              Math.abs(local.z) <= 4.4;
+          });
+          if (!hit) continue;
+          const y = hit.point.y + 0.014;
+          const left = hit.point.x - half, right = hit.point.x + half;
+          const near = hit.point.z - half, far = hit.point.z + half;
+          vertices.push(left, y, near, right, y, far, right, y, near,
+            left, y, near, left, y, far, right, y, far);
+          for (let i = 0; i < 6; i++) normals.push(0, 1, 0);
+        }
+      }
+    }
+    if (!vertices.length) {
+      console.info('[LevelToyStory] No external temple balcony surfaces found; existing floor/stair supports remain unchanged.');
+      return;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geometry.computeBoundingSphere();
+    const support = new THREE.Mesh(geometry, invisible);
+    support.name = 'central_temple_balcony_walkable_support';
+    support.userData.walkableSupport = true;
+    support.frustumCulled = false;
+    root.add(support);
+
+    // Invisible safety rails follow the outside edges of the two galleries.
+    // They stop falls while preserving the passage from the stair landing.
+    for (const side of [-1, 1]) {
+      const localCenter = new THREE.Vector3(side * 7.12, 1.58, 0);
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(
+        0.16 * Math.abs(asset.scale.x), 1.05 * Math.abs(asset.scale.y), 8.35 * Math.abs(asset.scale.z)
+      ), invisible);
+      rail.name = `central_temple_balcony_outer_limit_${side < 0 ? 'left' : 'right'}`;
+      rail.userData.solidPlayerBlocker = true;
+      rail.position.copy(asset.localToWorld(localCenter));
+      rail.rotation.y = asset.rotation.y;
+      rail.frustumCulled = false;
+      root.add(rail);
+    }
+    this.sceneManager.scene.add(root);
+    root.updateMatrixWorld(true);
+    this.levelColliders.push(root);
   }
 
   /** Clear the authored central entrance: this temple has an open passage, not
@@ -1104,8 +1220,12 @@ export class LevelToyStory {
       const geometry = mesh.isMesh ? mesh.geometry : undefined;
       const position = geometry?.getAttribute('position');
       const index = geometry?.getIndex();
-      if (!geometry || !position || !index || geometry.userData.openTempleDoorCut) return;
-      const sourceGroups = geometry.groups.length ? geometry.groups.map((group) => ({ ...group })) : [{ start: 0, count: index.count, materialIndex: 0 }];
+      if (!geometry || !position || geometry.userData.openTempleDoorCut) return;
+      // Some door trim in the textured export is non-indexed. Process its
+      // sequential triangle vertices too, otherwise those thin pieces survive
+      // even though the main indexed panel was removed.
+      const sourceCount = index?.count ?? position.count;
+      const sourceGroups = geometry.groups.length ? geometry.groups.map((group) => ({ ...group })) : [{ start: 0, count: sourceCount, materialIndex: 0 }];
       const output: number[] = [];
       const groups: Array<{ start: number; count: number; materialIndex: number }> = [];
       const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
@@ -1117,21 +1237,33 @@ export class LevelToyStory {
         const start = output.length;
         const end = group.start + group.count;
         for (let i = group.start; i + 2 < end; i += 3) {
-          const ia = index.getX(i), ib = index.getX(i + 1), ic = index.getX(i + 2);
+          const ia = index ? index.getX(i) : i;
+          const ib = index ? index.getX(i + 1) : i + 1;
+          const ic = index ? index.getX(i + 2) : i + 2;
           a.fromBufferAttribute(position, ia).applyMatrix4(geometryToTemple);
           b.fromBufferAttribute(position, ib).applyMatrix4(geometryToTemple);
           c.fromBufferAttribute(position, ic).applyMatrix4(geometryToTemple);
-          // Remove the lower panel by its face centre. Requiring all three
-          // vertices to fit inside the doorway left thin shards along the
-          // jambs in the merged GLB (visible as stray rectangular frames).
-          const faceNormal = b.clone().sub(a).cross(c.clone().sub(a)).normalize();
+          // The merged export triangulates the door/panel and its narrow frame
+          // into separate pieces. Cutting only front-facing triangles leaves
+          // the side faces and thin jamb shards visible across the opening.
           const centerX = (a.x + b.x + c.x) / 3;
           const centerY = (a.y + b.y + c.y) / 3;
           const centerZ = (a.z + b.z + c.z) / 3;
-          const doorway = Math.abs(centerX - doorwayCenterX) < 2.28 &&
-            centerY < 4.58 && centerY > 0.12 &&
-            centerZ < doorwayFrontZ + 0.78 && centerZ > doorwayFrontZ - 0.78 &&
-            Math.abs(faceNormal.z) > 0.82;
+          const doorwayHalfWidth = 2.52;
+          const doorwayHalfDepth = 0.92;
+          const doorwayTop = 4.78;
+          const triMinX = Math.min(a.x, b.x, c.x);
+          const triMaxX = Math.max(a.x, b.x, c.x);
+          const triMinY = Math.min(a.y, b.y, c.y);
+          const triMaxY = Math.max(a.y, b.y, c.y);
+          const triMinZ = Math.min(a.z, b.z, c.z);
+          const triMaxZ = Math.max(a.z, b.z, c.z);
+          const doorway = Math.abs(centerX - doorwayCenterX) < doorwayHalfWidth &&
+            centerY < doorwayTop && centerY > 0.12 &&
+            centerZ < doorwayFrontZ + doorwayHalfDepth && centerZ > doorwayFrontZ - doorwayHalfDepth &&
+            triMinX < doorwayCenterX + doorwayHalfWidth && triMaxX > doorwayCenterX - doorwayHalfWidth &&
+            triMinY < doorwayTop && triMaxY > 0.12 &&
+            triMinZ < doorwayFrontZ + doorwayHalfDepth && triMaxZ > doorwayFrontZ - doorwayHalfDepth;
           if (!doorway) output.push(ia, ib, ic);
         }
         const count = output.length - start;
@@ -1185,6 +1317,82 @@ export class LevelToyStory {
       this.player.setColliders(this.levelColliders);
       this.cameraController.setCollisionObjects(this.levelColliders);
     }
+  }
+
+  /** Follow the authored GLB treads on temple stair flights other than the
+   * carefully fitted main entrance. Thin support patches do not span doorways
+   * or add collision to wall panels. */
+  private addTempleSecondaryStairSupports(temple: THREE.Object3D, deckY: number, terrainY: number): void {
+    temple.updateMatrixWorld(true);
+    const footprint = temple.userData.templeLocalFootprint;
+    const halfW = footprint?.halfW ?? 5.4;
+    const halfD = footprint?.halfD ?? 5.4;
+    const vertices: number[] = [];
+    const normals: number[] = [];
+    let accepted = 0;
+    const worldA = new THREE.Vector3();
+    const worldB = new THREE.Vector3();
+    const worldC = new THREE.Vector3();
+    const localA = new THREE.Vector3();
+    const localB = new THREE.Vector3();
+    const localC = new THREE.Vector3();
+    const centroid = new THREE.Vector3();
+    const faceNormal = new THREE.Vector3();
+    const edgeA = new THREE.Vector3();
+    const edgeB = new THREE.Vector3();
+
+    // Extract the authored upward-facing GLB triangles once at load. The old
+    // horizontal sampling grid missed narrow stair treads, causing sinking.
+    temple.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      const position = mesh.geometry?.attributes.position;
+      if (!mesh.isMesh || !position) return;
+      const index = mesh.geometry.index;
+      const triangleCount = index ? index.count / 3 : position.count / 3;
+      for (let triangle = 0; triangle < triangleCount; triangle++) {
+        const ia = index ? index.getX(triangle * 3) : triangle * 3;
+        const ib = index ? index.getX(triangle * 3 + 1) : triangle * 3 + 1;
+        const ic = index ? index.getX(triangle * 3 + 2) : triangle * 3 + 2;
+        worldA.fromBufferAttribute(position, ia).applyMatrix4(mesh.matrixWorld);
+        worldB.fromBufferAttribute(position, ib).applyMatrix4(mesh.matrixWorld);
+        worldC.fromBufferAttribute(position, ic).applyMatrix4(mesh.matrixWorld);
+        edgeA.subVectors(worldB, worldA);
+        edgeB.subVectors(worldC, worldA);
+        faceNormal.crossVectors(edgeA, edgeB).normalize();
+        if (faceNormal.y < 0.82) continue;
+        localA.copy(worldA); temple.worldToLocal(localA);
+        localB.copy(worldB); temple.worldToLocal(localB);
+        localC.copy(worldC); temple.worldToLocal(localC);
+        centroid.copy(localA).add(localB).add(localC).multiplyScalar(1 / 3);
+        // Only low exterior stair flights; central deck, balconies, roof,
+        // furniture and walls retain their existing collision treatment.
+        if (centroid.y < -0.12 || centroid.y > 2.25) continue;
+        if (Math.max(Math.abs(centroid.x) - halfW * 0.94, Math.abs(centroid.z) - halfD * 0.94) <= 0) continue;
+        if (Math.abs(centroid.x) > 8.25 || Math.abs(centroid.z) > 8.25) continue;
+        if (Math.min(worldA.y, worldB.y, worldC.y) < terrainY - 0.18) continue;
+        if (Math.max(worldA.y, worldB.y, worldC.y) > deckY + 0.3) continue;
+        for (const point of [worldA, worldB, worldC]) vertices.push(point.x, point.y + 0.012, point.z);
+        for (let i = 0; i < 3; i++) normals.push(0, 1, 0);
+        accepted++;
+      }
+    });
+    if (!vertices.length) {
+      console.info('[LevelToyStory] No secondary temple stair treads found; main entrance supports remain active.');
+      return;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geometry.computeBoundingSphere();
+    const support = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      colorWrite: false, depthWrite: false, side: THREE.DoubleSide
+    }));
+    support.name = 'central_temple_secondary_stairs_walkable_support';
+    support.userData.walkableSupport = true;
+    support.frustumCulled = false;
+    this.sceneManager.scene.add(support);
+    this.levelColliders.push(support);
+    console.info(`[LevelToyStory] Added ${accepted} exact walkable triangles for secondary temple stairs.`);
   }
 
   private addTempleStoneFloor(temple?: THREE.Object3D): void {
@@ -1345,6 +1553,7 @@ export class LevelToyStory {
         this.sceneManager.scene.add(tread);
         this.levelColliders.push(tread);
       }
+      this.addTempleSecondaryStairSupports(temple, topY, groundY);
     }
 
     // Coins are created before environment GLBs finish loading. Re-seat temple
@@ -2042,27 +2251,95 @@ export class LevelToyStory {
         console.info(`[Vegetation] ${index} meadow shoots replace white flower stems (one instanced draw call).`);
       });
 
-      // 4. Drastically Reduced Realistic Mossy Boulders (9 hand-placed cluster rocks)
-      const rockGeo = new THREE.DodecahedronGeometry(0.8, 1);
-      const rockMat = new THREE.MeshStandardMaterial({ color: 0x3d423a, roughness: 0.85 });
-      const rockClusters = [
+      // 4. The nine map boulders use the supplied Mossy Boulder Rock asset.
+      // Each copy is bottom-snapped to the same terrain height provider as
+      // Gekko and has a simple invisible blocker for reliable player collision.
+      const rockClusters: [number, number, number, number][] = [
         // South Ruins rubble base cluster
-        [-32, 0.4, 8, 1.2], [-28, 0.3, 14, 0.9], [-34, 0.5, 12, 1.4],
+        [-32, 0, 8, 1.2], [-28, 0, 14, 0.9], [-34, 0, 12, 1.4],
         // West Library cliff knoll cluster
-        [-48, 0.6, -38, 1.5], [-44, 0.4, -42, 1.1], [-50, 0.5, -44, 1.3],
+        [-48, 0, -38, 1.5], [-44, 0, -42, 1.1], [-50, 0, -44, 1.3],
         // North Arena rock outcrop cluster
-        [58, 0.5, -38, 1.6], [62, 0.4, -42, 1.2], [55, 0.3, -44, 1.0]
+        [58, 0, -38, 1.6], [62, 0, -42, 1.2], [55, 0, -44, 1.0]
       ];
-      rockClusters.forEach(([x, y, z, s]) => {
-        const rock = new THREE.Mesh(rockGeo, rockMat);
-        rock.position.set(x, y, z);
-        rock.rotation.set(Math.random() * 0.4, Math.random() * Math.PI * 2, Math.random() * 0.4);
-        rock.scale.set(s, s * 0.7, s);
-        rock.castShadow = true;
-        rock.receiveShadow = true;
-        scene.add(rock);
-        this.levelColliders.push(rock);
-      });
+      gltfLoader.load(
+        import.meta.env.BASE_URL + 'assets/environment/mossy-boulder-rock.glb',
+        (gltf) => {
+          const source = gltf.scene;
+          source.updateMatrixWorld(true);
+          const sourceBounds = new THREE.Box3().setFromObject(source);
+          const sourceSize = sourceBounds.getSize(new THREE.Vector3());
+          const sourceCenter = sourceBounds.getCenter(new THREE.Vector3());
+          if (!Number.isFinite(sourceSize.y) || sourceSize.y <= 0.001) {
+            console.error('[Boulders] Mossy Boulder Rock has invalid dimensions; props were not spawned.');
+            return;
+          }
+
+          const blockerMaterial = new THREE.MeshBasicMaterial({
+            colorWrite: false,
+            depthWrite: false,
+            side: THREE.DoubleSide
+          });
+          const positions = rockClusters.map(([x, , z, size], index) => ({
+            x, z, size,
+            yaw: (index * 2.399963229728653) % (Math.PI * 2)
+          }));
+
+          positions.forEach(({ x, z, size, yaw }, index) => {
+            const groundY = this.getTerrainHeight(x, z);
+            // Match the old placeholder's approximate visible height while
+            // scaling from the real GLB bounds (which are Y-up in Three.js).
+            const targetHeight = 1.12 * size;
+            const modelScale = targetHeight / sourceSize.y;
+            const rockRoot = new THREE.Group();
+            rockRoot.name = `mossy_boulder_${index + 1}`;
+            rockRoot.position.set(x, groundY, z);
+            rockRoot.rotation.y = yaw;
+
+            const visual = source.clone(true);
+            visual.scale.setScalar(modelScale);
+            visual.position.set(
+              -sourceCenter.x * modelScale,
+              -sourceBounds.min.y * modelScale,
+              -sourceCenter.z * modelScale
+            );
+            visual.traverse((part) => {
+              const mesh = part as THREE.Mesh;
+              if (!mesh.isMesh) return;
+              mesh.castShadow = false;
+              mesh.receiveShadow = true;
+            });
+            rockRoot.add(visual);
+
+            const blocker = new THREE.Mesh(
+              new THREE.BoxGeometry(
+                sourceSize.x * modelScale * 0.78,
+                targetHeight,
+                sourceSize.z * modelScale * 0.78
+              ),
+              blockerMaterial
+            );
+            blocker.name = `mossy_boulder_${index + 1}_solid_blocker`;
+            blocker.position.y = targetHeight * 0.5;
+            blocker.userData.solidPlayerBlocker = true;
+            blocker.castShadow = false;
+            blocker.receiveShadow = false;
+            rockRoot.add(blocker);
+
+            scene.add(rockRoot);
+            rockRoot.updateMatrixWorld(true);
+            this.levelColliders.push(rockRoot);
+          });
+
+          // The GLB loads asynchronously, so refresh the already-initialized
+          // collision and camera systems once these grounded blockers exist.
+          this.player.setColliders(this.levelColliders);
+          this.cameraController.setCollisionObjects(this.levelColliders);
+          console.info(`[Boulders] Planted ${positions.length} original Mossy Boulder Rock assets on the terrain with solid blockers.`);
+        },
+        undefined,
+        (error) => console.error('[Boulders] Could not load Mossy Boulder Rock:', error)
+      );
     })();
 
     // The procedural palace blockout is superseded by the Chinese temple GLB.
@@ -2143,6 +2420,7 @@ export class LevelToyStory {
 
     // Configure collision objects in controllers
     this.cameraController.setCollisionObjects(this.levelColliders);
+    this.cameraController.setTerrainHeightProvider((x, z) => this.getTerrainHeight(x, z));
     this.player.setColliders(this.levelColliders);
   }
 
@@ -3633,7 +3911,20 @@ export class LevelToyStory {
 
       // Curved mesh collider makes the feet follow the actual arch instead of
       // snapping into a flat box or sinking through gaps between the planks.
-      const collisionMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+      // Keep the walk surface front-sided with upward-facing triangles so the
+      // player's downward ground ray can land on it. Rail proxies use a
+      // separate double-sided material because they are approached from both
+      // sides and are tested as actual meshes (not broad world AABBs).
+      const walkSurfaceMaterial = new THREE.MeshBasicMaterial({
+        colorWrite: false,
+        depthWrite: false,
+        side: THREE.FrontSide,
+      });
+      const railCollisionMaterial = new THREE.MeshBasicMaterial({
+        colorWrite: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
       const positions: number[] = [];
       const indices: number[] = [];
       const steps = 32;
@@ -3643,16 +3934,20 @@ export class LevelToyStory {
         positions.push(-1.14, y, z, 1.14, y, z);
         if (i < steps) {
           const a = i * 2;
-          indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+          // Vertex order is left/right at each increasing Z station. The old
+          // winding produced downward normals, so the feet ray skipped this
+          // deck and Wukong fell through to the terrain below.
+          indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
         }
       }
       const walkGeometry = new THREE.BufferGeometry();
       walkGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
       walkGeometry.setIndex(indices);
       walkGeometry.computeVertexNormals();
-      const deckCollider = new THREE.Mesh(walkGeometry, collisionMaterial);
+      const deckCollider = new THREE.Mesh(walkGeometry, walkSurfaceMaterial);
       deckCollider.name = 'bridge_curved_walkable_deck_collider';
       deckCollider.userData.walkableSurface = true;
+      deckCollider.userData.walkableSupport = true;
       bridge.add(deckCollider);
 
       source.traverse((object) => {
@@ -3685,9 +3980,12 @@ export class LevelToyStory {
         wallGeometry.setAttribute('position', new THREE.Float32BufferAttribute(wallPositions, 3));
         wallGeometry.setIndex(wallIndices);
         wallGeometry.computeVertexNormals();
-        const railCollider = new THREE.Mesh(wallGeometry, collisionMaterial);
+        const railCollider = new THREE.Mesh(wallGeometry, railCollisionMaterial);
         railCollider.name = `bridge_solid_side_${side}`;
-        railCollider.userData.solidPlayerBlocker = true;
+        // Do not feed these rotated, elongated meshes to the generic blocker
+        // AABB sweep: its axis-aligned bounds cover the bridge approaches and
+        // create an invisible gate across the deck. The real rail mesh remains
+        // in the raycast collider set, preserving the handrail limits.
         bridge.add(railCollider);
       }
 
@@ -4547,15 +4845,20 @@ export class LevelToyStory {
       { id: 'lava-vault-entry', x: 57, z: -94, floor: () => -7.35 },
       { id: 'lava-vault-platform', x: 67, z: -102, floor: () => -7.35 },
     ];
-    const sparkleGeometry = new THREE.SphereGeometry(0.035, 6, 4);
+    const sparkleCount = 12;
+    const sparkleGeometry = new THREE.SphereGeometry(0.032, 6, 5);
     const sparkleMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffd46b, transparent: true, opacity: 0.9,
+      color: 0xffffff, transparent: true, opacity: 1,
       blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
     });
-    this.lifeSparkles = new THREE.InstancedMesh(sparkleGeometry, sparkleMaterial, configs.length * 5);
+    this.lifeSparkles = new THREE.InstancedMesh(sparkleGeometry, sparkleMaterial, configs.length * sparkleCount);
     this.lifeSparkles.name = 'wukong_life_pickup_glints';
     this.lifeSparkles.frustumCulled = false;
     this.lifeSparkles.renderOrder = 3;
+    const sparkleColors = [0xffd45c, 0x62f4ff, 0xff72dc, 0x9c7bff, 0xfff2a0, 0x70ffbd];
+    for (let i = 0; i < this.lifeSparkles.count; i++) {
+      this.lifeSparkles.setColorAt(i, new THREE.Color(sparkleColors[i % sparkleColors.length]));
+    }
     scene.add(this.lifeSparkles);
 
     const ringGeometry = new THREE.TorusGeometry(0.48, 0.018, 5, 28);
@@ -4567,28 +4870,30 @@ export class LevelToyStory {
       const groundY = config.floor();
       const root = new THREE.Group();
       root.name = `life_pickup_${config.id}`;
-      root.position.set(config.x, groundY + 0.73, config.z);
-      const item = this.lifePickupSource!.clone(true);
-      item.name = `Teara_wukong_vida_${config.id}`;
-      item.traverse((part) => {
+      root.position.set(config.x, groundY + 0.68, config.z);
+      const model = this.lifePickupSource!.clone(true);
+      model.name = `Teara_wukong_vida_model_${config.id}`;
+      model.traverse((part) => {
         const mesh = part as THREE.Mesh;
         if (mesh.isMesh) { mesh.castShadow = false; mesh.receiveShadow = false; }
       });
-      root.add(item);
-      item.updateMatrixWorld(true);
-      const originalBounds = new THREE.Box3().setFromObject(item);
+      model.updateMatrixWorld(true);
+      const originalBounds = new THREE.Box3().setFromObject(model);
       const originalSize = originalBounds.getSize(new THREE.Vector3());
-      item.scale.setScalar(0.88 / Math.max(0.001, originalSize.y));
-      item.updateMatrixWorld(true);
-      const normalizedBounds = new THREE.Box3().setFromObject(item);
-      const center = normalizedBounds.getCenter(new THREE.Vector3());
-      // The authored Blender object has a remote scene origin. Recenter only
-      // this instance's transform; its mesh geometry and material stay intact.
-      item.position.add(new THREE.Vector3(-center.x, -normalizedBounds.min.y, -center.z));
+      const center = originalBounds.getCenter(new THREE.Vector3());
+      // The authored Blender object has a remote origin. Center it in model
+      // space before scaling; applying the correction after scaling made the
+      // pickup transform depend on the source scene's large coordinates.
+      model.position.sub(center);
+      const item = new THREE.Group();
+      item.name = `Teara_wukong_vida_${config.id}`;
+      item.add(model);
+      const displayHeight = 0.58;
+      item.scale.setScalar(displayHeight / Math.max(0.001, originalSize.y));
       const ring = new THREE.Mesh(ringGeometry, ringMaterial);
       ring.name = `life_pickup_halo_${config.id}`;
       ring.rotation.x = -Math.PI / 2;
-      ring.position.y = -0.67;
+      ring.position.y = -0.63;
       ring.castShadow = false;
       ring.receiveShadow = false;
       root.add(ring);
@@ -4604,7 +4909,7 @@ export class LevelToyStory {
     if (!this.lifePickups.length) return;
     this.lifePickupElapsed += Math.min(delta, 0.05);
     const dummy = new THREE.Object3D();
-    const sparkleCount = 5;
+    const sparkleCount = 12;
     this.lifePickups.forEach((pickup, pickupIndex) => {
       if (pickup.collected) {
         pickup.fade = Math.min(1, pickup.fade + delta / 0.24);
@@ -4617,8 +4922,13 @@ export class LevelToyStory {
         return;
       }
       pickup.root.visible = true;
-      pickup.root.position.y = pickup.groundY + 0.73 + Math.sin(this.lifePickupElapsed * 1.8 + pickup.phase) * 0.1;
-      pickup.root.rotation.y += delta * 0.52;
+      pickup.root.position.y = pickup.groundY + 0.68 + Math.sin(this.lifePickupElapsed * 1.8 + pickup.phase) * 0.12;
+      // Keep the tiara's broad, wearable face visible to Wukong instead of
+      // spinning edge-on into the thin golden sliver seen in the pickup view.
+      const targetYaw = Math.atan2(playerPos.x - pickup.root.position.x, playerPos.z - pickup.root.position.z);
+      const yawDelta = THREE.MathUtils.euclideanModulo(targetYaw - pickup.item.rotation.y + Math.PI, Math.PI * 2) - Math.PI;
+      pickup.item.rotation.y += THREE.MathUtils.clamp(yawDelta, -delta * 2.8, delta * 2.8);
+      pickup.item.rotation.z = Math.sin(this.lifePickupElapsed * 1.45 + pickup.phase) * 0.035;
       pickup.ring.rotation.z += delta * 0.22;
       const dx = playerPos.x - pickup.root.position.x;
       const dz = playerPos.z - pickup.root.position.z;
@@ -4632,14 +4942,13 @@ export class LevelToyStory {
       const t = this.lifePickupElapsed * 1.35 + pickup.phase;
       for (let i = 0; i < sparkleCount; i++) {
         const angle = t + (i / sparkleCount) * Math.PI * 2;
-        const radius = 0.54 + Math.sin(t * 0.8 + i) * 0.06;
-        const y = pickup.root.position.y + 0.18 + Math.sin(t * 1.4 + i * 1.7) * 0.3;
+        const radius = 0.48 + Math.sin(t * 0.8 + i) * 0.12;
+        const y = pickup.root.position.y + 0.08 + Math.sin(t * 1.4 + i * 1.7) * 0.38;
         dummy.position.set(pickup.root.position.x + Math.cos(angle) * radius, y, pickup.root.position.z + Math.sin(angle) * radius);
         const pulse = 0.5 + 0.5 * Math.sin(t * 2 + i * 2.1);
-        dummy.scale.setScalar(0.45 + pulse * 0.65);
+        dummy.scale.setScalar(0.45 + pulse * 0.9);
         dummy.updateMatrix();
         this.lifeSparkles?.setMatrixAt(pickupIndex * sparkleCount + i, dummy.matrix);
-        this.lifeSparkles?.setColorAt(pickupIndex * sparkleCount + i, i % 2 ? new THREE.Color(0x8cf6ff) : new THREE.Color(0xffdf78));
       }
     });
     if (this.lifeSparkles) {
@@ -4652,9 +4961,9 @@ export class LevelToyStory {
     if (!this.lifeSparkles) return;
     const dummy = new THREE.Object3D();
     this.lifePickups.forEach((pickup, pickupIndex) => {
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 12; i++) {
         dummy.position.copy(pickup.root.position); dummy.scale.setScalar(0.001); dummy.updateMatrix();
-        this.lifeSparkles!.setMatrixAt(pickupIndex * 5 + i, dummy.matrix);
+        this.lifeSparkles!.setMatrixAt(pickupIndex * 12 + i, dummy.matrix);
       }
     });
     this.lifeSparkles.instanceMatrix.needsUpdate = true;
@@ -4789,7 +5098,7 @@ export class LevelToyStory {
       }
       this.grassCullElapsed = 0.35;
     }
-    if (this.lampMoths) this.lampMoths.update(delta, playerPos);
+    if (this.lampMoths) this.lampMoths.update(delta);
     if (this.hatchPivot && this.hatchTarget !== this.hatchOpenProgress) {
       this.hatchOpenProgress = THREE.MathUtils.damp(this.hatchOpenProgress, this.hatchTarget, 4.6, delta);
       if (Math.abs(this.hatchOpenProgress - this.hatchTarget) < 0.002) this.hatchOpenProgress = this.hatchTarget;
@@ -5367,9 +5676,12 @@ export class LevelToyStory {
   }
 
   private createSkyDebugPanel(): void {
-    // The manual clock controls are useful while tuning the sky, but should
-    // never appear in ordinary local play or screenshots. Opt in explicitly.
-    if (!import.meta.env.DEV || new URLSearchParams(window.location.search).get('skyDebug') !== '1' || this.skyDebugPanel) return;
+    // Sky tuning controls belong to the developer server only. Vite replaces
+    // DEV with false in public builds, so this panel cannot appear for players.
+    if (!import.meta.env.DEV || this.skyDebugPanel) return;
+    // Keep the selector and the actual world clock in sync on first launch.
+    this.dayNightCycle?.setHour(21);
+    this.dayNightCycle?.setTimeScale(1);
     const panel = document.createElement('div');
     panel.setAttribute('aria-label', 'Depuración del ciclo celeste');
     Object.assign(panel.style, {
@@ -5400,11 +5712,20 @@ export class LevelToyStory {
       this.dayNightCycle.setPaused(!this.dayNightCycle.paused);
       pause.textContent = this.dayNightCycle.paused ? 'Reanudar reloj' : 'Detener reloj';
     });
+    const speedWrap = document.createElement('label');
+    speedWrap.style.cssText = 'display:inline-flex;align-items:center;gap:5px';
     const speed = document.createElement('input');
     speed.type = 'range'; speed.min = '0'; speed.max = '120'; speed.step = '0.1'; speed.value = '1';
     speed.setAttribute('aria-label', 'Velocidad del ciclo celeste');
-    speed.addEventListener('input', () => this.dayNightCycle?.setTimeScale(Number(speed.value)));
-    [select, pause, speed].forEach((control) => {
+    const speedValue = document.createElement('span');
+    speedValue.textContent = '1.0×';
+    speed.addEventListener('input', () => {
+      const scale = Number(speed.value);
+      this.dayNightCycle?.setTimeScale(scale);
+      speedValue.textContent = `${scale.toFixed(1)}×`;
+    });
+    speedWrap.append(speed, speedValue);
+    [select, pause, speedWrap].forEach((control) => {
       Object.assign(control.style, { color: '#ffe4a0', background: '#171525', border: '1px solid #806a42', borderRadius: '4px', padding: '3px 5px' });
       row.appendChild(control);
     });

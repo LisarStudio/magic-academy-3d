@@ -52,6 +52,7 @@ export class AnimationController {
   private oneShotMarkerTime = -1;
   private oneShotOnMarker: (() => void) | null = null;
   private oneShotMarkerFired = false;
+  private oneShotFinishedListener: ((event: { action: THREE.AnimationAction }) => void) | null = null;
   private pendingReaction: {
     name: 'Reaction' | 'Step_Backward' | 'Death_From_Right' | 'Death';
     onComplete: () => void;
@@ -129,6 +130,30 @@ export class AnimationController {
   public getClipDuration(name: string): number { return this.allActions.get(name)?.getClip().duration ?? 1.2; }
   public isOneShotPlaying(): boolean { return this.isPlayingOneShot; }
 
+  /** A fresh player command may cancel only the hit flinch. Other one-shots
+   * (pickup, attacks, death and cinematics) keep their existing gameplay locks. */
+  public interruptHitReaction(nextState: AnimationState): boolean {
+    if (this.oneShotAction?.getClip().name !== 'Reaction') return false;
+    if (this.oneShotFinishedListener) {
+      this.mixer?.removeEventListener('finished', this.oneShotFinishedListener as any);
+      this.oneShotFinishedListener = null;
+    }
+    this.oneShotAction.stop();
+    this.oneShotAction.enabled = false;
+    this.oneShotAction.setEffectiveWeight(0);
+    this.oneShotAction = null;
+    this.oneShotOnMarker = null;
+    this.oneShotMarkerTime = -1;
+    this.oneShotMarkerFired = false;
+    this.pendingReaction = null;
+    this.isPlayingOneShot = false;
+    this.idleCyclePhase = null;
+    this.currentAction = null;
+    this.currentState = 'Hit';
+    this.playState(nextState, 0.07);
+    return true;
+  }
+
   public playImpactReaction(onComplete: () => void = () => {}): boolean {
     if (!this.allActions.has('Reaction')) return false;
     // A real hit must be visible immediately. Crossfade out the current action
@@ -185,6 +210,7 @@ export class AnimationController {
     const onFinished = (event: { action: THREE.AnimationAction }) => {
       if (event.action !== action) return;
       this.mixer?.removeEventListener('finished', onFinished as any);
+      if (this.oneShotFinishedListener === onFinished) this.oneShotFinishedListener = null;
       if (this.oneShotAction !== action) return;
       if (!this.oneShotMarkerFired && this.oneShotOnMarker) this.oneShotOnMarker();
       this.oneShotAction = null;
@@ -194,6 +220,7 @@ export class AnimationController {
       onComplete();
       this.playPendingReaction();
     };
+    this.oneShotFinishedListener = onFinished;
     this.mixer.addEventListener('finished', onFinished as any);
   }
 
@@ -448,19 +475,21 @@ export class AnimationController {
    * Play the one-shot TakeItem pickup animation. When it finishes,
    * switch to Armed mode and call onComplete.
    */
-  public playTakeItemAnimation(onContact?: () => void, onComplete?: (completed: boolean) => void): void {
+  public playTakeItemAnimation(onContact?: () => void | Promise<void>, onComplete?: (completed: boolean) => void): void {
     this.idleCyclePhase = null;
     const action = this.allActions.get('TakeItem');
     if (!action || !this.mixer) {
-      onContact?.();
-      onComplete?.(false);
+      void Promise.resolve().then(() => onContact?.()).catch((error) => {
+        console.error('[AnimCtrl] TakeItem fallback contact failed:', error);
+      }).finally(() => onComplete?.(false));
       return;
     }
 
     const duration = action.getClip().duration;
     if (!Number.isFinite(duration) || duration <= 0 || action.getClip().tracks.length === 0) {
-      onContact?.();
-      onComplete?.(false);
+      void Promise.resolve().then(() => onContact?.()).catch((error) => {
+        console.error('[AnimCtrl] TakeItem fallback contact failed:', error);
+      }).finally(() => onComplete?.(false));
       return;
     }
 
@@ -476,25 +505,25 @@ export class AnimationController {
     this.currentAction = action;
     this.currentState = 'Idle';
 
-    let contacted = false;
+    let contactPromise: Promise<void> | null = null;
     let settled = false;
     let lastActionTime = action.time;
     let stalledFrames = 0;
     const contactAt = duration * 0.72;
-    const contact = () => {
-      if (contacted) return;
-      contacted = true;
-      try {
-        onContact?.();
-      } catch (error) {
+    const contact = (): Promise<void> => {
+      if (contactPromise) return contactPromise;
+      // Keep the action alive through the actual handoff. The chest flow can
+      // await this before removing the prop, avoiding a detached tween.
+      contactPromise = Promise.resolve().then(() => onContact?.()).then(() => undefined).catch((error) => {
         console.error('[AnimCtrl] TakeItem contact callback failed:', error);
-      }
+      });
+      return contactPromise;
     };
-    const finish = (completed: boolean) => {
+    const finish = async (completed: boolean) => {
       if (settled) return;
       settled = true;
       this.mixer?.removeEventListener('finished', onFinished as any);
-      contact();
+      await contact();
       this.isPlayingOneShot = false;
       try {
         onComplete?.(completed);
@@ -504,7 +533,7 @@ export class AnimationController {
     };
     const onFinished = (e: { action: THREE.AnimationAction }) => {
       if (e.action === action) {
-        finish(true);
+        void finish(true);
       }
     };
 
@@ -513,7 +542,7 @@ export class AnimationController {
     const checkContact = () => {
       if (settled) return;
       if (!this.isPlayingOneShot || this.currentAction !== action) {
-        finish(false);
+        void finish(false);
         return;
       }
       if (action.time > lastActionTime + 0.0001) {
@@ -522,18 +551,18 @@ export class AnimationController {
       } else {
         stalledFrames++;
       }
-      if (action.time >= contactAt) contact();
+      if (action.time >= contactAt) void contact();
       // The mixer 'finished' event is the primary signal, but also watch the
       // action clock so a dropped event cannot leave the interaction locked.
       if (action.time >= duration - 0.025) {
-        finish(true);
+        void finish(true);
         return;
       }
       // A stalled mixer (stopped action or external interruption) must never
       // strand the player. Count actual render frames rather than wall-clock
       // milliseconds so a slow device can still finish the full clip.
       if (stalledFrames >= 180 || !action.isRunning()) {
-        finish(false);
+        void finish(false);
         return;
       }
       requestAnimationFrame(checkContact);

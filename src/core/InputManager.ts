@@ -13,6 +13,8 @@ export class InputManager {
   public onSelectSpell: ((spellIndex: number) => void) | null = null;
   public onPointerLockChange: ((isLocked: boolean) => void) | null = null;
   public onPauseToggle: (() => void) | null = null;
+  /** Called on a fresh gameplay command so transient hit reactions can yield immediately. */
+  public onPlayerCommand: (() => void) | null = null;
   public canInteract: (() => boolean) | null = null;
   public canAttack: (() => boolean) | null = null;
 
@@ -53,16 +55,20 @@ export class InputManager {
       this.keys[e.code] = true;
 
       if (e.code === 'Digit1' || e.code === 'Numpad1') {
+        this.onPlayerCommand?.();
         this.onSelectSpell?.(0);
       }
       if (e.code === 'Digit2' || e.code === 'Numpad2') {
+        this.onPlayerCommand?.();
         this.onSelectSpell?.(1);
       }
       if (e.code === 'Digit3' || e.code === 'Numpad3') {
+        this.onPlayerCommand?.();
         this.onSelectSpell?.(2);
       }
 
       if (e.code === 'Space') {
+        this.onPlayerCommand?.();
         if (this.onJumpPress) this.onJumpPress();
       }
 
@@ -70,6 +76,7 @@ export class InputManager {
         if (!this.ctrlDown) {
           this.ctrlDown = true;
           console.log('[InputManager] Control key down, firing onKick callback');
+          this.onPlayerCommand?.();
           if (this.onKick) this.onKick();
         }
       }
@@ -120,6 +127,7 @@ export class InputManager {
       }
 
       if (e.button === 0) { // Left Click
+        this.onPlayerCommand?.();
         if (this.onLeftClick) this.onLeftClick();
       }
     });
@@ -149,16 +157,19 @@ export class InputManager {
 
   public triggerKick(): void {
     if (this.canAttack && !this.canAttack()) return;
+    this.onPlayerCommand?.();
     if (this.onKick) this.onKick();
   }
 
   public triggerMagicSpell(): void {
     if (this.canAttack && !this.canAttack()) return;
+    this.onPlayerCommand?.();
     if (this.onLeftClick) this.onLeftClick();
   }
 
   public triggerAttack(): void {
     if (this.canAttack && !this.canAttack()) return;
+    this.onPlayerCommand?.();
     if (this.onLeftClick) {
       this.onLeftClick();
     } else if (this.onKick) {
@@ -167,6 +178,7 @@ export class InputManager {
   }
 
   public triggerJump(): void {
+    this.onPlayerCommand?.();
     if (this.onJumpPress) this.onJumpPress();
   }
 
@@ -177,6 +189,7 @@ export class InputManager {
   /** Capture one interaction edge for the next game update, shared by E and touch. */
   private queueInteractPress(): void {
     if (this.canInteract && !this.canInteract()) return;
+    this.onPlayerCommand?.();
     this.interactionQueued = true;
     this.onInteract?.();
   }
