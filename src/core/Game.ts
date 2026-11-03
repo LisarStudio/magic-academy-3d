@@ -67,9 +67,13 @@ export class Game {
     this.subtitleSystem = new SubtitleSystem();
 
     this.mainMenu = new MainMenu({
-      onStateChange: (state) => { this.menuState = state; },
+      onStateChange: (state) => {
+        this.menuState = state;
+        if (state !== 'Playing') this.hud.hideBossHealth();
+      },
       onStartIntroMusic: () => this.audioManager.startIntroMusic(),
       onBeginTransition: () => {
+        this.hud.hideBossHealth();
         this.audioManager.resume();
         this.inputManager.resetInputs();
         if (!this.hud.isTouchDevice()) this.inputManager.requestPointerLock();
@@ -575,6 +579,7 @@ export class Game {
   }
 
   private beginGameplay(mode: StartMode): void {
+    this.hud.hideBossHealth();
     this.audioManager.resume();
     this.audioManager.startGameplayMusic();
     this.inputManager.resetInputs();
@@ -654,6 +659,7 @@ export class Game {
   private enterGameOver(): void {
     if (this.gameOverActive) return;
     this.gameOverActive = true;
+    this.hud.hideBossHealth();
     this.gameOverElapsed = 0;
     this.inputManager.exitPointerLock();
     this.player.velocity.set(0, 0, 0);

@@ -44,8 +44,10 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDefinition> = {
       // axis onto the local Z axis first; this makes it upright in world space
       // and then gives it the requested shoulder-to-hip diagonal. The negative
       // depth keeps the 3D weapon just behind the shirt.
-      position: new THREE.Vector3(-0.035, 0.91, -0.17),
-      rotation: new THREE.Euler(-Math.PI * 0.5, 0, -0.58, 'XYZ')
+      // CORRECCION: Posicion centrada en la espalda del personaje
+      position: new THREE.Vector3(0, 0.89, -0.45),
+      // CORRECCION: Rotacion para que el baculo quede anclado en la espalda
+      rotation: new THREE.Euler(-Math.PI * 0.5, 0, -0.32, 'XYZ')
     },
     handAttachment: {
       boneNameSubstrings: ['righthand'],

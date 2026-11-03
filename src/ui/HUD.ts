@@ -33,6 +33,11 @@ export class HUD {
   private bossHealthFillEl: HTMLElement;
   private bossHealthValueEl: HTMLElement;
   private bossHealthRevealTimer: number | null = null;
+  private bossHealthRafFirst = 0;
+  private bossHealthRafSecond = 0;
+  private bossHealthGeneration = 0;
+  private bossHealthActive = false;
+  private bossEncounterToken: symbol | null = null;
   private lifeCountEl: HTMLElement | null = null;
   private dodgeWarningEl: HTMLElement | null = null;
 
@@ -104,6 +109,7 @@ export class HUD {
     this.bossHealthPanelEl = document.getElementById('boss-health-panel')!;
     this.bossHealthFillEl = document.getElementById('boss-health-fill')!;
     this.bossHealthValueEl = document.getElementById('boss-health-value')!;
+    this.hideBossHealth();
 
     this.dialogueBubbleEl = document.getElementById('dialogue-bubble')!;
     this.dialogueSpeakerEl = document.getElementById('dialogue-speaker')!;
@@ -236,53 +242,116 @@ export class HUD {
     this.spellHotbarEl.classList.remove('hidden');
   }
 
-  public showBossHealth(health: number, maxHealth: number): void {
-    this.bossHealthPanelEl.classList.remove('hidden');
-    this.updateBossHealth(health, maxHealth);
+  /** Creates a one-use authorization for the currently active boss encounter. */
+  public beginBossEncounter(): symbol {
+    this.hideBossHealth();
+    this.bossEncounterToken = Symbol('live-boss-encounter');
+    return this.bossEncounterToken;
   }
 
-  /** Reveals the boss meter only after its entrance dialogue has finished. */
-  public revealBossHealth(health: number, maxHealth: number): void {
-    this.bossHealthPanelEl.classList.remove('hidden');
+  public isBossEncounterCurrent(token: symbol): boolean {
+    return this.bossEncounterToken === token;
+  }
+
+  /** Reveals the boss meter only after its current entrance dialogue has finished. */
+  public revealBossHealth(health: number, maxHealth: number, token: symbol): void {
+    if (!this.isBossEncounterCurrent(token)) return;
+    this.cancelBossHealthReveal();
+    this.bossHealthActive = true;
+    const generation = ++this.bossHealthGeneration;
+    this.openBossHealthPanel();
     this.updateBossHealth(health, maxHealth);
 
     const targetWidth = this.bossHealthFillEl.style.width;
-    if (this.bossHealthRevealTimer !== null) window.clearTimeout(this.bossHealthRevealTimer);
+    const mask = this.bossHealthPanelEl.querySelector<HTMLElement>('.boss-health-mask');
+    const targetMaskLeft = mask?.style.left ?? '88.25%';
+    const targetMaskWidth = mask?.style.width ?? '0%';
     this.bossHealthPanelEl.classList.remove('boss-health-reveal');
     this.bossHealthFillEl.style.transition = 'none';
     this.bossHealthFillEl.style.width = '0%';
+    if (mask) {
+      mask.style.transition = 'none';
+      mask.style.left = '32.15%';
+      mask.style.width = '56.1%';
+    }
     void this.bossHealthFillEl.offsetWidth;
     this.bossHealthPanelEl.classList.add('boss-health-reveal');
     this.bossHealthFillEl.style.removeProperty('transition');
     this.bossHealthFillEl.parentElement?.setAttribute('aria-valuetext', `Jefe: ${Math.ceil(health)} de ${Math.max(1, maxHealth)}`);
 
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (this.bossHealthPanelEl.classList.contains('hidden')) return;
+    this.bossHealthRafFirst = requestAnimationFrame(() => {
+      this.bossHealthRafFirst = 0;
+      this.bossHealthRafSecond = requestAnimationFrame(() => {
+      this.bossHealthRafSecond = 0;
+      if (generation !== this.bossHealthGeneration || !this.bossHealthActive || this.bossHealthPanelEl.hidden || this.bossHealthPanelEl.classList.contains('hidden')) return;
       this.bossHealthFillEl.style.width = targetWidth;
-    }));
+      if (mask) {
+        mask.style.removeProperty('transition');
+        mask.style.left = targetMaskLeft;
+        mask.style.width = targetMaskWidth;
+      }
+      });
+    });
     this.bossHealthRevealTimer = window.setTimeout(() => {
+      if (generation !== this.bossHealthGeneration || !this.bossHealthActive) return;
       this.bossHealthPanelEl.classList.remove('boss-health-reveal');
       this.bossHealthRevealTimer = null;
     }, 1350);
   }
 
   public updateBossHealth(health: number, maxHealth: number): void {
+    if (!this.bossHealthActive || this.bossHealthPanelEl.hidden || this.bossHealthPanelEl.classList.contains('hidden')) return;
     const safeMax = Math.max(1, maxHealth);
     const safeHealth = Math.max(0, Math.min(safeMax, health));
     const ratio = safeHealth / safeMax;
     this.bossHealthFillEl.style.width = `${ratio * 100}%`;
-    this.bossHealthFillEl.style.backgroundColor = healthFillColor(ratio);
+    this.bossHealthFillEl.style.setProperty('--boss-health-color', healthFillColor(ratio));
+    const mask = this.bossHealthPanelEl.querySelector<HTMLElement>('.boss-health-mask');
+    if (mask) {
+      const barLeft = 32.15;
+      const barWidth = 56.1;
+      mask.style.left = `${barLeft + barWidth * ratio}%`;
+      mask.style.width = `${barWidth * (1 - ratio)}%`;
+    }
     this.bossHealthValueEl.textContent = `${Math.ceil(safeHealth)} / ${safeMax}`;
     this.bossHealthFillEl.parentElement?.setAttribute('aria-valuenow', String(Math.ceil(safeHealth)));
     this.bossHealthFillEl.parentElement?.setAttribute('aria-valuemax', String(safeMax));
   }
 
   public hideBossHealth(): void {
+    this.bossEncounterToken = null;
+    this.bossHealthActive = false;
+    this.bossHealthGeneration++;
+    this.cancelBossHealthReveal();
+    this.bossHealthPanelEl.hidden = true;
     this.bossHealthPanelEl.classList.add('hidden');
     this.bossHealthPanelEl.classList.remove('boss-health-reveal');
+    this.bossHealthFillEl.style.width = '0%';
+    const mask = this.bossHealthPanelEl.querySelector<HTMLElement>('.boss-health-mask');
+    if (mask) {
+      mask.style.left = '32.15%';
+      mask.style.width = '56.1%';
+    }
+    this.bossHealthFillEl.style.removeProperty('--boss-health-color');
+    this.bossHealthValueEl.textContent = '';
+    const progress = this.bossHealthFillEl.parentElement;
+    progress?.setAttribute('aria-valuenow', '0');
+    progress?.setAttribute('aria-valuemax', '1');
+    progress?.removeAttribute('aria-valuetext');
+  }
+
+  private cancelBossHealthReveal(): void {
+    if (this.bossHealthRafFirst) cancelAnimationFrame(this.bossHealthRafFirst);
+    if (this.bossHealthRafSecond) cancelAnimationFrame(this.bossHealthRafSecond);
+    this.bossHealthRafFirst = 0;
+    this.bossHealthRafSecond = 0;
     if (this.bossHealthRevealTimer !== null) window.clearTimeout(this.bossHealthRevealTimer);
     this.bossHealthRevealTimer = null;
-    this.bossHealthFillEl.style.width = '';
+  }
+
+  private openBossHealthPanel(): void {
+    this.bossHealthPanelEl.hidden = false;
+    this.bossHealthPanelEl.classList.remove('hidden');
   }
 
   // Cached values to avoid redundant DOM operations

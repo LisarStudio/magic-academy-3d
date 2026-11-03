@@ -73,6 +73,7 @@ export class LevelToyStory {
   private dragonSwitchMesh!: THREE.Group;
   private dragonLeverStick!: THREE.Mesh;
   public isLavaVaultOpen = false;
+  public isTeleportingToCrypt = false;
   private lavaVaultHatch!: THREE.Mesh;
   private curiosityCryptMouth!: THREE.Group;
   private portalAsset: THREE.Group | null = null;
@@ -128,7 +129,7 @@ export class LevelToyStory {
   private hatchTarget = 0;
   // Set the crypt away from the paved route so its reveal never obstructs the
   // approach to the temple or its stair landing.
-  private readonly curiosityCryptSurface = new THREE.Vector3(-57, 0, -61);
+  private readonly curiosityCryptSurface = new THREE.Vector3(-75, 0, -110);
   private readonly npcGazePoint = new THREE.Vector3();
   private readonly curiosityCryptRoomEntry = new THREE.Vector3(-9.8, -5.82, -40);
   private isInsideCuriosityCrypt = false;
@@ -2034,7 +2035,7 @@ export class LevelToyStory {
     const stoneMat = new THREE.MeshStandardMaterial({ map: stoneTex, roughness: 0.65, bumpScale: 0.04 });
     const groundBaseMat = new THREE.MeshStandardMaterial({ color: 0x526b32, roughness: 0.98 }); // Warm green distant ground LOD
     this.terrainGroundMaterial = groundBaseMat;
-    const sandMat = new THREE.MeshStandardMaterial({ color: 0xc2b280, roughness: 0.85 });  // Arena floor
+
 
     // 1. Rolling Undulating Terrain Mesh (160 x 160, 64x64 segments)
     const terrainGeo = new THREE.PlaneGeometry(160, 160, 64, 64);
@@ -2388,9 +2389,33 @@ export class LevelToyStory {
     this.buildCuriosityVault(scene, stoneMat, castleCenterZ);
 
 
-    // 4. Combat Boss Arena (to the East, broad sand circular area)
+    // 4. Combat Boss Arena (to the East, broad dark rock circular area)
+    const textureLoader = new THREE.TextureLoader();
+    const darkRockDiff = textureLoader.load(import.meta.env.BASE_URL + `assets/environment/arena-dark-rock/dark_rock_diff_2k.jpg?v=${__APP_VERSION__}`);
+    const darkRockNor = textureLoader.load(import.meta.env.BASE_URL + `assets/environment/arena-dark-rock/dark_rock_nor_2k.webp?v=${__APP_VERSION__}`);
+    const darkRockRough = textureLoader.load(import.meta.env.BASE_URL + `assets/environment/arena-dark-rock/dark_rock_rough_2k.jpg?v=${__APP_VERSION__}`);
+
+    darkRockDiff.colorSpace = THREE.SRGBColorSpace;
+    darkRockDiff.wrapS = darkRockDiff.wrapT = THREE.RepeatWrapping;
+    darkRockDiff.repeat.set(6, 6);
+
+    darkRockNor.wrapS = darkRockNor.wrapT = THREE.RepeatWrapping;
+    darkRockNor.repeat.set(6, 6);
+
+    darkRockRough.wrapS = darkRockRough.wrapT = THREE.RepeatWrapping;
+    darkRockRough.repeat.set(6, 6);
+
+    const darkRockMat = new THREE.MeshStandardMaterial({
+      map: darkRockDiff,
+      normalMap: darkRockNor,
+      normalScale: new THREE.Vector2(1.2, 1.2),
+      roughnessMap: darkRockRough,
+      roughness: 0.92,
+      metalness: 0.04,
+    });
+
     const arenaCenter = new THREE.Vector3(45, 0.1, -40);
-    const arenaFloor = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 0.2, 24), sandMat);
+    const arenaFloor = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 0.2, 32), darkRockMat);
     arenaFloor.position.copy(arenaCenter);
     arenaFloor.receiveShadow = true;
     scene.add(arenaFloor);
@@ -2841,6 +2866,13 @@ export class LevelToyStory {
     this.curiosityCryptMouth.add(asset);
     this.cryptPortalMaterial = material;
     this.portalAsset = asset;
+
+    // Asegurar que el material sea visible desde ambos lados (frente y atrás)
+    if (this.cryptPortalMaterial) {
+        this.cryptPortalMaterial.side = THREE.DoubleSide;
+        this.cryptPortalMaterial.transparent = true;
+        this.cryptPortalMaterial.depthWrite = false;
+    }
 
     // The authored mesh now supplies the portal surface, so remove only the
     // crude semicircle accent. Keep the dark opening and rocky cave surround.
@@ -4225,8 +4257,10 @@ export class LevelToyStory {
         e.arenaCenter = new THREE.Vector3(45, 0.2, -40);
         e.arenaRadius = 21.0;
         e.onHealthChange = (health, maxHealth) => {
-          const hud = (window as any).gameInstance?.hud;
-          hud?.updateBossHealth(health, maxHealth);
+          const game = (window as any).gameInstance;
+          if (this.bossEncounterActive && !this.isCinematicPlaying && !this.stateFlags.bossDefeated && game?.menuState === 'Playing') {
+            game.hud?.updateBossHealth(health, maxHealth);
+          }
         };
       }
 
@@ -5148,7 +5182,8 @@ export class LevelToyStory {
       ((this.gekkoMissionState === 'MISSION_ACTIVE' && this.collectibleSystem.coinCount < 50) || this.gekkoMissionState === 'REWARD_GIVEN');
     const interactWithGekko = gekkoNeedsAction && this.inputManager.consumeInteractPress();
 
-    if (!this.stateFlags.bossDefeated && !this.bossEncounterActive && !this.isCinematicPlaying && !this.player.isControlsLocked) {
+    const activeGame = (window as any).gameInstance;
+    if (activeGame?.menuState === 'Playing' && this.player.health > 0 && !this.stateFlags.bossDefeated && !this.bossEncounterActive && !this.isCinematicPlaying && !this.player.isControlsLocked) {
       const entryDistance = Math.hypot(playerPos.x - 34, playerPos.z + 40);
       if (entryDistance <= 10) {
         this.stateFlags.bossCinematicPlayed = true;
@@ -5295,9 +5330,9 @@ export class LevelToyStory {
             this.isLavaVaultOpen = true;
             this.leverTarget = -Math.PI / 4;
             this.hatchTarget = 1;
-          this.audioManager.playHitImpact();
-          this.audioManager.playPortalActivate();
-          this.subtitleSystem.show('Mecanismo Secreto', '¡El mecanismo del pabellón ha abierto una cámara secreta al otro lado del reino!');
+            this.audioManager.playHitImpact();
+            this.audioManager.playPortalActivate();
+            this.subtitleSystem.show('Mecanismo Secreto', '¡El mecanismo del pabellón ha abierto una cámara secreta al otro lado del reino!');
           }
         } else {
           hud?.showInteractionPrompt('La cripta está abierta; busca la entrada al oeste.');
@@ -5594,8 +5629,11 @@ export class LevelToyStory {
   }
 
   private async runBossCinematic(): Promise<void> {
-    if (this.bossEncounterActive || this.stateFlags.bossDefeated) return;
     const game = (window as any).gameInstance;
+    if (game?.menuState !== 'Playing' || this.player.health <= 0 || this.bossEncounterActive || this.stateFlags.bossDefeated) {
+      game?.hud?.hideBossHealth();
+      return;
+    }
     const cinematicCamera = game?.cinematicCamera;
     const cameraController = game?.cameraController;
     const hud = game?.hud;
@@ -5611,7 +5649,7 @@ export class LevelToyStory {
     this.bossEnemy.isPaused = true;
     this.bossEnemy.mesh.position.copy(this.bossEnemy.arenaCenter!);
     this.bossEnemy.mesh.rotation.set(0, 0, 0);
-    hud.hideBossHealth();
+    const bossHudToken: symbol = hud.beginBossEncounter();
     this.subtitleSystem.hide();
     void this.audioManager.startBossMusic();
 
@@ -5637,6 +5675,11 @@ export class LevelToyStory {
     const finishCinematic = () => {
       if (cinematicFinished) return;
       cinematicFinished = true;
+      if (!hud.isBossEncounterCurrent(bossHudToken)) {
+        window.clearTimeout(autoFinishTimer);
+        window.removeEventListener('keydown', skipHandler);
+        return;
+      }
       window.clearTimeout(autoFinishTimer);
       window.removeEventListener('keydown', skipHandler);
       hud.hideDialogue();
@@ -5650,7 +5693,14 @@ export class LevelToyStory {
       this.bossEnemy.isPaused = false;
       this.bossEncounterActive = true;
       this.isCinematicPlaying = false;
-      hud.revealBossHealth(this.bossEnemy.health, this.bossEnemy.maxHealth);
+      // The entrance cinematic can finish after a reset/menu transition. The
+      // meter belongs only to the live boss encounter in active gameplay.
+      if (game.menuState === 'Playing' && !this.stateFlags.bossDefeated && this.bossEnemy.isAlive()) {
+        hud.revealBossHealth(this.bossEnemy.health, this.bossEnemy.maxHealth, bossHudToken);
+      } else {
+        this.bossEncounterActive = false;
+        hud.hideBossHealth();
+      }
     };
     const skipHandler = (event: KeyboardEvent) => {
       if (event.code === 'Space' || event.code === 'Enter' || event.code === 'Escape') {

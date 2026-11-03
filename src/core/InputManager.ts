@@ -134,7 +134,12 @@ export class InputManager {
   }
 
   public requestPointerLock(): void {
-    this.canvas.requestPointerLock();
+    try {
+      const lockPromise = this.canvas.requestPointerLock() as unknown;
+      if (lockPromise && typeof (lockPromise as Promise<void>).catch === 'function') {
+        (lockPromise as Promise<void>).catch(() => {});
+      }
+    } catch {}
   }
 
   public exitPointerLock(): void {

@@ -468,32 +468,22 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 .boss-health-panel {
   position: absolute;
   z-index: 130;
-  right: clamp(20px, 3vw, 48px);
-  bottom: clamp(28px, 5.5vh, 56px);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: min(460px, calc(100vw - 32px));
-  min-width: 0;
-  padding: 9px 17px 10px 11px;
-  border: 1px solid #a5473f;
-  clip-path: polygon(2% 0, 98% 0, 100% 14%, 98.7% 50%, 100% 86%, 98% 100%, 2% 100%, 0 86%, 1.3% 50%, 0 14%);
-  background: linear-gradient(110deg, rgba(38, 13, 23, .97), rgba(15, 13, 24, .96) 60%, rgba(44, 12, 17, .97));
-  box-shadow: 0 7px 24px rgba(0, 0, 0, .52), inset 0 0 0 2px rgba(230, 86, 63, .34), inset 0 1px 0 rgba(255, 190, 150, .26);
-  color: #fff2cd;
-  text-shadow: 0 2px 3px #271216;
+  right: clamp(12px, 2vw, 32px);
+  bottom: clamp(18px, 3vh, 34px);
+  width: min(690px, calc(100vw - 28px));
+  aspect-ratio: 2244 / 701;
   pointer-events: none;
 }
-.boss-health-portrait { position: relative; flex: 0 0 clamp(48px, 6vw, 64px); width: clamp(48px, 6vw, 64px); aspect-ratio: 1; padding: 3px; border-radius: 50%; background: radial-gradient(circle, #671b28 48%, #210d17 67%); box-shadow: 0 0 0 2px #bd5949, 0 0 15px #a92c324d, inset 0 0 0 1px #ffd17d; overflow: hidden; }
-.boss-health-portrait::after { content: ''; position: absolute; inset: 0; border-radius: inherit; border: 2px solid #4b1822; pointer-events: none; }
-.boss-health-portrait img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.boss-health-content { flex: 1; min-width: 0; }
-.boss-health-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; font-weight: 800; letter-spacing: .8px; }
-#boss-health-name { color: #ffe0d1; font-size: clamp(13px, 1.8vw, 17px); letter-spacing: .5px; }
-#boss-health-value { margin-left: auto; color: #fff6db; font-size: 13px; font-variant-numeric: tabular-nums; }
-.boss-health-track { width: 100%; height: 17px; overflow: hidden; border: 2px solid #b8473d; border-radius: 5px; background: #190e17; box-shadow: inset 0 2px 5px #000c, 0 0 0 1px #32131b; }
-.boss-health-fill { width: 100%; height: 100%; border-radius: 2px; background-color: #36d05f; background-image: none; box-shadow: 0 0 10px rgba(54, 208, 95, .46), inset 0 1px 0 #fff8; transition: width 260ms ease, background-color 220ms ease, box-shadow 220ms ease; }
-.boss-health-panel.boss-health-reveal .boss-health-fill { transition: width 1250ms cubic-bezier(.16,.78,.2,1); }
+#boss-health-panel[hidden] { display: none !important; }
+.boss-hud-artwork { position: absolute; inset: 0; }
+.boss-hud-frame { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: fill; z-index: 2; }
+/* The approved PNG contains the full jewel-toned bar. Mask only its unearned
+   right-hand portion, preserving the supplied artwork and its proportions. */
+.boss-health-track { position: absolute; z-index: 1; left: 32.15%; top: 51.6%; width: 56.1%; height: 9.4%; overflow: hidden; opacity: 0; pointer-events: none; }
+.boss-health-fill { width: 100%; height: 100%; background: transparent; transition: width 260ms ease; }
+.boss-health-mask { position: absolute; z-index: 3; top: 51.6%; left: 88.25%; width: 0; height: 9.4%; background: rgba(10, 8, 14, .94); transition: left 280ms ease, width 280ms ease; }
+.boss-health-value { position: absolute; z-index: 4; top: 33.8%; right: 7.3%; min-width: 5.2%; color: #fff4df; text-align: center; font: 800 clamp(10px, 1vw, 14px)/1 'Quicksand', sans-serif; font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px #18090d; }
+.boss-health-panel.boss-health-reveal .boss-health-mask { transition-duration: 1250ms; transition-timing-function: cubic-bezier(.16,.78,.2,1); }
 
 .damage-flash-screen {
   position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -994,8 +984,7 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
   .in-game-loading-tip strong { font-size: clamp(11px, 3vw, 14px); }
   .in-game-loading-tip p { font-size: clamp(9px, 2.5vw, 11px); line-height: 1.2; overflow-wrap: anywhere; }
   #btn-retry-in-game-loading { position: absolute; left: 10%; bottom: 31%; width: 80%; }
-  .boss-health-panel { top: max(76px, calc(env(safe-area-inset-top) + 70px)); right: 16px; bottom: auto; left: 16px; width: auto; min-width: 0; padding: 7px 12px 9px; }
-  .boss-health-track { height: 14px; }
+  .boss-health-panel { top: max(84px, calc(env(safe-area-inset-top) + 68px)); right: auto; bottom: auto; left: 50%; width: min(96vw, 580px); aspect-ratio: 2244 / 701; transform: translateX(-50%); padding: 0; }
   .cinematic-video { object-position: 60% center; }
   #idle-video { object-position: 74% center; }
   .menu-spirit-particles { --particle-width: clamp(145px, 34vw, 230px); left: 76%; top: 53%; height: clamp(270px, 68vw, 390px); }
@@ -2150,7 +2139,7 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 @media (pointer: coarse) {
   #ui-overlay { width: 100vw; height: 100dvh; overflow: hidden; }
   #hud-top-left.imperial-hud {
-    width: clamp(150px, 46vw, 220px);
+    width: clamp(150px, 50vw, 196px);
     top: calc(env(safe-area-inset-top, 0px) + 6px);
     left: calc(env(safe-area-inset-left, 0px) + 7px);
   }
@@ -2255,7 +2244,7 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 }
 
 @media (max-width: 700px) {
-  #hud-top-left.imperial-hud { width: min(46vw, 220px); top: max(7px, env(safe-area-inset-top)); left: max(7px, env(safe-area-inset-left)); }
+  #hud-top-left.imperial-hud { width: min(50vw, 196px); top: max(7px, env(safe-area-inset-top)); left: max(7px, env(safe-area-inset-left)); }
   .imperial-health-value { font-size: 11px; }
   .imperial-mana-value { font-size: 9px; }
   .imperial-mana-frame { gap: 3px; }

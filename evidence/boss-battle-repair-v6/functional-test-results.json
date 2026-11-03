@@ -1,0 +1,130 @@
+{
+  "passed": 18,
+  "failed": 0,
+  "results": [
+    {
+      "name": "GLTFLoader loads boss-crab.glb successfully",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "Boss scaled to ~5.2m width",
+      "pass": true,
+      "details": {
+        "size": [
+          5.199999999999999,
+          7.0052887064280585,
+          3.5056649614330118
+        ]
+      }
+    },
+    {
+      "name": "Boss model bottom vertex grounded at Y = 0",
+      "pass": true,
+      "details": {
+        "minY": 0
+      }
+    },
+    {
+      "name": "Identified exactly 5 leg nodes on boss model",
+      "pass": true,
+      "details": {
+        "legs": [
+          "Cube005",
+          "Cube006",
+          "Cube007",
+          "Cube008",
+          "Cube009"
+        ]
+      }
+    },
+    {
+      "name": "Identified exactly 3 claw/pincer nodes on boss model",
+      "pass": true,
+      "details": {
+        "claws": [
+          "Cube001",
+          "Cube003",
+          "Sphere"
+        ]
+      }
+    },
+    {
+      "name": "Claws raised during telegraph by 0.85 rad",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "Claws successfully restored to rest orientation",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "HUD at 9/9 HP: Mask left at 88.25%, mask width at 0%",
+      "pass": true,
+      "details": {
+        "left": "88.25%",
+        "width": "0%",
+        "text": "9 / 9"
+      }
+    },
+    {
+      "name": "HUD at 5/9 HP: Mask partially covers unearned bar",
+      "pass": true,
+      "details": {
+        "actual": "63.32",
+        "expected": "63.32",
+        "text": "5 / 9"
+      }
+    },
+    {
+      "name": "HUD at 0/9 HP: Mask fully covers bar (left: 32.15%, width: 56.1%)",
+      "pass": true,
+      "details": {
+        "left": "32.15%",
+        "width": "56.1%",
+        "text": "0 / 9"
+      }
+    },
+    {
+      "name": "boss-crab.glb exists and is non-empty (>50KB)",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "hud-boss-imperial.png exists and is non-empty",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "dark_rock_diff_2k.jpg exists in arena-dark-rock",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "dark_rock_nor_2k.webp exists in arena-dark-rock",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "dark_rock_rough_2k.jpg exists in arena-dark-rock",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "dist/assets/enemies/boss-crab.glb exists in build",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "dist/assets/ui/hud-boss-imperial.png exists in build",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "dist/assets/environment/arena-dark-rock/dark_rock_diff_2k.jpg exists in build",
+      "pass": true,
+      "details": {}
+    }
+  ]
+}

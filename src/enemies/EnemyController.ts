@@ -84,6 +84,7 @@ export class EnemyController {
   // Shared Master GLTF Template & Texture Pool
   private static masterTemplate: THREE.Object3D | null = null;
   private static masterPromise: Promise<THREE.Object3D | null> | null = null;
+  private static bossTemplate: THREE.Object3D | null = null;
   private static sharedSwordTexture: THREE.CanvasTexture | null = null;
 
   // Reusable static vectors to eliminate per-frame allocations
@@ -115,7 +116,7 @@ export class EnemyController {
       && new URLSearchParams(window.location.search).has('debugBoss');
     this.createProceduralCrab();
     if (this.bossDebugEnabled) {
-      console.info('[BossDebug] ENTITY_CREATED', { id, asset: 'assets/enemies/crab.glb (shared crab asset)', hp: this.health, maxHp: this.maxHealth });
+      console.info('[BossDebug] ENTITY_CREATED', { id, asset: 'assets/enemies/crab.glb', hp: this.health, maxHp: this.maxHealth });
     }
   }
 
@@ -209,8 +210,14 @@ export class EnemyController {
     // Reused low-poly projectile meshes; no per-shot geometry/material creation.
     this.bossProjectileGroup = new THREE.Group();
     this.bossProjectileGroup.name = 'crab_boss_volley_projectiles';
-    const projectileGeometry = new THREE.SphereGeometry(0.34, 10, 8);
-    const projectileMaterial = new THREE.MeshBasicMaterial({ color: 0xff6545 });
+    const projectileGeometry = new THREE.SphereGeometry(0.38, 12, 10);
+    const projectileMaterial = new THREE.MeshStandardMaterial({
+      color: 0xff3300,
+      emissive: 0xff3300,
+      emissiveIntensity: 1.6,
+      roughness: 0.2,
+      metalness: 0.1
+    });
     for (let i = 0; i < 3; i++) {
       const mesh = new THREE.Mesh(projectileGeometry, projectileMaterial);
       mesh.name = `crab_boss_volley_projectile_${i + 1}`;
@@ -224,11 +231,12 @@ export class EnemyController {
   }
 
   public static async preloadMasterTemplate(): Promise<void> {
-    if (this.masterTemplate || this.masterPromise) return;
-    this.masterPromise = (async () => {
-      try {
+    if (this.masterTemplate) return;
+    if (!this.masterPromise) {
+      this.masterPromise = (async () => {
+       try {
         const loader = new GLTFLoader();
-        const gltf = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/enemies/crab.glb?v=0.0.32');
+        const gltf = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/enemies/crab.glb?v=0.0.34');
         const model = gltf.scene;
 
         const bbox = new THREE.Box3().setFromObject(model);
@@ -253,31 +261,66 @@ export class EnemyController {
         console.log('[EnemyController] ✅ Master crab.glb template cached successfully');
         return model;
       } catch (err) {
+        this.masterPromise = null;
         console.warn('[EnemyController] Could not preload master crab.glb template', err);
         return null;
       }
-    })();
+      })();
+    }
+    // All concurrently-created enemies must await this same in-flight GLB load.
     await this.masterPromise;
+  }
+
+  /** The exclusive demonic boss model (assets/enemies/boss-crab.glb). */
+  private static async preloadBossTemplate(): Promise<void> {
+    if (this.bossTemplate) return;
+    try {
+      const loader = new GLTFLoader();
+      const gltf = await loader.loadAsync(import.meta.env.BASE_URL + `assets/enemies/boss-crab.glb?v=${__APP_VERSION__}`);
+      const model = gltf.scene;
+
+      // Uniformly scale the exclusive boss model by width to ~5.2 m (3x Wukong)
+      const currentBounds = new THREE.Box3().setFromObject(model);
+      const currentSize = currentBounds.getSize(new THREE.Vector3());
+      const targetBossWidth = 5.2;
+      const largestAxis = Math.max(currentSize.x, currentSize.z);
+      const scale = targetBossWidth / Math.max(0.001, largestAxis);
+      model.scale.setScalar(scale);
+      model.updateMatrixWorld(true);
+
+      // Align vertical offset so feet (lowest vertex) sit strictly at y = 0
+      const scaledBBox = new THREE.Box3().setFromObject(model);
+      model.position.set(0, -scaledBBox.min.y, 0);
+
+      model.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+
+      this.bossTemplate = model;
+      console.info('[EnemyController] ✅ Exclusive boss-crab.glb template loaded and grounded successfully');
+    } catch (err) {
+      console.warn('[EnemyController] Could not load boss-crab.glb, falling back to master crab.glb', err);
+      await this.preloadMasterTemplate();
+      this.bossTemplate = this.masterTemplate;
+    }
   }
 
   public async loadModel(scaleMultiplier = 1.0): Promise<void> {
     try {
-      if (!EnemyController.masterTemplate) {
+      if (this.id === 'crab_boss') {
+        await EnemyController.preloadBossTemplate();
+      } else if (!EnemyController.masterTemplate) {
         await EnemyController.preloadMasterTemplate();
       }
 
-      if (!EnemyController.masterTemplate) return;
+      const template = this.id === 'crab_boss' ? EnemyController.bossTemplate : EnemyController.masterTemplate;
+      if (!template) return;
 
-      const model = EnemyController.masterTemplate.clone(true);
+      const model = template.clone(true);
       if (this.id === 'crab_boss') {
-        // Scale from the model's actual vertical bounds, not its longest axis.
-        // The supplied GLB is very wide; max-dimension normalization made its
-        // body look like an ordinary small crab in the arena.
-        const currentBounds = new THREE.Box3().setFromObject(model);
-        const currentSize = currentBounds.getSize(new THREE.Vector3());
-        const targetBossHeight = 5.1; // 3x the measured 1.7 m Wukong rig
-        const heightScale = targetBossHeight / Math.max(0.001, currentSize.y);
-        model.scale.multiplyScalar(heightScale);
         const scaledBBox = new THREE.Box3().setFromObject(model);
         model.position.set(0, -scaledBBox.min.y, 0);
       } else if (scaleMultiplier !== 1.0) {
@@ -305,7 +348,7 @@ export class EnemyController {
         this.bossHurtboxWorldToLocal.copy(this.mesh.matrixWorld).invert();
         this.bossHurtboxLocal.applyMatrix4(this.bossHurtboxWorldToLocal);
         this.debugBossEvent('MODEL_READY', {
-          asset: 'assets/enemies/crab.glb (shared crab asset; no distinct boss GLB in project)',
+          asset: 'assets/enemies/boss-crab.glb',
           bounds: this.bossHurtboxLocal.getSize(new THREE.Vector3()).toArray(),
           hp: this.health,
           maxHp: this.maxHealth,
@@ -318,12 +361,33 @@ export class EnemyController {
       this.bossClawRestRotations.clear();
       model.traverse((child) => {
         const n = child.name.toLowerCase();
-        if (n.includes('leg') || n.includes('arm') || n.includes('claw') || n.includes('limb')) {
-          this.legs.push(child);
-        }
-        if (n.includes('claw')) {
-          this.bossClaws.push(child);
-          this.bossClawRestRotations.set(child, child.rotation.clone());
+        if (this.id === 'crab_boss') {
+          if (child.parent === model) {
+            const cleanName = n.replace(/\./g, '');
+            if (
+              cleanName.startsWith('cube005') || cleanName.startsWith('cube006') ||
+              cleanName.startsWith('cube007') || cleanName.startsWith('cube008') ||
+              cleanName.startsWith('cube009') || cleanName.startsWith('cube011') ||
+              cleanName.includes('leg')
+            ) {
+              this.legs.push(child);
+            }
+            if (
+              cleanName.startsWith('cube001') || cleanName.startsWith('cube003') ||
+              cleanName.startsWith('sphere') || cleanName.includes('claw')
+            ) {
+              this.bossClaws.push(child);
+              this.bossClawRestRotations.set(child, child.rotation.clone());
+            }
+          }
+        } else {
+          if (n.includes('leg') || n.includes('arm') || n.includes('claw') || n.includes('limb')) {
+            this.legs.push(child);
+          }
+          if (n.includes('claw')) {
+            this.bossClaws.push(child);
+            this.bossClawRestRotations.set(child, child.rotation.clone());
+          }
         }
         if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).material) {
           const mat = (child as THREE.Mesh).material;
@@ -336,7 +400,7 @@ export class EnemyController {
       });
 
       this.initCombatSwordIcon();
-      console.log(`[EnemyController] Cloned master crab template for '${this.id}' (${this.legs.length} leg nodes, scale: ${scaleMultiplier})`);
+      console.log(`[EnemyController] Loaded model for '${this.id}' (${this.legs.length} legs, ${this.bossClaws.length} claws)`);
     } catch (err) {
       console.warn(`[EnemyController] Could not instantiate crab model for '${this.id}'`, err);
     }
@@ -701,8 +765,13 @@ export class EnemyController {
       this.dyingTimer -= delta;
 
       if (this.id === 'crab_boss') {
-        // Boss Defeat Pose: falls upside down onto back, remains VISUALLY PRESENT on arena floor
-        this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, Math.PI, delta * 5.0);
+        // Boss Defeat Pose: slumps defeated onto the arena floor, perfectly grounded
+        this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, 0, delta * 8.0);
+        this.mesh.position.y = 0.2;
+        if (this.crabModel) {
+          this.crabModel.position.y = THREE.MathUtils.lerp(this.crabModel.position.y, this.bossModelBaseY - 0.35, delta * 4.0);
+        }
+        this.raiseBossClaws(-0.6);
         this.mesh.visible = true; // Remained present for cinematic!
         if (this.dyingTimer <= 0) {
           this.state = 'DEAD';
@@ -865,11 +934,18 @@ export class EnemyController {
       case 'STUNNED':
         if (this.id === 'crab_boss') {
           this.bossPhaseTimer -= delta;
-          this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, Math.PI * 0.72, delta * 4.5);
+          this.mesh.rotation.z = 0;
+          if (this.crabModel) {
+            this.crabModel.position.y = THREE.MathUtils.lerp(this.crabModel.position.y, this.bossModelBaseY - 0.2, delta * 4.0);
+          }
+          this.raiseBossClaws(-0.4);
           if (this.bossPhaseTimer <= 0) {
             this.bossAttackPhase = 'READY';
             this.bossAttackCooldown = 0.85;
             this.mesh.rotation.z = 0;
+            if (this.crabModel) {
+              this.crabModel.position.y = this.bossModelBaseY;
+            }
             this.restoreBossClaws();
             this.state = 'CHASE';
           }

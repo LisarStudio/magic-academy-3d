@@ -7,8 +7,9 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>La leyenda de Wukong — Lisar Studio</title>
-    <link rel="preload" as="image" href="./assets/ui/hud-vida-imperial.png" fetchpriority="high" />
-    <link rel="preload" as="image" href="./assets/ui/hud-baculo-vida.png" />
+    <link rel="preload" as="image" href="./assets/ui/hud-vida-imperial.png?v=0.0.34" fetchpriority="high" />
+    <link rel="preload" as="image" href="./assets/ui/hud-baculo-vida.png?v=0.0.34" />
+    <link rel="preload" as="image" href="./assets/ui/hud-boss-imperial.png?v=0.0.34" />
     <link rel="icon" type="image/svg+xml" href="/magic-academy-3d/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -65,18 +66,21 @@
         <!-- Fade to Black Overlay -->
         <div id="screen-fade" class="screen-fade-overlay hidden"></div>
 
-        <section id="boss-health-panel" class="boss-health-panel hidden" role="status" aria-label="Salud del General Cangrejo Demonio">
-          <div class="boss-health-portrait"><img src="./assets/ui/crab-boss-portrait.png" alt="" /></div>
-          <div class="boss-health-content">
-            <div class="boss-health-heading"><span id="boss-health-name">GENERAL CANGREJO DEMONIO</span><span id="boss-health-value">9 / 9</span></div>
-            <div class="boss-health-track" role="progressbar" aria-label="Salud del jefe" aria-valuemin="0" aria-valuemax="9" aria-valuenow="9"><div id="boss-health-fill" class="boss-health-fill"></div></div>
+        <section id="boss-health-panel" class="boss-health-panel hidden" role="status" aria-label="Salud del jefe" hidden>
+          <div class="boss-hud-artwork">
+            <div class="boss-health-track" role="progressbar" aria-label="Salud del jefe" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0">
+                <div id="boss-health-fill" class="boss-health-fill" style="width: 0%"></div>
+            </div>
+            <img class="boss-hud-frame" src="./assets/ui/hud-boss-imperial.png?v=0.0.34" alt="" />
+              <div class="boss-health-mask" aria-hidden="true"></div>
+            <span id="boss-health-value" class="boss-health-value"></span>
           </div>
         </section>
 
         <!-- Objectives & Status HUD Top Left -->
         <div id="hud-top-left" class="hud-panel hidden modern-hud imperial-hud">
           <div class="imperial-hud-art">
-            <img class="imperial-health-frame" src="./assets/ui/hud-vida-imperial.png" alt="" />
+            <img class="imperial-health-frame" src="./assets/ui/hud-vida-imperial.png?v=0.0.34" alt="" />
             <div class="imperial-health-fill-clip" role="progressbar" aria-label="Salud" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><div id="hp-bar-fill" class="imperial-health-fill"></div></div>
             <span id="hp-text" class="imperial-health-value">100 / 100</span>
           </div>
@@ -91,9 +95,9 @@
           </div>
           <div id="life-count" class="life-count imperial-life-count" aria-label="Vidas restantes">×3</div>
           <div id="hud-skill-baculos" class="hud-skill-baculos" aria-label="Habilidades de báculo">
-            <span class="imperial-life-socket"><img src="./assets/ui/hud-baculo-vida.png" alt="" aria-hidden="true" /></span>
-            <span class="imperial-life-socket"><img src="./assets/ui/hud-baculo-vida.png" alt="" aria-hidden="true" /></span>
-            <span class="imperial-life-socket"><img src="./assets/ui/hud-baculo-vida.png" alt="" aria-hidden="true" /></span>
+            <span class="imperial-life-socket"><img src="./assets/ui/hud-baculo-vida.png?v=0.0.34" alt="" aria-hidden="true" /></span>
+            <span class="imperial-life-socket"><img src="./assets/ui/hud-baculo-vida.png?v=0.0.34" alt="" aria-hidden="true" /></span>
+            <span class="imperial-life-socket"><img src="./assets/ui/hud-baculo-vida.png?v=0.0.34" alt="" aria-hidden="true" /></span>
           </div>
         </div>
         
