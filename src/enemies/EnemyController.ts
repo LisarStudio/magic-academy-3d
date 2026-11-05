@@ -31,6 +31,12 @@ export class EnemyController {
   private crabModel: THREE.Object3D | null = null;
   private proceduralTime = 0;
   private attackCooldown = 0;
+  private readonly meshMaterialEmissionBases = new Map<THREE.MeshStandardMaterial, { color: THREE.Color; intensity: number }>();
+  private readonly bossRedEmissionMaterials: Array<{ material: THREE.MeshStandardMaterial; baseIntensity: number }> = [];
+  private readonly bossOwnedMaterials = new Set<THREE.MeshStandardMaterial>();
+  private bossEyeWindup = 0;
+  private bossEyeGlow: THREE.Mesh | null = null;
+  private bossEyeLight: THREE.PointLight | null = null;
 
   // Death VFX state
   private dyingTimer = 0;
@@ -97,6 +103,7 @@ export class EnemyController {
   private static readonly BOSS_PROJECTILE_SEGMENT = new THREE.Vector3();
   private static readonly BOSS_PROJECTILE_TO_PLAYER = new THREE.Vector3();
   private static readonly BOSS_PROJECTILE_CLOSEST = new THREE.Vector3();
+  private static readonly HIT_FLASH_EMISSION = new THREE.Color(0xff2200);
 
   // Cached materials for zero-traverse hit flash
   private meshMaterials: THREE.MeshStandardMaterial[] = [];
@@ -357,8 +364,17 @@ export class EnemyController {
 
       this.legs = [];
       this.meshMaterials = [];
+      this.meshMaterialEmissionBases.clear();
+      this.bossRedEmissionMaterials.length = 0;
+      this.bossOwnedMaterials.clear();
+      this.bossEyeWindup = 0;
+      this.bossEyeGlow = null;
+      this.bossEyeLight = null;
       this.bossClaws = [];
       this.bossClawRestRotations.clear();
+      const bossMaterialCopies = new Map<THREE.Material, THREE.Material>();
+      const seenMaterials = new Set<THREE.MeshStandardMaterial>();
+      const eyeCandidates: Array<{ material: THREE.MeshStandardMaterial; position: THREE.Vector3 }> = [];
       model.traverse((child) => {
         const n = child.name.toLowerCase();
         if (this.id === 'crab_boss') {
@@ -390,14 +406,66 @@ export class EnemyController {
           }
         }
         if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).material) {
-          const mat = (child as THREE.Mesh).material;
-          if (Array.isArray(mat)) {
-            this.meshMaterials.push(...(mat as THREE.MeshStandardMaterial[]));
-          } else {
-            this.meshMaterials.push(mat as THREE.MeshStandardMaterial);
+          const mesh = child as THREE.Mesh;
+          const currentMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          const materials = this.id === 'crab_boss'
+            ? currentMaterials.map((source) => {
+              let local = bossMaterialCopies.get(source);
+              if (!local) {
+                local = source.clone();
+                bossMaterialCopies.set(source, local);
+                if ((local as THREE.MeshStandardMaterial).isMeshStandardMaterial) {
+                  this.bossOwnedMaterials.add(local as THREE.MeshStandardMaterial);
+                }
+              }
+              return local;
+            })
+            : currentMaterials;
+          if (this.id === 'crab_boss') {
+            mesh.material = Array.isArray(mesh.material) ? materials : materials[0];
+          }
+          for (const material of materials) {
+            const standard = material as THREE.MeshStandardMaterial;
+            if (!standard.isMeshStandardMaterial || seenMaterials.has(standard)) continue;
+            seenMaterials.add(standard);
+            this.meshMaterials.push(standard);
+            this.meshMaterialEmissionBases.set(standard, {
+              color: standard.emissive.clone(),
+              intensity: standard.emissiveIntensity,
+            });
+            if (this.id === 'crab_boss' && standard.emissive.r > 0.75 && standard.emissive.g < 0.08 && standard.emissive.b < 0.08 && standard.emissiveIntensity > 0) {
+              const bounds = mesh.geometry.boundingBox ?? (mesh.geometry.computeBoundingBox(), mesh.geometry.boundingBox);
+              if (bounds) {
+                const eyePosition = bounds.getCenter(new THREE.Vector3());
+                mesh.localToWorld(eyePosition);
+                model.worldToLocal(eyePosition);
+                eyeCandidates.push({ material: standard, position: eyePosition });
+              }
+            }
           }
         }
       });
+
+      if (this.id === 'crab_boss' && eyeCandidates.length > 0) {
+        // The highest red emissive detail in the crab GLB is its central eye.
+        // Drive only that original material, then add one no-shadow light for
+        // a subtle crimson spill on the adjacent face during dangerous windups.
+        eyeCandidates.sort((a, b) => b.position.y - a.position.y);
+        const eye = eyeCandidates[0];
+        this.bossRedEmissionMaterials.push({ material: eye.material, baseIntensity: eye.material.emissiveIntensity });
+        const glow = new THREE.Mesh(
+          new THREE.SphereGeometry(0.15, 12, 8),
+          new THREE.MeshBasicMaterial({ color: 0xff2440, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
+        );
+        glow.position.copy(eye.position);
+        glow.renderOrder = 3;
+        model.add(glow);
+        this.bossEyeGlow = glow;
+        const light = new THREE.PointLight(0xff263f, 0, 2.4, 2);
+        light.position.copy(eye.position);
+        model.add(light);
+        this.bossEyeLight = light;
+      }
 
       this.initCombatSwordIcon();
       console.log(`[EnemyController] Loaded model for '${this.id}' (${this.legs.length} legs, ${this.bossClaws.length} claws)`);
@@ -751,6 +819,7 @@ export class EnemyController {
     }
 
     this.proceduralTime += delta * 6;
+    this.updateBossEyeEmission(delta);
     if (this.id === 'crab_boss') this.updateBossProjectiles(delta, playerPos);
 
     // ── DYING sequence ──
@@ -807,12 +876,22 @@ export class EnemyController {
     if (this.hitFlashTimer > 0) {
       this.hitFlashTimer -= delta;
       for (let i = 0; i < this.meshMaterials.length; i++) {
-        if (this.meshMaterials[i].emissive) this.meshMaterials[i].emissive.setHex(0xff2200);
+        const material = this.meshMaterials[i];
+        if (material.emissive) {
+          const base = this.meshMaterialEmissionBases.get(material);
+          if (base) material.emissive.copy(base.color).lerp(EnemyController.HIT_FLASH_EMISSION, 0.78);
+          else material.emissive.copy(EnemyController.HIT_FLASH_EMISSION);
+        }
       }
     } else if (this.meshMaterials.length > 0) {
       for (let i = 0; i < this.meshMaterials.length; i++) {
-        if (this.meshMaterials[i].emissive && this.meshMaterials[i].emissive.getHex() !== 0x000000) {
-          this.meshMaterials[i].emissive.setHex(0x000000);
+        const material = this.meshMaterials[i];
+        const base = this.meshMaterialEmissionBases.get(material);
+        if (material.emissive && base) {
+          material.emissive.copy(base.color);
+          material.emissiveIntensity = base.intensity;
+        } else if (material.emissive && material.emissive.getHex() !== 0x000000) {
+          material.emissive.setHex(0x000000);
         }
       }
     }
@@ -1253,6 +1332,26 @@ export class EnemyController {
     }
   }
 
+  private updateBossEyeEmission(delta: number): void {
+    if (this.id !== 'crab_boss' || this.bossRedEmissionMaterials.length === 0) return;
+    const dangerousWindup = this.isAlive()
+      && this.bossAttackPhase === 'TELEGRAPH'
+      && (this.bossPattern === 'CHARGE' || this.bossPattern === 'SLAM');
+    this.bossEyeWindup = THREE.MathUtils.damp(this.bossEyeWindup, dangerousWindup ? 1 : 0, dangerousWindup ? 7 : 4, delta);
+    const softPulse = 0.4 + 0.14 * (0.5 + 0.5 * Math.sin(this.proceduralTime * 1.7));
+    const gain = this.bossEyeWindup * softPulse;
+    for (const entry of this.bossRedEmissionMaterials) {
+      entry.material.emissiveIntensity = entry.baseIntensity * (1 + gain);
+    }
+    if (this.bossEyeGlow) {
+      const material = this.bossEyeGlow.material as THREE.MeshBasicMaterial;
+      material.opacity = this.bossEyeWindup * (0.12 + softPulse * 0.28);
+      const scale = 1 + this.bossEyeWindup * softPulse * 0.55;
+      this.bossEyeGlow.scale.setScalar(scale);
+    }
+    if (this.bossEyeLight) this.bossEyeLight.intensity = this.bossEyeWindup * (1.1 + softPulse * 1.6);
+  }
+
   private animateBossTell(): void {
     if (!this.crabModel || this.state === 'DYING' || this.state === 'DEAD') return;
     const lift = this.bossAttackPhase === 'TELEGRAPH' && this.bossPattern === 'CLAW' ? 0.18 : 0;
@@ -1323,6 +1422,14 @@ export class EnemyController {
     this.isDead = true;
     this.state = 'DEAD';
     this.mesh.visible = false;
+    for (const material of this.bossOwnedMaterials) material.dispose();
+    this.bossOwnedMaterials.clear();
+    this.bossEyeGlow?.geometry.dispose();
+    (this.bossEyeGlow?.material as THREE.Material | undefined)?.dispose();
+    this.bossEyeGlow = null;
+    this.bossEyeLight = null;
+    this.bossRedEmissionMaterials.length = 0;
+    this.meshMaterialEmissionBases.clear();
     this.onDeath = undefined;
     this.onAttackPlayer = undefined;
   }
