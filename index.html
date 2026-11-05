@@ -14,9 +14,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/magic-academy-3d/assets/index-I6LqVphl.js"></script>
+    <script type="module" crossorigin src="/magic-academy-3d/assets/index-BCJqy_sU.js"></script>
     <link rel="modulepreload" crossorigin href="/magic-academy-3d/assets/three-vendor--tS0TumG.js">
-    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-Ck32PkIE.css">
+    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-BoGvSRv_.css">
   </head>
   <body>
     <div id="app">
@@ -153,11 +153,14 @@
         </div>
 
         <!-- NPC Cinematic Dialogue Bubble -->
-        <div id="dialogue-bubble" class="dialogue-bubble-container hidden">
-          <div id="dialogue-speaker" class="dialogue-speaker">Gekko</div>
-          <div id="dialogue-text" class="dialogue-text">...</div>
-          <div id="dialogue-options" class="dialogue-options hidden" role="group" aria-label="Opciones de diálogo"></div>
-          <div class="dialogue-continue-hint">Presiona ENTER para omitir</div>
+        <div id="dialogue-bubble" class="dialogue-bubble-container hidden" aria-hidden="true" inert>
+          <div class="dialogue-portrait-frame" aria-hidden="true"><img data-dialogue-portrait alt="" decoding="async" /><span data-dialogue-portrait-fallback>NPC</span></div>
+          <div class="dialogue-content">
+            <div id="dialogue-speaker" class="dialogue-speaker">Gekko</div>
+            <div id="dialogue-text" class="dialogue-text">...</div>
+            <div id="dialogue-options" class="dialogue-options hidden" role="group" aria-label="Opciones de dialogo"></div>
+            <div class="dialogue-continue-hint">Presiona ENTER para omitir</div>
+          </div>
         </div>
 
         <section id="letter-challenge-hud" class="letter-challenge-hud hidden" aria-live="polite" aria-label="Desafío de los gemelos">
