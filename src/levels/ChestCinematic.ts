@@ -51,7 +51,10 @@ export class ChestCinematic {
           (completed) => {
             if (!completed) console.warn('[ChestCinematic] TakeItem did not reach its mixer finished event; recovering the interaction.');
             resolve();
-          }
+          },
+          // The authored TakeItem clip is 4.7 seconds. A cinematic-only 2x
+          // rate keeps the chest handoff responsive while preserving its pose.
+          2
         );
       });
 

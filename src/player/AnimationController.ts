@@ -475,7 +475,11 @@ export class AnimationController {
    * Play the one-shot TakeItem pickup animation. When it finishes,
    * switch to Armed mode and call onComplete.
    */
-  public playTakeItemAnimation(onContact?: () => void | Promise<void>, onComplete?: (completed: boolean) => void): void {
+  public playTakeItemAnimation(
+    onContact?: () => void | Promise<void>,
+    onComplete?: (completed: boolean) => void,
+    playbackRate = 1
+  ): void {
     this.idleCyclePhase = null;
     const action = this.allActions.get('TakeItem');
     if (!action || !this.mixer) {
@@ -500,7 +504,8 @@ export class AnimationController {
       this.currentAction.fadeOut(0.2);
     }
 
-    action.reset().setLoop(THREE.LoopOnce, 1).setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(0.15).play();
+    const safePlaybackRate = THREE.MathUtils.clamp(Number.isFinite(playbackRate) ? playbackRate : 1, 0.5, 3);
+    action.reset().setLoop(THREE.LoopOnce, 1).setEffectiveTimeScale(safePlaybackRate).setEffectiveWeight(1).fadeIn(0.15).play();
     action.clampWhenFinished = true;
     this.currentAction = action;
     this.currentState = 'Idle';

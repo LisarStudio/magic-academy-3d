@@ -214,6 +214,15 @@ export class PlayerController {
       const authoredStaff = this.staffModelTemplate.clone(true);
       authoredStaff.name = `${name}_baculo_glb`;
       authoredStaff.scale.multiplyScalar(scale);
+      if (name === 'staff_on_back') {
+        // The source GLB contains nested transforms that leave its visible
+        // geometry offset from the scene origin even after normalization.
+        // Center this one carried copy once so the torso socket controls the
+        // actual staff, not just the GLB's displaced root node.
+        authoredStaff.updateWorldMatrix(true, true);
+        const visibleBounds = new THREE.Box3().setFromObject(authoredStaff);
+        if (!visibleBounds.isEmpty()) authoredStaff.position.sub(visibleBounds.getCenter(new THREE.Vector3()));
+      }
       authoredStaff.traverse((object) => {
         const mesh = object as THREE.Mesh;
         if (mesh.isMesh) {
@@ -246,47 +255,67 @@ export class PlayerController {
 
     const def = WEAPON_DEFINITIONS.STAFF;
 
-    // Find the hand for the weapon grip. The back socket is attached in model-root
-    // space below so it cannot inherit an arbitrary spine-bone orientation.
+    // Bind the back socket to the torso bone so it follows the rig during every
+    // animation. A visual-root offset is not equivalent: it drifts off the body
+    // as soon as the spine or shoulders move.
+    const backBoneNames = def.backAttachment.boneNameSubstrings.map((name) => name.toLowerCase());
+    const fallbackBackBoneNames = def.backAttachment.fallbackBoneNames.map((name) => name.toLowerCase());
+    const bones: THREE.Object3D[] = [];
     let rightHandBone: THREE.Object3D | null = null;
 
     this.mesh.traverse((child) => {
+      if ((child as THREE.Bone).isBone) bones.push(child);
       const n = child.name.toLowerCase();
       if (def.handAttachment.boneNameSubstrings.some(sub => n.includes(sub)) && !n.includes('thumb') && !n.includes('index') && !n.includes('middle') && !n.includes('ring') && !n.includes('pinky')) {
         rightHandBone = child;
       }
     });
+    const backBone = backBoneNames
+      .map((needle) => bones.find((bone) => bone.name.toLowerCase().includes(needle)))
+      .find((bone): bone is THREE.Object3D => !!bone)
+      ?? fallbackBackBoneNames
+        .map((needle) => bones.find((bone) => bone.name.toLowerCase().includes(needle)))
+        .find((bone): bone is THREE.Object3D => !!bone)
+      ?? null;
     const handName = rightHandBone ? (rightHandBone as THREE.Object3D).name : 'root';
-    console.log(`[PlayerController] Binding staff sockets — Back: model root, RightHand: ${handName}`);
+    const backName = backBone?.name ?? 'visual-root fallback';
+    console.log(`[PlayerController] Binding staff sockets — Back: ${backName}, RightHand: ${handName}`);
 
-    // 3. Create the carried weapon on a dedicated model-root back socket.
-    // 100% CLEAN PHYSICAL PBR — NO aura, NO particles, NO emissive glow
-    const backStaff = this.createStaffVisual('staff_on_back', 0.62);
+    // 3. Use a local socket on the spine. Inverse parent scale preserves the
+    // authored metre offsets and the normalized GLB size without frame updates.
+    const backStaff = this.createStaffVisual('staff_on_back', 0.38);
     backStaff.visible = false;
     this.staffBackMesh = backStaff;
 
     const backSocket = new THREE.Group();
     backSocket.name = 'wukong_sacred_staff_back_socket';
-    // The GLB template is normalized to 1.22 m. Carry it at ~0.76 m and
-    // cancel the player visual-root scale exactly once.
+    // The GLB is normalized once on load and shares immutable mesh resources.
     backStaff.scale.setScalar(1);
     backStaff.position.set(0, 0, 0);
     backStaff.rotation.set(0, 0, 0);
     backSocket.add(backStaff);
 
     this.mesh.updateMatrixWorld(true);
-    this.visualModel.updateMatrixWorld(true);
-    const modelWorldScale = new THREE.Vector3();
-    this.visualModel.getWorldScale(modelWorldScale);
-    const safeModelScale = new THREE.Vector3(
-      Math.max(modelWorldScale.x, 0.00001),
-      Math.max(modelWorldScale.y, 0.00001),
-      Math.max(modelWorldScale.z, 0.00001)
+    const fallbackScale = new THREE.Vector3();
+    const backParent = backBone ?? this.visualModel;
+    backParent.updateWorldMatrix(true, false);
+    backParent.getWorldScale(fallbackScale);
+    const safeParentScale = new THREE.Vector3(
+      Math.max(Math.abs(fallbackScale.x), 0.00001),
+      Math.max(Math.abs(fallbackScale.y), 0.00001),
+      Math.max(Math.abs(fallbackScale.z), 0.00001)
     );
-    backStaff.scale.set(1 / safeModelScale.x, 1 / safeModelScale.y, 1 / safeModelScale.z);
-    backSocket.position.copy(def.backAttachment.position).divide(safeModelScale);
-    backSocket.rotation.copy(def.backAttachment.rotation);
-    this.visualModel.add(backSocket);
+    if (backBone) {
+      backSocket.position.copy(def.backAttachment.position).divide(safeParentScale);
+      backSocket.rotation.copy(def.backAttachment.rotation);
+    } else {
+      // Keep a separate model-root fallback for alternate rigs that have no
+      // torso bone; bone-local offsets must not be reused in root coordinates.
+      backSocket.position.set(0, 0.89, -0.45).divide(safeParentScale);
+      backSocket.rotation.set(-Math.PI * 0.5, 0, -0.32);
+    }
+    backSocket.scale.set(1 / safeParentScale.x, 1 / safeParentScale.y, 1 / safeParentScale.z);
+    backParent.add(backSocket);
 
     // 4. Create Staff Hand Mesh (firmly gripped in right hand for attacking)
     const handStaff = this.createStaffVisual('staff_in_hand', 0.82);
