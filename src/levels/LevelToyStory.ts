@@ -111,6 +111,7 @@ export class LevelToyStory {
   private skyDebugElapsed = 0;
   private optionalArchitectureStarted = false;
   private optionalArchitectureLoading = false;
+  private optionalHouseFloorCollider: THREE.Mesh | null = null;
   private readonly highHouseCenter = new THREE.Vector3(38, 0, -92);
   private centralTempleFloorTopY: number | null = null;
   private centralTempleFloorWidth = 0;
@@ -4245,7 +4246,11 @@ export class LevelToyStory {
     this.sceneManager.scene.add(gekkoCollider);
     this.levelColliders.push(gekkoCollider);
 
-    const twinsPosition = new THREE.Vector3(-12, this.getTerrainHeight(-12, -23), -23);
+    // Give the twins a distinct meeting spot beside the abandoned house, on
+    // the sampled hillside just outside its front approach.
+    const twinsX = this.highHouseCenter.x;
+    const twinsZ = this.highHouseCenter.z + 8.5;
+    const twinsPosition = new THREE.Vector3(twinsX, this.getTerrainHeight(twinsX, twinsZ), twinsZ);
     this.twinCatsChallenge = new TwinCatsChallenge(
       this.sceneManager.scene,
       twinsPosition,
@@ -5605,6 +5610,11 @@ export class LevelToyStory {
         if ((part as THREE.Mesh).isMesh) {
           (part as THREE.Mesh).castShadow = false;
           (part as THREE.Mesh).receiveShadow = true;
+          const mesh = part as THREE.Mesh;
+          const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          if (materials.some((material) => /floor|piso|suelo|deck|platform/i.test(material.name))) {
+            mesh.userData.walkableSupport = true;
+          }
         }
       });
       this.sceneManager.scene.add(house);
@@ -5615,6 +5625,22 @@ export class LevelToyStory {
       house.position.z += this.highHouseCenter.z - center.z;
       house.position.y += this.getTerrainHeight(this.highHouseCenter.x, this.highHouseCenter.z) - bounds.min.y;
       house.updateMatrixWorld(true);
+
+      // Coins in the cabin are authored at terrain + 2.2m, confirming an
+      // elevated interior deck. Give that same footprint a walkable support
+      // so Wukong cannot drop through gaps in the decorative floor meshes.
+      const houseGroundY = this.getTerrainHeight(this.highHouseCenter.x, this.highHouseCenter.z);
+      this.optionalHouseFloorCollider = new THREE.Mesh(
+        new THREE.BoxGeometry(8.4, 0.12, 8.4),
+        new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide })
+      );
+      this.optionalHouseFloorCollider.name = 'abandoned_house_floor_support';
+      this.optionalHouseFloorCollider.position.set(this.highHouseCenter.x, houseGroundY + 2.12, this.highHouseCenter.z);
+      this.optionalHouseFloorCollider.userData.walkableSupport = true;
+      this.sceneManager.scene.add(this.optionalHouseFloorCollider);
+      this.levelColliders.push(house, this.optionalHouseFloorCollider);
+      this.player.setColliders(this.levelColliders);
+      this.cameraController.setCollisionObjects(this.levelColliders);
       this.optionalArchitectureStarted = true;
       this.optionalArchitectureLoading = false;
       console.info('[LevelToyStory] Loaded original Chinese High House Wood annex on demand.');

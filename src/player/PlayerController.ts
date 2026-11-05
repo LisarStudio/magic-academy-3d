@@ -629,7 +629,7 @@ export class PlayerController {
       // if a landing frame was missed at the doorway, Wukong can settle onto
       // the deck instead of remaining embedded below it. The snap itself still
       // only happens while descending, never during an upward jump.
-      const maxSupportAboveRoot = isAuthoredRecoverySurface ? 2.0 : 0.45;
+      const maxSupportAboveRoot = isAuthoredRecoverySurface ? 2.25 : 0.45;
       if (PlayerController.TEMP_NORM.y >= 0.40 && hit.point.y <= this.mesh.position.y + maxSupportAboveRoot && hit.point.y >= this.mesh.position.y - 2.4) {
         validGroundHit = hit;
         break;

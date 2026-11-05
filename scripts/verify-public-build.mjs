@@ -19,10 +19,17 @@ if (!bundledFiles.some((path) => path.endsWith('.js'))) throw new Error('No hash
 if (!bundledFiles.some((path) => path.endsWith('.css'))) throw new Error('No hashed stylesheet was found in dist/index.html.');
 for (const path of bundledFiles) await access(join(root, path.slice(basePath.length)));
 
+const missionAssets = ['silvio', 'loki'].map((name) => `assets/npc/twin-cats/${name}.glb`);
+for (const letter of ['w', 'u', 'k', 'o', 'n', 'g']) {
+  missionAssets.push(`assets/letter-challenge/letter-${letter}.glb`);
+  missionAssets.push(`assets/letter-challenge/${letter.toUpperCase()}.png`);
+}
+
 for (const path of [
   'assets/characters/wukong_2.0_rigged.glb',
   'assets/cinematics/optimized/wukong-intro-desktop.mp4',
   'assets/collectibles/teara-wukong-vida.glb',
+  ...missionAssets,
 ]) {
   await access(join(root, path));
 }
@@ -36,5 +43,5 @@ console.log(JSON.stringify({
   builtAtUTC: manifest.builtAtUTC,
   dirtyWorkingTree: manifest.dirtyWorkingTree,
   bundledFiles,
-  criticalAssets: 3,
+  criticalAssets: 3 + missionAssets.length,
 }, null, 2));

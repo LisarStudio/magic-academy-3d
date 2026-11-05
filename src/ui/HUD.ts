@@ -293,13 +293,13 @@ export class HUD {
     requestAnimationFrame(() => this.letterChallengePanelEl.classList.add('is-visible'));
   }
 
-  public updateLetterChallenge(secondsRemaining: number, nextLetterIndex: number): void {
+  public updateLetterChallenge(secondsRemaining: number, collectedCount: number): void {
     const seconds = Math.max(0, Math.ceil(secondsRemaining));
     const minutesText = String(Math.floor(seconds / 60)).padStart(2, '0');
     const secondsText = String(seconds % 60).padStart(2, '0');
     this.letterChallengeTimeEl.textContent = `${minutesText}:${secondsText}`;
     this.letterChallengePanelEl.classList.toggle('is-urgent', seconds <= 10);
-    const count = Math.max(0, Math.min(6, Math.floor(nextLetterIndex)));
+    const count = Math.max(0, Math.min(6, Math.floor(collectedCount)));
     this.letterChallengeProgressEl.textContent = `Letras recuperadas: ${count}/6`;
     this.letterChallengeNextEl.textContent = count < 6 ? `Siguiente: ${['W', 'U', 'K', 'O', 'N', 'G'][count]}` : '¡Completado!';
     this.letterChallengeSlotElements.forEach((slot, index) => {
@@ -307,6 +307,7 @@ export class HUD {
       const next = index === count && count < 6;
       slot.classList.toggle('is-collected', collected);
       slot.classList.toggle('is-next', next);
+      slot.dataset.state = collected ? 'collected' : next ? 'target' : 'pending';
       slot.setAttribute('aria-label', `Letra ${['W', 'U', 'K', 'O', 'N', 'G'][index]} ${collected ? 'recuperada' : next ? 'siguiente' : 'pendiente'}`);
     });
   }

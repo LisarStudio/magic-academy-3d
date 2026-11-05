@@ -9,12 +9,12 @@ const LETTERS = ['W', 'U', 'K', 'O', 'N', 'G'] as const;
 type MissionState = 'AVAILABLE' | 'DIALOGUE' | 'ACTIVE' | 'FAILED' | 'COMPLETED';
 
 const LETTER_POSITIONS: ReadonlyArray<THREE.Vector2> = [
-  new THREE.Vector2(-18, -28),
-  new THREE.Vector2(-47, -41),
-  new THREE.Vector2(-62, -70),
-  new THREE.Vector2(-31, -91),
-  new THREE.Vector2(9, -88),
-  new THREE.Vector2(43, -71)
+  new THREE.Vector2(29, -73),
+  new THREE.Vector2(4, -74),
+  new THREE.Vector2(-24, -72),
+  new THREE.Vector2(-47, -55),
+  new THREE.Vector2(-41, -29),
+  new THREE.Vector2(-15, -19)
 ];
 
 /** Two original cats from NPC_Silvio.blend and their shared ordered-letter trial. */
@@ -31,19 +31,21 @@ export class TwinCatsChallenge {
   private readonly loader = new GLTFLoader();
   private readonly actors: Array<{ root: THREE.Group; mixer: THREE.AnimationMixer; head: THREE.Bone | null; yaw: number; pitch: number }> = [];
   private readonly lookTarget = new THREE.Vector3();
-  private readonly localTarget = new THREE.Vector3();
   private readonly headWorld = new THREE.Vector3();
   private readonly headLocal = new THREE.Vector3();
+  private readonly headParentWorldQuaternion = new THREE.Quaternion();
   private readonly headOffset = new THREE.Quaternion();
   private readonly letterRoots: THREE.Group[] = [];
   private letterAssetsReady = false;
   private preloading: Promise<void> | null = null;
   private state: MissionState = 'AVAILABLE';
   private elapsed = 0;
+  private collectedCount = 0;
   private activeLetterIndex = -1;
   private activeLetterAge = 0;
   private savedCompleted = false;
   private readonly interactionRadius = 3.4;
+  private readonly lookRadius = 3;
   private readonly pickupRadius = 1.65;
   private readonly catHeight = 1.8;
   private readonly onStateChange: (completed: boolean) => void;
@@ -74,13 +76,17 @@ export class TwinCatsChallenge {
     this.onStateChange = onStateChange;
     this.root.name = 'NPC_Gatos_Gemelos';
     this.root.position.copy(spawn);
+    // The original GLBs face +Z. Face the pair toward the player's arrival;
+    // the prior extra PI turn made them show their backs on approach.
+    this.root.rotation.y = Math.atan2(player.mesh.position.x - spawn.x, player.mesh.position.z - spawn.z);
     [-0.88, 0.88].forEach((offset, index) => {
       const blocker = new THREE.Mesh(
         new THREE.CylinderGeometry(0.52, 0.52, 1.75, 10),
         new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide })
       );
       blocker.name = `npc_twin_cat_blocker_${index === 0 ? 'silvio' : 'loki'}`;
-      blocker.position.set(spawn.x + offset, spawn.y + 0.88, spawn.z);
+      const rotatedOffset = new THREE.Vector3(offset, 0, 0).applyQuaternion(this.root.quaternion);
+      blocker.position.set(spawn.x + rotatedOffset.x, spawn.y + 0.88, spawn.z + rotatedOffset.z);
       blocker.userData.solidPlayerBlocker = true;
       this.colliders.push(blocker);
       this.scene.add(blocker);
@@ -101,7 +107,6 @@ export class TwinCatsChallenge {
         const bounds = new THREE.Box3().setFromObject(actorRoot);
         const size = bounds.getSize(new THREE.Vector3());
         actorRoot.scale.setScalar(this.catHeight / Math.max(0.001, size.y));
-        actorRoot.rotation.y = Math.PI;
         actorRoot.updateMatrixWorld(true);
         const scaledBounds = new THREE.Box3().setFromObject(actorRoot);
         const scaledCenter = scaledBounds.getCenter(new THREE.Vector3());
@@ -114,7 +119,11 @@ export class TwinCatsChallenge {
         gltf.scene.traverse((object) => {
           if ((object as THREE.Bone).isBone && /(?:head|cabeza)$/i.test(object.name)) head = object as THREE.Bone;
           const mesh = object as THREE.Mesh;
-          if (mesh.isMesh) { mesh.castShadow = true; mesh.receiveShadow = true; }
+          if (mesh.isMesh) {
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            this.revealAuthoredIris(mesh);
+          }
         });
 
         const mixer = new THREE.AnimationMixer(gltf.scene);
@@ -143,6 +152,8 @@ export class TwinCatsChallenge {
       item.updateMatrixWorld(true);
       const normalizedBounds = new THREE.Box3().setFromObject(item);
       item.position.y = -normalizedBounds.min.y;
+      item.rotation.y = this.getLetterApproachYaw(index);
+      item.userData.approachYaw = item.rotation.y;
       item.visible = false;
       item.traverse((object) => {
         const mesh = object as THREE.Mesh;
@@ -158,6 +169,58 @@ export class TwinCatsChallenge {
       throw error;
     });
     return this.preloading;
+  }
+
+  /** The exported cats already contain black iris shells, but those shells
+   * sit behind the sclera surface. Move only the authored iris geometry
+   * forward slightly in eye-local space so the pupils remain visible in WebGL. */
+  private revealAuthoredIris(mesh: THREE.Mesh): void {
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const irisGroups = mesh.geometry.groups.filter((group) => /tiny iris/i.test(materials[group.materialIndex ?? 0]?.name ?? ''));
+    const singleIris = materials.length === 1 && /tiny iris/i.test(materials[0]?.name ?? '');
+    if (!singleIris && irisGroups.length === 0) return;
+
+    mesh.geometry = mesh.geometry.clone();
+    const position = mesh.geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
+    if (!position) return;
+    const vertices = new Set<number>();
+    if (singleIris) {
+      for (let i = 0; i < position.count; i++) vertices.add(i);
+    } else {
+      const index = mesh.geometry.index;
+      for (const group of irisGroups) {
+        for (let i = group.start; i < group.start + group.count; i++) {
+          vertices.add(index ? index.getX(i) : i);
+        }
+      }
+    }
+    // In the source eye meshes the iris maximum Z is ~0.0097 while the sclera
+    // reaches ~0.0126; +0.0034 exposes its surface by only a few millimetres.
+    for (const vertex of vertices) position.setZ(vertex, position.getZ(vertex) + 0.0034);
+    position.needsUpdate = true;
+    mesh.geometry.computeVertexNormals();
+
+    const keepIrisDark = (material: THREE.Material): THREE.Material => {
+      const copy = material.clone();
+      if (/tiny iris/i.test(copy.name) && 'color' in copy) {
+        const iris = copy as THREE.MeshStandardMaterial;
+        iris.color.set('#100d14');
+        iris.roughness = 0.28;
+        iris.depthWrite = true;
+      }
+      return copy;
+    };
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(keepIrisDark) : keepIrisDark(mesh.material);
+  }
+
+  /** The supplied letters share a +Z readable face. Point that face toward
+   * the previous waypoint and keep the idle rotation small enough to remain legible. */
+  private getLetterApproachYaw(index: number): number {
+    const point = LETTER_POSITIONS[index];
+    if (!point) return 0;
+    const previousX = index === 0 ? this.position.x : LETTER_POSITIONS[index - 1].x;
+    const previousZ = index === 0 ? this.position.z : LETTER_POSITIONS[index - 1].y;
+    return Math.atan2(previousX - point.x, previousZ - point.y);
   }
 
   private showDialogue(): void {
@@ -176,7 +239,7 @@ export class TwinCatsChallenge {
         ? [{ label: 'Reintentar', value: 'accept' as const }, { label: 'Salir', value: 'decline' as const }]
         : [{ label: '¡Acepto el desafío!', value: 'accept' as const }, { label: 'Ahora no.', value: 'decline' as const }];
 
-    this.hud.showDialogueChoices(retry ? 'Silvio y Loki' : 'Silvio', text, choices, (choice) => {
+    this.hud.showDialogueChoices('Silvio', text, choices, (choice) => {
       this.player.isControlsLocked = false;
       this.player.isMovementLocked = false;
       this.player.isAttacking = false;
@@ -198,12 +261,13 @@ export class TwinCatsChallenge {
 
   private beginChallenge(): void {
     this.elapsed = 0;
+    this.collectedCount = 0;
     this.activeLetterIndex = 0;
     this.activeLetterAge = 0;
     this.state = 'ACTIVE';
     this.setActiveLetter(0);
     this.hud.showLetterChallenge();
-    this.hud.updateLetterChallenge(60, 0);
+    this.hud.updateLetterChallenge(60, this.collectedCount);
   }
 
   private setActiveLetter(index: number): void {
@@ -239,17 +303,17 @@ export class TwinCatsChallenge {
       this.lookTarget.copy(playerPos);
       this.lookTarget.y += 1.35;
     }
-    this.updateCatLook(safeDelta, playerDistance <= 8 ? this.lookTarget : null);
+    this.updateCatLook(safeDelta, playerDistance <= this.lookRadius ? this.lookTarget : null);
 
     if (this.state === 'ACTIVE') {
       this.elapsed += delta;
       this.activeLetterAge += safeDelta;
       const remaining = Math.max(0, 60 - this.elapsed);
-      this.hud.updateLetterChallenge(remaining, this.activeLetterIndex);
+      this.hud.updateLetterChallenge(remaining, this.collectedCount);
       const letter = this.letterRoots[this.activeLetterIndex];
       if (letter) {
         letter.position.y = this.getTerrainHeight(letter.position.x, letter.position.z) + 0.82 + Math.sin(this.activeLetterAge * 2.2) * 0.12;
-        letter.rotation.y += safeDelta * 0.48;
+        letter.rotation.y = (letter.userData.approachYaw as number) + Math.sin(this.activeLetterAge * 0.7) * 0.12;
         if (Math.hypot(playerPos.x - letter.position.x, playerPos.z - letter.position.z) < this.pickupRadius && Math.abs(playerPos.y - letter.position.y) < 2.2) {
           this.collectActiveLetter();
         }
@@ -284,36 +348,41 @@ export class TwinCatsChallenge {
 
   private updateCatLook(delta: number, target: THREE.Vector3 | null): void {
     this.root.updateMatrixWorld(true);
-    this.actors.forEach((actor, index) => {
+    this.actors.forEach((actor) => {
       if (!actor.head) return;
       let desiredYaw = 0;
       let desiredPitch = 0;
       if (target) {
         actor.head.getWorldPosition(this.headWorld);
-        this.localTarget.copy(target);
-        this.root.worldToLocal(this.localTarget);
-        this.headLocal.copy(this.headWorld);
-        this.root.worldToLocal(this.headLocal);
-        this.localTarget.sub(this.headLocal);
-        const yaw = Math.atan2(this.localTarget.x - (index === 0 ? -0.88 : 0.88), this.localTarget.z);
-        desiredYaw = THREE.MathUtils.clamp(yaw, -Math.PI / 4, Math.PI / 4);
-        desiredPitch = THREE.MathUtils.clamp(Math.atan2(this.localTarget.y, Math.hypot(this.localTarget.x, this.localTarget.z)), -0.32, 0.38);
+        this.headLocal.copy(target).sub(this.headWorld);
+        actor.head.parent?.getWorldQuaternion(this.headParentWorldQuaternion);
+        this.headLocal.applyQuaternion(this.headParentWorldQuaternion.invert());
+        desiredYaw = THREE.MathUtils.clamp(Math.atan2(this.headLocal.x, this.headLocal.z), -Math.PI * 2 / 9, Math.PI * 2 / 9);
+        desiredPitch = THREE.MathUtils.clamp(
+          Math.atan2(this.headLocal.y, Math.hypot(this.headLocal.x, this.headLocal.z)),
+          -Math.PI / 12,
+          Math.PI / 9
+        );
       }
-      const blend = 1 - Math.exp(-Math.max(0, delta) / (target ? 0.28 : 0.5));
-      actor.yaw = THREE.MathUtils.lerp(actor.yaw, desiredYaw, blend);
-      actor.pitch = THREE.MathUtils.lerp(actor.pitch, desiredPitch, blend);
+      const maxStep = Math.max(0, delta) * Math.PI / 2;
+      actor.yaw += THREE.MathUtils.clamp(desiredYaw - actor.yaw, -maxStep, maxStep);
+      actor.pitch += THREE.MathUtils.clamp(desiredPitch - actor.pitch, -maxStep, maxStep);
       this.headOffset.setFromEuler(new THREE.Euler(actor.pitch, actor.yaw, 0, 'YXZ'));
+      // The mixer evaluates the authored head keys before this method each
+      // frame, so this constrained local offset never accumulates.
       actor.head.quaternion.multiply(this.headOffset);
     });
   }
 
   private collectActiveLetter(): void {
     if (this.state !== 'ACTIVE') return;
+    if (this.activeLetterIndex !== this.collectedCount) return;
     const pickedPosition = this.letterRoots[this.activeLetterIndex]?.position.clone();
     this.audio.playMagicLetterPickup();
     if (pickedPosition) this.createMagicBurst(pickedPosition, 16);
-    const nextIndex = this.activeLetterIndex + 1;
-    if (nextIndex >= LETTERS.length) {
+    this.collectedCount = Math.min(LETTERS.length, this.collectedCount + 1);
+    const nextIndex = this.collectedCount;
+    if (this.collectedCount >= LETTERS.length) {
       this.setActiveLetter(-1);
       this.state = 'COMPLETED';
       this.savedCompleted = true;
@@ -325,12 +394,12 @@ export class TwinCatsChallenge {
     this.activeLetterIndex = nextIndex;
     this.activeLetterAge = 0;
     this.setActiveLetter(nextIndex);
-    this.hud.updateLetterChallenge(Math.max(0, 60 - this.elapsed), nextIndex);
+    this.hud.updateLetterChallenge(Math.max(0, 60 - this.elapsed), this.collectedCount);
   }
 
   private failChallenge(): void {
     if (this.state !== 'ACTIVE') return;
-    const recovered = this.activeLetterIndex;
+    const recovered = this.collectedCount;
     this.setActiveLetter(-1);
     this.activeLetterIndex = -1;
     this.state = 'FAILED';
@@ -393,6 +462,7 @@ export class TwinCatsChallenge {
     if (this.state === 'ACTIVE' || this.state === 'DIALOGUE') {
       this.setActiveLetter(-1);
       this.activeLetterIndex = -1;
+      this.collectedCount = 0;
       this.elapsed = 0;
       this.state = this.savedCompleted ? 'COMPLETED' : 'AVAILABLE';
     }
