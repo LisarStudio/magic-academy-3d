@@ -31,7 +31,7 @@ export class TwinCatsChallenge {
   public readonly colliders: THREE.Mesh[] = [];
   private readonly loader = new GLTFLoader();
   private readonly actors: Array<{ mixer: THREE.AnimationMixer }> = [];
-  private readonly twinCatsFillLight = new THREE.PointLight(0xffd8b0, 1.05, 8, 2);
+  private readonly twinCatsFillLight = new THREE.PointLight(0xffd0a0, 12, 20, 2);
   private readonly letterRoots: THREE.Group[] = [];
   private letterAssetsReady = false;
   private preloading: Promise<void> | null = null;
@@ -93,7 +93,7 @@ export class TwinCatsChallenge {
     // Keep the warm accent above the characters instead of placing a strong
     // point source at face height. Their authored albedo and roughness maps
     // remain responsible for the visible materials.
-    this.twinCatsFillLight.position.set(0, 3.25, -0.35);
+    this.twinCatsFillLight.position.set(0, 5.6, 1.8);
     this.twinCatsFillLight.castShadow = false;
     this.root.add(this.twinCatsFillLight);
     // The original GLBs face +Z. Face the pair toward the player's arrival;
@@ -112,6 +112,11 @@ export class TwinCatsChallenge {
       this.scene.add(blocker);
     });
     this.loadCats();
+  }
+
+  /** Dims the existing roof-height cat fill with the shared day/night cycle. */
+  public setNightAmount(amount: number): void {
+    this.twinCatsFillLight.intensity = THREE.MathUtils.lerp(0.2, 12, THREE.MathUtils.clamp(amount, 0, 1));
   }
 
   private async loadCats(): Promise<void> {

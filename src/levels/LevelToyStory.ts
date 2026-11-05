@@ -113,6 +113,7 @@ export class LevelToyStory {
   private starMaterial: THREE.ShaderMaterial | null = null;
   private cryptPortalMaterial: THREE.ShaderMaterial | null = null;
   private cryptEntranceGlow: THREE.PointLight | null = null;
+  private arenaMoonFill: THREE.PointLight | null = null;
   private lampMoths: LampMothSystem | null = null;
   private constellationSystem: ConstellationSystem | null = null;
   private skyPanorama: SkyPanoramaSystem | null = null;
@@ -2488,6 +2489,15 @@ export class LevelToyStory {
     arenaFloor.receiveShadow = true;
     scene.add(arenaFloor);
     this.levelColliders.push(arenaFloor);
+
+    // A single low-cost, shadowless cool bounce supplements the shared moon
+    // key only in the boss arena; it reveals the existing stone normal map
+    // and keeps the combatants readable without another shadow render pass.
+    this.arenaMoonFill = new THREE.PointLight(0x9db8ec, 64, 27, 2);
+    this.arenaMoonFill.name = 'boss_arena_cool_moon_bounce';
+    this.arenaMoonFill.position.set(arenaCenter.x - 3.5, 6.5, arenaCenter.z - 2.5);
+    this.arenaMoonFill.castShadow = false;
+    scene.add(this.arenaMoonFill);
 
     // Low boundaries for the arena
     const boundaryGeo = new THREE.BoxGeometry(4, 1.5, 1);
@@ -5288,6 +5298,8 @@ export class LevelToyStory {
     }
     const skyPhase = this.dayNightCycle?.phase ?? 0.05;
     const nightAmount = this.dayNightCycle?.nightAmount ?? 1;
+    if (this.arenaMoonFill) this.arenaMoonFill.intensity = 64 * nightAmount;
+    this.twinCatsChallenge?.setNightAmount(nightAmount);
     if (this.skyPanorama && this.dayNightCycle) {
       this.skyPanorama.update(this.sceneManager.renderer, skyBlendForHour(this.dayNightCycle.hour));
     }
