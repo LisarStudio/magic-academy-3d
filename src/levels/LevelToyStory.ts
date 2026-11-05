@@ -33,6 +33,7 @@ import { PowerOrbSystem, type StaffUpgradeInfo } from '../collectibles/PowerOrbS
 import { TreeSnakeEnemy } from '../enemies/TreeSnakeEnemy';
 import { getKeyAsset, loadKeyModel, preloadKeyModel } from '../collectibles/KeyAssetCatalog';
 import { TwinCatsChallenge } from './TwinCatsChallenge';
+import { projectDialogueFocus } from '../ui/CinematicDialogueUI';
 
 const keyHaloGeometry = new THREE.TorusGeometry(0.27, 0.012, 6, 24);
 const keySparkGeometry = new THREE.OctahedronGeometry(0.026, 0);
@@ -4790,7 +4791,10 @@ export class LevelToyStory {
           if (cinematicSkipped) return;
           finishCinematic();
         }, 4000);
-      });
+      }, { type: 'cinematic', focusPoints: [
+        ...projectDialogueFocus(this.gekkoNPC?.mesh, this.cameraController.camera, 1.25, 2.2),
+        ...projectDialogueFocus(this.player.mesh, this.cameraController.camera, 1.2, 1.8),
+      ] });
     }
   }
 
@@ -5017,6 +5021,10 @@ export class LevelToyStory {
       window.addEventListener('keydown', skipHandler);
       window.addEventListener('touchstart', touchSkipHandler, { passive: false });
 
+      const gekkoFocus = [
+        ...projectDialogueFocus(this.gekkoNPC?.mesh, this.cameraController.camera, 1.25, 2.2),
+        ...projectDialogueFocus(this.player.mesh, this.cameraController.camera, 1.2, 1.8),
+      ];
       hud.showTypewriterDialogue('Gekko', 'Vaya... realmente las encontraste todas.', () => {
         if (cinematicSkipped) return;
         hud.showTypewriterDialogue('Gekko', 'Las 50 Lisar Coins. No pensé que alguien fuera capaz de reunirlas.', () => {
@@ -5027,9 +5035,9 @@ export class LevelToyStory {
               if (cinematicSkipped) return;
               finishCinematic();
             }, 2500);
-          });
-        });
-      });
+          }, { type: 'reward', focusPoints: gekkoFocus });
+        }, { type: 'reward', focusPoints: gekkoFocus });
+      }, { type: 'reward', focusPoints: gekkoFocus });
     } else {
       this.isCinematicPlaying = false;
     }
@@ -5989,7 +5997,11 @@ export class LevelToyStory {
       '¡Esquiva las marcas del suelo! Cuando se canse, acércate y golpéalo.',
       () => {
         if (!cinematicFinished) autoFinishTimer = window.setTimeout(finishCinematic, 1300);
-      }
+      },
+      { type: 'boss', focusPoints: [
+        ...projectDialogueFocus(this.bossEnemy?.mesh, (window as any).gameInstance?.cameraController?.camera, 1.3, 2.6),
+        ...projectDialogueFocus(this.player.mesh, (window as any).gameInstance?.cameraController?.camera, 1.2, 1.7),
+      ] }
     );
 
     try {

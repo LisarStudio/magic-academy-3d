@@ -3,6 +3,7 @@ import { EquipmentViewer } from './EquipmentViewer';
 import { MobileTouchControls } from './MobileTouchControls';
 import { usesTouchControls } from '../core/ControlMode';
 import { KEY_ASSETS, type ProgressKeyId } from '../collectibles/KeyAssetCatalog';
+import { CinematicDialogueUI, type CinematicDialogueOptions } from './CinematicDialogueUI';
 
 export class HUD {
   private hudTopLeftEl: HTMLElement;
@@ -48,7 +49,9 @@ export class HUD {
   private dialogueSpeakerEl: HTMLElement;
   private dialogueTextEl: HTMLElement;
   private dialogueOptionsEl: HTMLElement;
+  private cinematicDialogueUI: CinematicDialogueUI;
   private dialogueChoiceKeyHandler: ((event: KeyboardEvent) => void) | null = null;
+  private dialogueTapHandler: ((event: Event) => void) | null = null;
   private dialogueChoiceCallback: ((choice: 'accept' | 'decline') => void) | null = null;
   private dialogueChoices: Array<{ label: string; value: 'accept' | 'decline' }> = [];
   private selectedDialogueChoice = 0;
@@ -133,6 +136,7 @@ export class HUD {
     this.dialogueSpeakerEl = document.getElementById('dialogue-speaker')!;
     this.dialogueTextEl = document.getElementById('dialogue-text')!;
     this.dialogueOptionsEl = document.getElementById('dialogue-options')!;
+    this.cinematicDialogueUI = new CinematicDialogueUI(this.dialogueBubbleEl, this.dialogueSpeakerEl);
     this.letterChallengePanelEl = document.getElementById('letter-challenge-hud')!;
     this.letterChallengeTimeEl = document.getElementById('letter-challenge-time')!;
     this.letterChallengeProgressEl = document.getElementById('letter-challenge-progress')!;
@@ -338,13 +342,14 @@ export class HUD {
     speaker: string,
     text: string,
     choices: Array<{ label: string; value: 'accept' | 'decline' }>,
-    onChoose: (choice: 'accept' | 'decline') => void
+    onChoose: (choice: 'accept' | 'decline') => void,
+    presentation: CinematicDialogueOptions = {},
   ): void {
     this.clearDialogueChoiceState();
+    this.clearDialogueTapHandler();
     if (this.typewriterInterval) window.clearInterval(this.typewriterInterval);
     window.clearTimeout(this.missionNoticeTimer);
-    this.dialogueBubbleEl.classList.remove('hidden');
-    this.dialogueSpeakerEl.textContent = speaker;
+    this.cinematicDialogueUI.show(speaker, presentation);
     this.dialogueTextEl.textContent = '';
     this.dialogueChoices = choices;
     this.dialogueChoiceCallback = onChoose;
@@ -795,11 +800,11 @@ export class HUD {
 
   // Typewriter Dialogue Effect (Supports Touch Tap Anywhere to Advance)
   private typewriterInterval: any;
-  public showTypewriterDialogue(speaker: string, text: string, onComplete?: () => void): void {
+  public showTypewriterDialogue(speaker: string, text: string, onComplete?: () => void, presentation: CinematicDialogueOptions = {}): void {
     this.clearDialogueChoiceState();
+    this.clearDialogueTapHandler();
     window.clearTimeout(this.missionNoticeTimer);
-    this.dialogueBubbleEl.classList.remove('hidden');
-    this.dialogueSpeakerEl.textContent = speaker;
+    this.cinematicDialogueUI.show(speaker, presentation);
     this.dialogueTextEl.textContent = '';
     
     if (this.typewriterInterval) {
@@ -807,13 +812,32 @@ export class HUD {
     }
 
     let charIndex = 0;
+    let completed = false;
+    const finish = () => {
+      if (completed) return;
+      completed = true;
+      if (this.typewriterInterval) window.clearInterval(this.typewriterInterval);
+      this.typewriterInterval = null;
+      this.dialogueTextEl.textContent = text;
+      this.dialogueBubbleEl.removeEventListener('click', handleTap);
+      this.dialogueBubbleEl.removeEventListener('touchstart', handleTap);
+      if (this.dialogueTapHandler === handleTap) this.dialogueTapHandler = null;
+      onComplete?.();
+    };
     this.typewriterInterval = setInterval(() => {
       if (charIndex < text.length) {
         this.dialogueTextEl.textContent += text.charAt(charIndex);
         charIndex++;
       } else {
         clearInterval(this.typewriterInterval);
-        if (onComplete) onComplete();
+        this.typewriterInterval = null;
+        this.dialogueBubbleEl.removeEventListener('click', handleTap);
+        this.dialogueBubbleEl.removeEventListener('touchstart', handleTap);
+        if (this.dialogueTapHandler === handleTap) this.dialogueTapHandler = null;
+        if (!completed) {
+          completed = true;
+          onComplete?.();
+        }
       }
     }, 35);
 
@@ -821,22 +845,24 @@ export class HUD {
     const handleTap = (e: Event) => {
       e.preventDefault();
       e.stopPropagation();
-      this.dialogueBubbleEl.removeEventListener('click', handleTap);
-      this.dialogueBubbleEl.removeEventListener('touchstart', handleTap);
-      
-      if (this.typewriterInterval) {
-        clearInterval(this.typewriterInterval);
-      }
-      this.dialogueTextEl.textContent = text;
-      if (onComplete) onComplete();
+      finish();
     };
 
     this.dialogueBubbleEl.addEventListener('click', handleTap, { once: true });
     this.dialogueBubbleEl.addEventListener('touchstart', handleTap, { once: true });
+    this.dialogueTapHandler = handleTap;
+  }
+
+  private clearDialogueTapHandler(): void {
+    if (!this.dialogueTapHandler) return;
+    this.dialogueBubbleEl.removeEventListener('click', this.dialogueTapHandler);
+    this.dialogueBubbleEl.removeEventListener('touchstart', this.dialogueTapHandler);
+    this.dialogueTapHandler = null;
   }
 
   public hideDialogue(): void {
-    this.dialogueBubbleEl.classList.add('hidden');
+    this.cinematicDialogueUI.hide();
+    this.clearDialogueTapHandler();
     if (this.typewriterInterval) clearInterval(this.typewriterInterval);
     this.typewriterInterval = null;
     this.clearDialogueChoiceState();

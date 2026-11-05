@@ -20,6 +20,7 @@ import { SubtitleSystem } from '../ui/SubtitleSystem';
 import { AudioManager } from '../core/AudioManager';
 import { EnemyController } from '../enemies/EnemyController';
 import { GekkoNPC } from '../npc/GekkoNPC';
+import { projectDialogueFocus } from '../ui/CinematicDialogueUI';
 
 export class Level01 {
   private sceneManager: SceneManager;
@@ -497,7 +498,10 @@ export class Level01 {
                 if (cinematicSkipped) return;
                 finishCinematic();
               }, 4000);
-            });
+            }, { type: 'mission', focusPoints: [
+              ...projectDialogueFocus(this.gekkoNPC?.mesh, this.cameraController.camera, 1.25, 2.2),
+              ...projectDialogueFocus(this.player.mesh, this.cameraController.camera, 1.2, 1.8),
+            ] });
           }
         }
       }

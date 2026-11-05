@@ -4,6 +4,7 @@ import type { AudioManager } from '../core/AudioManager';
 import type { InputManager } from '../core/InputManager';
 import type { PlayerController } from '../player/PlayerController';
 import type { HUD } from '../ui/HUD';
+import { projectDialogueFocus } from '../ui/CinematicDialogueUI';
 
 const LETTERS = ['W', 'U', 'K', 'O', 'N', 'G'] as const;
 type MissionState = 'AVAILABLE' | 'DIALOGUE' | 'STARTING' | 'ACTIVE' | 'FAILED' | 'COMPLETED';
@@ -302,7 +303,7 @@ export class TwinCatsChallenge {
         ? [{ label: 'Reintentar', value: 'accept' as const }, { label: 'Salir', value: 'decline' as const }]
         : [{ label: '\u00a1Acepto!', value: 'accept' as const }, { label: 'Ahora no', value: 'decline' as const }];
 
-    this.hud.showDialogueChoices('Silvio', text, choices, (choice) => {
+    this.hud.showDialogueChoices('Silvito', text, choices, (choice) => {
       this.player.isControlsLocked = false;
       this.player.isMovementLocked = false;
       this.player.isAttacking = false;
@@ -319,14 +320,14 @@ export class TwinCatsChallenge {
       } else {
         this.state = this.savedCompleted ? 'COMPLETED' : retry ? 'FAILED' : 'AVAILABLE';
       }
-    });
+    }, { type: 'mission', focusPoints: this.dialogueFocusPoints() });
   }
 
   private showShortDialogue(text: string, after?: () => void): void {
     this.state = 'DIALOGUE';
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
-    this.hud.showDialogueChoices('Silvio', text, [{ label: 'Continuar', value: 'accept' }], () => {
+    this.hud.showDialogueChoices('Silvito', text, [{ label: 'Continuar', value: 'accept' }], () => {
       this.player.isControlsLocked = false;
       this.player.isMovementLocked = false;
       this.player.isAttacking = false;
@@ -334,7 +335,7 @@ export class TwinCatsChallenge {
       this.player.forceIdle();
       this.state = this.savedCompleted ? 'COMPLETED' : this.state === 'FAILED' ? 'FAILED' : 'AVAILABLE';
       after?.();
-    });
+    }, { type: 'narrative', focusPoints: this.dialogueFocusPoints() });
   }
 
   private showVictoryDialogue(line = 0): void {
@@ -353,10 +354,18 @@ export class TwinCatsChallenge {
     this.state = 'DIALOGUE';
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
-    this.hud.showDialogueChoices('Silvio', lines[line], [{ label: line === lines.length - 1 ? '¡Voy por él!' : 'Continuar', value: 'accept' }], () => {
+    this.hud.showDialogueChoices('Silvito', lines[line], [{ label: line === lines.length - 1 ? '¡Voy por él!' : 'Continuar', value: 'accept' }], () => {
       if (line === 2) void this.ensureRewardSpawned();
       this.showVictoryDialogue(line + 1);
-    });
+    }, { type: 'reward', focusPoints: this.dialogueFocusPoints() });
+  }
+
+  private dialogueFocusPoints(): Array<{ x: number; y: number; weight?: number }> {
+    const camera = (window as any).gameInstance?.cameraController?.camera as THREE.Camera | undefined;
+    return [
+      ...projectDialogueFocus(this.root, camera, 1.3, 2.2),
+      ...projectDialogueFocus(this.player.mesh, camera, 1.15, 1.8),
+    ];
   }
 
   private finishDialogue(): void {
