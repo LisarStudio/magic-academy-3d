@@ -7,16 +7,16 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>La leyenda de Wukong — Lisar Studio</title>
-    <link rel="preload" as="image" href="./assets/ui/hud-vida-imperial.png?v=0.0.34" fetchpriority="high" />
-    <link rel="preload" as="image" href="./assets/ui/hud-baculo-vida.png?v=0.0.34" />
-    <link rel="preload" as="image" href="./assets/ui/hud-boss-imperial.png?v=0.0.34" />
+    <link rel="preload" as="image" href="./assets/ui/hud-vida-imperial.png?v=0.0.36" fetchpriority="high" />
+    <link rel="preload" as="image" href="./assets/ui/hud-baculo-vida.png?v=0.0.36" />
+    <link rel="preload" as="image" href="./assets/ui/hud-boss-imperial.png?v=0.0.36" />
     <link rel="icon" type="image/svg+xml" href="/magic-academy-3d/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/magic-academy-3d/assets/index-CcepYGBn.js"></script>
+    <script type="module" crossorigin src="/magic-academy-3d/assets/index-BmXT1e8O.js"></script>
     <link rel="modulepreload" crossorigin href="/magic-academy-3d/assets/three-vendor--tS0TumG.js">
-    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-IGhQiVRN.css">
+    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-m3PFj12S.css">
   </head>
   <body>
     <div id="app">
@@ -78,16 +78,15 @@
             <div class="boss-health-track" role="progressbar" aria-label="Salud del jefe" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0">
                 <div id="boss-health-fill" class="boss-health-fill" style="width: 0%"></div>
             </div>
-            <img class="boss-hud-frame" src="./assets/ui/hud-boss-imperial.png?v=0.0.34" alt="" />
+            <img class="boss-hud-frame" src="./assets/ui/hud-boss-imperial.png?v=0.0.36" alt="" />
               <div class="boss-health-mask" aria-hidden="true"></div>
-            <span id="boss-health-value" class="boss-health-value"></span>
           </div>
         </section>
 
         <!-- Objectives & Status HUD Top Left -->
         <div id="hud-top-left" class="hud-panel hidden modern-hud imperial-hud">
           <div class="imperial-hud-art">
-            <img class="imperial-health-frame" src="./assets/ui/hud-vida-imperial.png?v=0.0.34" alt="" />
+            <img class="imperial-health-frame" src="./assets/ui/hud-vida-imperial.png?v=0.0.36" alt="" />
             <div class="imperial-health-fill-clip" role="progressbar" aria-label="Salud" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><div id="hp-bar-fill" class="imperial-health-fill"></div></div>
             <span id="hp-text" class="imperial-health-value">100 / 100</span>
           </div>
@@ -102,6 +101,9 @@
           </div>
           <div id="life-count" class="life-count imperial-life-count" aria-label="Vidas restantes">×3</div>
           <div id="hud-collected-keys" class="hud-collected-keys" aria-label="Todavía no has obtenido llaves" aria-live="polite"></div>
+          <div id="hud-maneki-neko" class="hud-maneki-neko hidden" aria-label="Amuleto Maneki Neko obtenido" aria-hidden="true" title="Maneki Neko — Amuleto del Gato de la Abundancia">
+            <img alt="" decoding="async" />
+          </div>
         </div>
         
         <div id="objective-container" class="hud-panel hidden">
@@ -159,9 +161,12 @@
         </div>
 
         <section id="letter-challenge-hud" class="letter-challenge-hud hidden" aria-live="polite" aria-label="Desafío de los gemelos">
+          <div class="letter-challenge-portraits" aria-hidden="true">
+            <img src="./assets/npc/twin-cats/hud-silvio-loki.png" alt="" decoding="async" />
+          </div>
           <header class="letter-challenge-header">
             <div>
-              <div class="letter-challenge-kicker">DESAFÍO DE LOS GEMELOS</div>
+              <div class="letter-challenge-kicker">DESAFÍO DE SILVITO Y LOKI</div>
               <div class="letter-challenge-title">Recupera las letras de Wukong</div>
             </div>
             <div class="letter-challenge-clock">
