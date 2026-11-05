@@ -61,6 +61,7 @@ export class TwinCatsChallenge {
   private rewardLoading: Promise<void> | null = null;
   private rewardLoadFailed = false;
   private rewardAge = 0;
+  private rewardRevealElapsed = 0;
   private rewardBaseY = 0;
   private rewardVisualRoot: THREE.Group | null = null;
   private rewardParticles: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial> | null = null;
@@ -388,14 +389,24 @@ export class TwinCatsChallenge {
       reward.name = 'Maneki_Neko_Recompensa_Silvio_Loki';
       const visual = new THREE.Group();
       visual.name = 'Maneki_Neko_Modelo_Levitante';
-      visual.add(gltf.scene);
-      visual.updateMatrixWorld(true);
-      const bounds = new THREE.Box3().setFromObject(visual);
-      const size = bounds.getSize(new THREE.Vector3());
-      const center = bounds.getCenter(new THREE.Vector3());
-      const scale = 0.86 / Math.max(0.001, size.y);
-      visual.scale.setScalar(scale);
-      visual.position.set(-center.x * scale, 0.38 - bounds.min.y * scale, -center.z * scale);
+      // Keep the model's authored transform intact, then normalize it inside a
+      // wrapper. Align the scaled bounds' actual lowest point to the wrapper
+      // origin so GLB pivot offsets cannot bury the cat in sloped terrain.
+      const model = new THREE.Group();
+      model.add(gltf.scene);
+      model.updateMatrixWorld(true);
+      const sourceBounds = new THREE.Box3().setFromObject(model);
+      const sourceSize = sourceBounds.getSize(new THREE.Vector3());
+      const scale = 0.86 / Math.max(0.001, sourceSize.y);
+      model.scale.setScalar(scale);
+      model.updateMatrixWorld(true);
+      const scaledBounds = new THREE.Box3().setFromObject(model);
+      const scaledCenter = scaledBounds.getCenter(new THREE.Vector3());
+      model.position.set(-scaledCenter.x, -scaledBounds.min.y, -scaledCenter.z);
+      visual.add(model);
+      // The model rises into view like Gekko's wealth-key presentation and
+      // settles into a gentle idle float. The floor shadow remains anchored.
+      visual.position.y = 0.12;
       reward.add(visual);
       this.rewardVisualRoot = visual;
       const localSide = new THREE.Vector3(2.1, 0, 0).applyQuaternion(this.root.quaternion);
@@ -403,6 +414,8 @@ export class TwinCatsChallenge {
       const z = this.position.z + localSide.z;
       this.rewardBaseY = this.getTerrainHeight(x, z);
       reward.position.set(x, this.rewardBaseY, z);
+      this.rewardAge = 0;
+      this.rewardRevealElapsed = 0;
       reward.traverse((object) => {
         const mesh = object as THREE.Mesh;
         if (!mesh.isMesh) return;
@@ -581,12 +594,17 @@ export class TwinCatsChallenge {
         if (this.rewardRoot?.parent === this.scene) {
           this.rewardAge += safeDelta;
           const { x, z } = this.rewardRoot.position;
-      if (this.rewardVisualRoot) this.rewardVisualRoot.position.y = 0.38 + Math.sin(this.rewardAge * 1.5) * 0.1;
+          this.rewardRevealElapsed += safeDelta;
+          const reveal = THREE.MathUtils.smoothstep(this.rewardRevealElapsed, 0, 0.9);
+          if (this.rewardVisualRoot) {
+            this.rewardVisualRoot.position.y = THREE.MathUtils.lerp(0.12, 0.82, reveal)
+              + Math.sin(this.rewardAge * 1.5) * 0.1 * reveal;
+          }
           this.updateRewardParticles(this.rewardAge);
           const rewardDistance = Math.hypot(playerPos.x - x, playerPos.z - z);
           if (rewardDistance <= this.rewardHintRadius) {
             this.hud.showInteractionPrompt(rewardDistance <= this.pickupRadius ? 'Recoger Maneki Neko' : 'Acércate al Maneki Neko');
-            if (rewardDistance <= this.pickupRadius && Math.abs(playerPos.y - (this.rewardBaseY + 0.38)) < 2.1 && this.input.consumeInteractPress()) {
+            if (rewardDistance <= this.pickupRadius && Math.abs(playerPos.y - (this.rewardBaseY + 0.82)) < 2.1 && this.input.consumeInteractPress()) {
               this.collectReward();
             }
             return;
