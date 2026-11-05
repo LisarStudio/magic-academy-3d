@@ -1572,20 +1572,30 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 
 @media (max-width: 850px) {
   .letter-challenge-hud {
-    top: max(92px, calc(env(safe-area-inset-top, 0px) + 86px));
-    right: calc(env(safe-area-inset-right, 0px) + 8px); left: 8px;
-    width: auto; max-width: none; max-height: 100px; padding: 6px 8px 7px;
+    top: max(82px, calc(env(safe-area-inset-top, 0px) + 74px));
+    right: max(8px, env(safe-area-inset-right, 0px)); left: auto;
+    width: min(340px, calc(100vw - 16px)); max-width: none; max-height: 84px; padding: 5px 7px 6px;
+    backdrop-filter: none; -webkit-backdrop-filter: none;
   }
-  .letter-challenge-title { font-size: clamp(9px, 2.6vw, 11px); }
-  .letter-challenge-header { min-height: 17px; }
-  .letter-challenge-clock strong { font-size: 13px; }
-  .letter-challenge-slots { gap: 4px; margin: 4px 0; }
-  .letter-challenge-slot { height: clamp(25px, 7vw, 30px); }
-  .letter-challenge-slot img { padding: 2px 4px; }
-  .letter-challenge-footer { font-size: 8px; }
-  .dialogue-bubble-container { width: calc(100vw - 20px); bottom: 12px; box-sizing: border-box; padding: 13px 16px 14px; border-radius: 28px 23px 28px 24px / 22px 28px 21px 26px; }
-  .dialogue-text { font-size: 15px; min-height: 0; }
-  .dialogue-choice-button { flex-basis: 100%; min-height: 40px; }
+  .letter-challenge-title { font-size: 9px; }
+  .letter-challenge-header { min-height: 15px; }
+  .letter-challenge-clock { padding: 1px 5px; }
+  .letter-challenge-clock strong { font-size: 12px; }
+  .letter-challenge-slots { gap: 3px; margin: 3px 0; }
+  .letter-challenge-slot { height: 25px; }
+  .letter-challenge-slot img { padding: 1px 3px; }
+  .letter-challenge-footer { min-height: 10px; font-size: 8px; }
+  .dialogue-bubble-container {
+    width: calc(100vw - 20px); bottom: max(10px, env(safe-area-inset-bottom)); box-sizing: border-box;
+    max-height: min(36dvh, 250px); overflow-y: auto; overscroll-behavior: contain;
+    padding: 11px 13px 11px 76px; border-radius: 28px 23px 28px 24px / 22px 28px 21px 26px;
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+  .dialogue-portrait-frame { width: 58px; height: 58px; left: 9px; }
+  .dialogue-speaker { min-width: 0; margin: -6px auto 5px; padding: 3px 12px; font-size: 12px; }
+  .dialogue-text { font-size: 13px; line-height: 1.32; min-height: 0; }
+  .dialogue-options { display: flex; flex-flow: row wrap; gap: 6px; margin-top: 7px; }
+  .dialogue-choice-button { flex: 1 1 calc(50% - 6px); min-width: 0; min-height: 36px; padding: 6px 8px; font-size: 12px; }
 }
 
 @media (max-width: 360px) {

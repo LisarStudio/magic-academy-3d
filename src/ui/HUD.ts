@@ -829,10 +829,16 @@ export class HUD {
       if (this.typewriterInterval) window.clearInterval(this.typewriterInterval);
       this.typewriterInterval = null;
       this.dialogueTextEl.textContent = text;
-      this.dialogueBubbleEl.removeEventListener('click', handleTap);
-      this.dialogueBubbleEl.removeEventListener('touchstart', handleTap);
+      document.removeEventListener('pointerdown', handleTap, true);
       if (this.dialogueTapHandler === handleTap) this.dialogueTapHandler = null;
       onComplete?.();
+      // Some dialogue callbacks only reveal choices (or leave a final line on
+      // screen). Keep a second tap available to dismiss those lines, unless
+      // the callback installed the next line's own handler or closed the UI.
+      if (!this.dialogueTapHandler && this.cinematicDialogueUI.isOpen()) {
+        document.addEventListener('pointerdown', handleTap, true);
+        this.dialogueTapHandler = handleTap;
+      }
     };
     this.typewriterInterval = setInterval(() => {
       if (charIndex < text.length) {
@@ -841,9 +847,6 @@ export class HUD {
       } else {
         clearInterval(this.typewriterInterval);
         this.typewriterInterval = null;
-        this.dialogueBubbleEl.removeEventListener('click', handleTap);
-        this.dialogueBubbleEl.removeEventListener('touchstart', handleTap);
-        if (this.dialogueTapHandler === handleTap) this.dialogueTapHandler = null;
         if (!completed) {
           completed = true;
           onComplete?.();
@@ -851,22 +854,28 @@ export class HUD {
       }
     }, 35);
 
-    // Touch tap / click listener on dialogue bubble to immediately finish text & advance
+    // Let a tap anywhere in the scene advance the active line. Once typing has
+    // finished, the next non-button tap dismisses the completed dialogue.
     const handleTap = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('button, input, select, textarea, a, [data-dialogue-no-skip]')) return;
       e.preventDefault();
       e.stopPropagation();
-      finish();
+      if (completed) {
+        if (this.dialogueChoices.length > 0) return;
+        this.hideDialogue();
+      } else {
+        finish();
+      }
     };
 
-    this.dialogueBubbleEl.addEventListener('click', handleTap, { once: true });
-    this.dialogueBubbleEl.addEventListener('touchstart', handleTap, { once: true });
+    document.addEventListener('pointerdown', handleTap, true);
     this.dialogueTapHandler = handleTap;
   }
 
   private clearDialogueTapHandler(): void {
     if (!this.dialogueTapHandler) return;
-    this.dialogueBubbleEl.removeEventListener('click', this.dialogueTapHandler);
-    this.dialogueBubbleEl.removeEventListener('touchstart', this.dialogueTapHandler);
+    document.removeEventListener('pointerdown', this.dialogueTapHandler, true);
     this.dialogueTapHandler = null;
   }
 

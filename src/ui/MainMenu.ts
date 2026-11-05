@@ -418,6 +418,13 @@ export class MainMenu {
     }
   }
 
+  private readonly onIntroScreenPointerDown = (event: PointerEvent): void => {
+    if (this.state !== 'Intro' || event.pointerType === 'mouse' || event.button !== 0 || event.isPrimary === false) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void this.skipIntro();
+  };
+
   private async retryMenuIdleVideo(): Promise<void> {
     this.idleVideo.pause();
     this.idleVideo.load();
@@ -463,6 +470,10 @@ export class MainMenu {
       this.handleIntroMediaError();
     });
     this.introSkipButton.addEventListener('click', () => void this.skipIntro());
+    // The cinematic video is intentionally non-interactive and the visible
+    // prompt is subtle. Accept a tap anywhere on the active intro so mobile
+    // players are not forced to hit a small control over the video.
+    document.addEventListener('pointerdown', this.onIntroScreenPointerDown, { capture: true });
     document.getElementById('btn-retry-loading')!.addEventListener('click', () => this.loadingRetry());
     this.newGameButton.addEventListener('click', () => this.requestStart('new'));
     this.continueButton.addEventListener('click', () => this.requestStart('continue'));

@@ -833,11 +833,12 @@ export class Game {
     if (this.performanceSampleElapsed < 1 || this.performanceAdjustCooldown > 0) return;
     this.performanceSampleElapsed = 0;
 
-    const minRenderScale = isLowPowerDevice() ? 0.84 : 0.68;
+    const lowPowerDevice = isLowPowerDevice();
+    const minRenderScale = lowPowerDevice ? 0.58 : 0.68;
     if (this.frameTimeAverageMs > 19 && this.renderScale > minRenderScale) {
-      this.renderScale = Math.max(minRenderScale, this.renderScale - (isLowPowerDevice() ? 0.04 : 0.08));
+      this.renderScale = Math.max(minRenderScale, this.renderScale - 0.08);
       this.fastFrameSeconds = 0;
-      this.performanceAdjustCooldown = 1.5;
+      this.performanceAdjustCooldown = lowPowerDevice ? 0.9 : 1.5;
       this.applyRenderResolution();
       console.info(`[Performance] Frame time ${this.frameTimeAverageMs.toFixed(1)} ms; lowering render resolution to ${this.renderScale.toFixed(2)}x.`);
     } else if (this.frameTimeAverageMs < 15.5 && this.renderScale < 1) {
@@ -845,7 +846,7 @@ export class Game {
       if (this.fastFrameSeconds >= 5) {
         this.renderScale = Math.min(1, this.renderScale + 0.04);
         this.fastFrameSeconds = 0;
-        this.performanceAdjustCooldown = 1.5;
+        this.performanceAdjustCooldown = lowPowerDevice ? 2 : 1.5;
         this.applyRenderResolution();
       }
     } else {

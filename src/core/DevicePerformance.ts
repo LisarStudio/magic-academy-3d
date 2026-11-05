@@ -11,11 +11,11 @@ export function isLowPowerDevice(): boolean {
 }
 
 export function renderPixelRatio(quality = 1): number {
-  // Keep native density at full quality, but allow the adaptive renderer to
-  // step below 1x when frame time exceeds budget. The old 1x floor silently
-  // disabled dynamic-resolution recovery on standard-DPI screens.
+  // Phone GPUs pay a steep cost for the extra pixels in high-DPI canvases.
+  // Start at at most 1x on touch-first/low-power hardware, then let Game's
+  // frame-time controller step lower when the scene exceeds its frame budget.
   const lowPower = isLowPowerDevice();
-  const cap = lowPower ? 1.25 : 1.5;
+  const cap = lowPower ? 1 : 1.5;
   const deviceRatio = Math.min(window.devicePixelRatio || 1, cap);
   return Math.max(0.5, deviceRatio * quality);
 }

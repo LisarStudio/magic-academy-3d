@@ -5306,7 +5306,11 @@ export class LevelToyStory {
       // Keep authored Blender LODs at all distances; the ground material
       // carries coverage beyond the vegetation range. Avoid broken topology.
       const isMobile = isLowPowerDevice();
-      const qualityIndex = this.grassQuality === 0.65 ? 0 : this.grassQuality === 1 ? 2 : 1;
+      const selectedQualityIndex = this.grassQuality === 0.65 ? 0 : this.grassQuality === 1 ? 2 : 1;
+      // Keep the visual style, but cap the default high preset to the medium
+      // vegetation radius on phones. This avoids drawing distant grass sectors
+      // that contribute little to a small screen and consume GPU time.
+      const qualityIndex = isMobile ? Math.min(selectedQualityIndex, 1) : selectedQualityIndex;
       const midDistances = isMobile ? [7, 9, 12] : [12, 16, 24];
       // Vegetation beyond these ranges is represented by the textured ground.
       // Keeping distant instanced blades alive was the dominant avoidable
