@@ -20,15 +20,22 @@ if (!bundledFiles.some((path) => path.endsWith('.css'))) throw new Error('No has
 for (const path of bundledFiles) await access(join(root, path.slice(basePath.length)));
 
 const missionAssets = ['silvio', 'loki'].map((name) => `assets/npc/twin-cats/${name}.glb`);
+missionAssets.push('assets/npc/twin-cats/hud-silvio-loki.png');
+missionAssets.push('assets/quest/maneki_neko.png');
+missionAssets.push('assets/quest/maneki_neko.glb');
 for (const letter of ['w', 'u', 'k', 'o', 'n', 'g']) {
   missionAssets.push(`assets/letter-challenge/letter-${letter}.glb`);
   missionAssets.push(`assets/letter-challenge/${letter.toUpperCase()}.png`);
+  missionAssets.push(`assets/letter-challenge/hud-${letter.toUpperCase()}.png`);
 }
 
 for (const path of [
   'assets/characters/wukong_2.0_rigged.glb',
   'assets/cinematics/optimized/wukong-intro-desktop.mp4',
   'assets/collectibles/teara-wukong-vida.glb',
+  'assets/enemies/boss-crab.glb',
+  'assets/ui/hud-boss-imperial.png',
+  'assets/music/Silvio_OST.mp3',
   ...missionAssets,
 ]) {
   await access(join(root, path));
@@ -43,5 +50,5 @@ console.log(JSON.stringify({
   builtAtUTC: manifest.builtAtUTC,
   dirtyWorkingTree: manifest.dirtyWorkingTree,
   bundledFiles,
-  criticalAssets: 3 + missionAssets.length,
+  criticalAssets: 6 + missionAssets.length,
 }, null, 2));

@@ -7,14 +7,21 @@ async function get(url, method = 'GET') {
 }
 
 const missionAssets = ['silvio', 'loki'].map((name) => `assets/npc/twin-cats/${name}.glb`);
+missionAssets.push('assets/npc/twin-cats/hud-silvio-loki.png');
+missionAssets.push('assets/quest/maneki_neko.png');
+missionAssets.push('assets/quest/maneki_neko.glb');
 for (const letter of ['w', 'u', 'k', 'o', 'n', 'g']) {
   missionAssets.push(`assets/letter-challenge/letter-${letter}.glb`);
   missionAssets.push(`assets/letter-challenge/${letter.toUpperCase()}.png`);
+  missionAssets.push(`assets/letter-challenge/hud-${letter.toUpperCase()}.png`);
 }
 const criticalAssets = [
   'assets/characters/wukong_2.0_rigged.glb',
   'assets/cinematics/optimized/wukong-intro-desktop.mp4',
   'assets/collectibles/teara-wukong-vida.glb',
+  'assets/enemies/boss-crab.glb',
+  'assets/ui/hud-boss-imperial.png',
+  'assets/music/Silvio_OST.mp3',
   ...missionAssets,
 ];
 

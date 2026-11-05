@@ -6,7 +6,7 @@ import type { PlayerController } from '../player/PlayerController';
 import type { HUD } from '../ui/HUD';
 
 const LETTERS = ['W', 'U', 'K', 'O', 'N', 'G'] as const;
-type MissionState = 'AVAILABLE' | 'DIALOGUE' | 'ACTIVE' | 'FAILED' | 'COMPLETED';
+type MissionState = 'AVAILABLE' | 'DIALOGUE' | 'STARTING' | 'ACTIVE' | 'FAILED' | 'COMPLETED';
 
 const LETTER_POSITIONS: ReadonlyArray<THREE.Vector2> = [
   new THREE.Vector2(29, -73),
@@ -29,12 +29,22 @@ export class TwinCatsChallenge {
   public readonly root = new THREE.Group();
   public readonly colliders: THREE.Mesh[] = [];
   private readonly loader = new GLTFLoader();
-  private readonly actors: Array<{ root: THREE.Group; mixer: THREE.AnimationMixer; head: THREE.Bone | null; yaw: number; pitch: number }> = [];
+  private readonly actors: Array<{
+    root: THREE.Group;
+    mixer: THREE.AnimationMixer;
+    head: THREE.Bone | null;
+    headRestQuaternion: THREE.Quaternion;
+    headHasAnimatedRotation: boolean;
+    yaw: number;
+    pitch: number;
+  }> = [];
   private readonly lookTarget = new THREE.Vector3();
   private readonly headWorld = new THREE.Vector3();
   private readonly headLocal = new THREE.Vector3();
   private readonly headParentWorldQuaternion = new THREE.Quaternion();
   private readonly headOffset = new THREE.Quaternion();
+  private readonly headEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+  private readonly twinCatsFillLight = new THREE.PointLight(0xffd39a, 3.2, 8, 2);
   private readonly letterRoots: THREE.Group[] = [];
   private letterAssetsReady = false;
   private preloading: Promise<void> | null = null;
@@ -43,12 +53,20 @@ export class TwinCatsChallenge {
   private collectedCount = 0;
   private activeLetterIndex = -1;
   private activeLetterAge = 0;
+  private hudEntryElapsed = 0;
   private savedCompleted = false;
+  private rewardCollected = false;
+  private rewardRoot: THREE.Group | null = null;
+  private rewardLoading: Promise<void> | null = null;
+  private rewardLoadFailed = false;
+  private rewardAge = 0;
   private readonly interactionRadius = 3.4;
   private readonly lookRadius = 3;
   private readonly pickupRadius = 1.65;
+  private readonly rewardHintRadius = 4.5;
   private readonly catHeight = 1.8;
   private readonly onStateChange: (completed: boolean) => void;
+  private readonly onRewardCollected: (collected: boolean) => void;
   private readonly bursts: Array<{
     points: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
     origins: Float32Array;
@@ -64,7 +82,9 @@ export class TwinCatsChallenge {
     input: InputManager,
     hud: HUD,
     audio: AudioManager,
-    onStateChange: (completed: boolean) => void
+    onStateChange: (completed: boolean) => void,
+    onRewardCollected: (collected: boolean) => void,
+    rewardCollected = false
   ) {
     this.scene = scene;
     this.getTerrainHeight = getTerrainHeight;
@@ -74,8 +94,14 @@ export class TwinCatsChallenge {
     this.audio = audio;
     this.position = spawn.clone();
     this.onStateChange = onStateChange;
+    this.onRewardCollected = onRewardCollected;
+    this.rewardCollected = rewardCollected;
     this.root.name = 'NPC_Gatos_Gemelos';
     this.root.position.copy(spawn);
+    this.twinCatsFillLight.name = 'Twin_Cats_Warm_Fill_No_Shadows';
+    this.twinCatsFillLight.position.set(0, 1.55, 0);
+    this.twinCatsFillLight.castShadow = false;
+    this.root.add(this.twinCatsFillLight);
     // The original GLBs face +Z. Face the pair toward the player's arrival;
     // the prior extra PI turn made them show their backs on approach.
     this.root.rotation.y = Math.atan2(player.mesh.position.x - spawn.x, player.mesh.position.z - spawn.z);
@@ -117,18 +143,43 @@ export class TwinCatsChallenge {
 
         let head: THREE.Bone | null = null;
         gltf.scene.traverse((object) => {
-          if ((object as THREE.Bone).isBone && /(?:head|cabeza)$/i.test(object.name)) head = object as THREE.Bone;
+          if ((object as THREE.Bone).isBone && /(?:head|cabeza)(?:\.\d+)?$/i.test(object.name)) head = object as THREE.Bone;
           const mesh = object as THREE.Mesh;
           if (mesh.isMesh) {
             mesh.castShadow = true;
             mesh.receiveShadow = true;
+            const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            const warmMaterials = sourceMaterials.map((source) => {
+              const material = source.clone();
+              if ('emissive' in material && !/(?:iris|sclera)/i.test(source.name)) {
+                const litMaterial = material as THREE.MeshStandardMaterial;
+                litMaterial.emissive.setRGB(0.075, 0.043, 0.015);
+                litMaterial.emissiveIntensity = 0.7;
+              }
+              return material;
+            });
+            mesh.material = Array.isArray(mesh.material) ? warmMaterials : warmMaterials[0]!;
             this.revealAuthoredIris(mesh);
           }
         });
 
         const mixer = new THREE.AnimationMixer(gltf.scene);
         if (gltf.animations.length) mixer.clipAction(gltf.animations[0]).play();
-        this.actors.push({ root: actorRoot, mixer, head, yaw: 0, pitch: 0 });
+        const headBone = head as THREE.Bone | null;
+        const headHasAnimatedRotation = Boolean(headBone && gltf.animations.some((clip) =>
+          clip.tracks.some((track) => track.name === `${headBone.name}.quaternion`)
+        ));
+        if (!headBone) console.warn(`[TwinCats] No head bone found on ${names[i]} rig; authored animation is preserved without procedural gaze.`);
+        if (headBone && !headHasAnimatedRotation) console.info(`[TwinCats] ${names[i]} head is not keyed by the source animation; gaze offset will reset from its bind pose each frame.`);
+        this.actors.push({
+          root: actorRoot,
+          mixer,
+          head: headBone,
+          headRestQuaternion: headBone?.quaternion.clone() ?? new THREE.Quaternion(),
+          headHasAnimatedRotation,
+          yaw: 0,
+          pitch: 0
+        });
 
       }
       this.scene.add(this.root);
@@ -224,18 +275,26 @@ export class TwinCatsChallenge {
   }
 
   private showDialogue(): void {
+    if (this.savedCompleted) {
+      const text = this.rewardCollected
+        ? '¡Cuídalo mucho, Wukong! Ojalá su pequeña patita te recuerde que siempre habrá amigos deseándote suerte, estés donde estés.'
+        : '¡Wukong! ¡No olvides tu Maneki Neko! La buena fortuna ya te está esperando. Solo tienes que acercarte y recogerlo.';
+      this.showShortDialogue(text);
+      return;
+    }
     const retry = this.state === 'FAILED';
+    // Warm the media cache while the player reads the choices; this does not
+    // start playback. Declining the quest therefore never changes the music.
+    void this.audio.prepareSilvioMissionMusic().catch((error: unknown) => {
+      console.warn('[TwinCats] Silvio mission music preload failed.', error);
+    });
     this.state = 'DIALOGUE';
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
-    const text = this.savedCompleted
-      ? '¡Increíble! ¡Las encontraste todas! El desafío de los gemelos ya es tuyo.'
-      : retry
+    const text = retry
         ? '¡Casi lo consigues! ¿Quieres intentarlo otra vez?'
-        : '¡Eh, Wukong! ¡Tengo un desafío para ti! He escondido seis letras mágicas por todo el reino que forman tu nombre. Pero no será tan fácil... ¡Tienes solo 60 segundos para encontrarlas todas y deberás recogerlas en orden! ¿Crees que eres lo suficientemente rápido para conseguirlo?';
-    const choices = this.savedCompleted
-      ? [{ label: '¡Gracias!', value: 'decline' as const }]
-      : retry
+        : '¡Wukong! Loki y yo hemos escondido seis letras mágicas por todo el reino. Si consigues reunirlas en el orden correcto antes de que termine el tiempo, tendremos una sorpresa para ti. Solo dispones de sesenta segundos. Loki dice que es imposible, pero yo creo que un verdadero aventurero siempre encuentra la manera. ¿Te atreves?';
+    const choices = retry
         ? [{ label: 'Reintentar', value: 'accept' as const }, { label: 'Salir', value: 'decline' as const }]
         : [{ label: '¡Acepto el desafío!', value: 'accept' as const }, { label: 'Ahora no.', value: 'decline' as const }];
 
@@ -259,13 +318,110 @@ export class TwinCatsChallenge {
     });
   }
 
+  private showShortDialogue(text: string, after?: () => void): void {
+    this.state = 'DIALOGUE';
+    this.player.isControlsLocked = true;
+    this.player.isMovementLocked = true;
+    this.hud.showDialogueChoices('Silvio', text, [{ label: 'Continuar', value: 'accept' }], () => {
+      this.player.isControlsLocked = false;
+      this.player.isMovementLocked = false;
+      this.player.isAttacking = false;
+      this.player.velocity.set(0, 0, 0);
+      this.player.forceIdle();
+      this.state = this.savedCompleted ? 'COMPLETED' : this.state === 'FAILED' ? 'FAILED' : 'AVAILABLE';
+      after?.();
+    });
+  }
+
+  private showVictoryDialogue(line = 0): void {
+    const lines = [
+      '¡Lo lograste, Wukong! ¡Reuniste todas las letras! Sabía que eras rápido, pero hoy demostraste algo todavía más importante: que nunca te rindes.',
+      'Como prometimos, tenemos un regalo para ti. Llegó hasta nosotros desde unas tierras muy lejanas, donde los viajeros cuentan historias sobre pequeños gatos que atraen la buena fortuna.',
+      'Se llama Maneki Neko, el Gato de la Abundancia.',
+      'Dicen que invita a la suerte, a la prosperidad y a los buenos encuentros. Pero su verdadero secreto no está en el oro ni en los tesoros...',
+      '...sino en recordar que incluso los caminos más difíciles pueden traer algo maravilloso. Llévalo contigo, Wukong. Que te acompañe en tus viajes, te recuerde a tus amigos y te dé esperanza cuando el camino parezca demasiado oscuro.',
+      '¡Anda, acércate! ¡Es tuyo! Y quién sabe... ¡quizás la fortuna tenga grandes planes para ti!'
+    ];
+    if (line >= lines.length) {
+      void this.ensureRewardSpawned().then(() => this.finishDialogue());
+      return;
+    }
+    this.state = 'DIALOGUE';
+    this.player.isControlsLocked = true;
+    this.player.isMovementLocked = true;
+    this.hud.showDialogueChoices('Silvio', lines[line], [{ label: line === lines.length - 1 ? '¡Voy por él!' : 'Continuar', value: 'accept' }], () => {
+      if (line === 2) void this.ensureRewardSpawned();
+      this.showVictoryDialogue(line + 1);
+    });
+  }
+
+  private finishDialogue(): void {
+    this.state = this.savedCompleted ? 'COMPLETED' : 'AVAILABLE';
+    this.player.isControlsLocked = false;
+    this.player.isMovementLocked = false;
+    this.player.isAttacking = false;
+    this.player.velocity.set(0, 0, 0);
+    this.player.forceIdle();
+    void this.audio.stopSilvioMissionMusic();
+  }
+
+  private ensureRewardSpawned(): Promise<void> {
+    if (!this.savedCompleted || this.rewardCollected || this.rewardRoot?.parent === this.scene) return Promise.resolve();
+    if (this.rewardLoadFailed) return Promise.resolve();
+    if (this.rewardLoading) return this.rewardLoading;
+    this.rewardLoading = this.loader.loadAsync(`${import.meta.env.BASE_URL}assets/quest/maneki_neko.glb`).then((gltf) => {
+      if (this.rewardCollected || !this.savedCompleted) return;
+      const reward = new THREE.Group();
+      reward.name = 'Maneki_Neko_Recompensa_Silvio_Loki';
+      reward.add(gltf.scene);
+      reward.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(reward);
+      const size = bounds.getSize(new THREE.Vector3());
+      const center = bounds.getCenter(new THREE.Vector3());
+      const scale = 0.86 / Math.max(0.001, size.y);
+      reward.scale.setScalar(scale);
+      reward.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
+      const localSide = new THREE.Vector3(2.1, 0, 0).applyQuaternion(this.root.quaternion);
+      const x = this.position.x + localSide.x;
+      const z = this.position.z + localSide.z;
+      reward.position.add(new THREE.Vector3(x, this.getTerrainHeight(x, z) + 0.035, z));
+      reward.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.userData.twinCatsReward = true;
+      });
+      this.rewardRoot = reward;
+      this.scene.add(reward);
+      this.createMagicBurst(reward.position.clone().add(new THREE.Vector3(0, 0.4, 0)), 18);
+    }).catch((error) => {
+      this.rewardLoadFailed = true;
+      this.rewardLoading = null;
+      console.error('[TwinCats] Could not load the original Maneki Neko reward model.', error);
+    });
+    return this.rewardLoading;
+  }
+
+  public restoreRewardCollected(collected: boolean): void {
+    this.rewardCollected = collected;
+    if (collected) {
+      if (this.rewardRoot) this.scene.remove(this.rewardRoot);
+      this.hud.setManekiNekoOwned(true);
+    } else if (this.savedCompleted) {
+      this.hud.setManekiNekoOwned(false);
+      void this.ensureRewardSpawned();
+    }
+  }
+
   private beginChallenge(): void {
     this.elapsed = 0;
     this.collectedCount = 0;
     this.activeLetterIndex = 0;
     this.activeLetterAge = 0;
-    this.state = 'ACTIVE';
-    this.setActiveLetter(0);
+    this.hudEntryElapsed = 0;
+    this.state = 'STARTING';
+    void this.audio.startSilvioMissionMusic();
     this.hud.showLetterChallenge();
     this.hud.updateLetterChallenge(60, this.collectedCount);
   }
@@ -305,8 +461,19 @@ export class TwinCatsChallenge {
     }
     this.updateCatLook(safeDelta, playerDistance <= this.lookRadius ? this.lookTarget : null);
 
+    // Let the HUD complete its 620 ms entrance before starting the 60-second
+    // clock or enabling the first pickup. Movement remains unlocked.
+    if (this.state === 'STARTING') {
+      this.hudEntryElapsed += safeDelta;
+      if (this.hudEntryElapsed >= 0.64) {
+        this.state = 'ACTIVE';
+        this.setActiveLetter(0);
+      }
+      return;
+    }
+
     if (this.state === 'ACTIVE') {
-      this.elapsed += delta;
+      this.elapsed += safeDelta;
       this.activeLetterAge += safeDelta;
       const remaining = Math.max(0, 60 - this.elapsed);
       this.hud.updateLetterChallenge(remaining, this.collectedCount);
@@ -328,14 +495,38 @@ export class TwinCatsChallenge {
     }
 
     if (this.state === 'COMPLETED') {
+      if (this.savedCompleted && this.rewardCollected) return;
+      if (this.savedCompleted && !this.rewardCollected) {
+        void this.ensureRewardSpawned();
+        if (this.rewardRoot?.parent === this.scene) {
+          this.rewardAge += safeDelta;
+          const { x, z } = this.rewardRoot.position;
+          this.rewardRoot.position.y = this.getTerrainHeight(x, z) + 0.035 + Math.sin(this.rewardAge * 1.6) * 0.035;
+          const rewardDistance = Math.hypot(playerPos.x - x, playerPos.z - z);
+          if (rewardDistance <= this.rewardHintRadius) {
+            this.hud.showInteractionPrompt(rewardDistance <= this.pickupRadius ? 'Recoger Maneki Neko' : 'Acércate al Maneki Neko');
+            if (rewardDistance <= this.pickupRadius && Math.abs(playerPos.y - this.rewardRoot.position.y) < 2.1 && this.input.consumeInteractPress()) {
+              this.collectReward();
+            }
+            return;
+          }
+        } else if (this.rewardLoadFailed && playerDistance <= this.interactionRadius && this.actors.length === 2 && !this.hud.isDialogueOpen()) {
+          this.hud.showInteractionPrompt('Reintentar cargar el Maneki Neko');
+          if (this.input.consumeInteractPress()) {
+            this.rewardLoadFailed = false;
+            void this.ensureRewardSpawned();
+          }
+          return;
+        }
+      }
       if (playerDistance <= this.interactionRadius && this.actors.length === 2 && !this.hud.isDialogueOpen()) {
-        this.hud.showInteractionPrompt('Hablar con los gemelos');
+        this.hud.showInteractionPrompt('Hablar con Silvio');
         if (this.input.consumeInteractPress()) this.showDialogue();
       }
       return;
     }
     if (playerDistance > this.interactionRadius || this.actors.length < 2 || this.hud.isDialogueOpen()) return;
-    const label = this.letterAssetsReady ? 'Hablar con los gemelos' : 'Preparando el desafío de los gemelos…';
+    const label = this.letterAssetsReady ? 'Hablar con Silvio' : 'Preparando el desafío de los gemelos…';
     this.hud.showInteractionPrompt(label);
     if (this.input.consumeInteractPress()) {
       if (!this.letterAssetsReady) {
@@ -355,21 +546,28 @@ export class TwinCatsChallenge {
       if (target) {
         actor.head.getWorldPosition(this.headWorld);
         this.headLocal.copy(target).sub(this.headWorld);
-        actor.head.parent?.getWorldQuaternion(this.headParentWorldQuaternion);
+        // Use the stable NPC root frame. The old code used the animated neck's
+        // frame, so each authored head/neck key changed the tracking target
+        // underneath the procedural controller and could cause snapping.
+        actor.root.getWorldQuaternion(this.headParentWorldQuaternion);
         this.headLocal.applyQuaternion(this.headParentWorldQuaternion.invert());
-        desiredYaw = THREE.MathUtils.clamp(Math.atan2(this.headLocal.x, this.headLocal.z), -Math.PI * 2 / 9, Math.PI * 2 / 9);
+        const maxYaw = THREE.MathUtils.degToRad(35);
+        desiredYaw = THREE.MathUtils.clamp(Math.atan2(this.headLocal.x, this.headLocal.z), -maxYaw, maxYaw);
         desiredPitch = THREE.MathUtils.clamp(
           Math.atan2(this.headLocal.y, Math.hypot(this.headLocal.x, this.headLocal.z)),
-          -Math.PI / 12,
-          Math.PI / 9
+          THREE.MathUtils.degToRad(-15),
+          THREE.MathUtils.degToRad(15)
         );
       }
-      const maxStep = Math.max(0, delta) * Math.PI / 2;
+      const maxStep = Math.max(0, delta) * THREE.MathUtils.degToRad(60);
       actor.yaw += THREE.MathUtils.clamp(desiredYaw - actor.yaw, -maxStep, maxStep);
       actor.pitch += THREE.MathUtils.clamp(desiredPitch - actor.pitch, -maxStep, maxStep);
-      this.headOffset.setFromEuler(new THREE.Euler(actor.pitch, actor.yaw, 0, 'YXZ'));
-      // The mixer evaluates the authored head keys before this method each
-      // frame, so this constrained local offset never accumulates.
+      this.headEuler.set(actor.pitch, actor.yaw, 0, 'YXZ');
+      this.headOffset.setFromEuler(this.headEuler);
+      // The mixer writes the authored quaternion first. Compose a constrained
+      // additive gaze on top; if a rig lacks a keyed head rotation, restore its
+      // bind pose first so repeated offsets can never accumulate.
+      if (!actor.headHasAnimatedRotation) actor.head.quaternion.copy(actor.headRestQuaternion);
       actor.head.quaternion.multiply(this.headOffset);
     });
   }
@@ -387,8 +585,8 @@ export class TwinCatsChallenge {
       this.state = 'COMPLETED';
       this.savedCompleted = true;
       this.hud.hideLetterChallenge();
-      this.hud.showMissionNotice('¡DESAFÍO COMPLETADO!', '¡Has recuperado las seis letras mágicas!');
       this.onStateChange(true);
+      this.showVictoryDialogue();
       return;
     }
     this.activeLetterIndex = nextIndex;
@@ -405,6 +603,7 @@ export class TwinCatsChallenge {
     this.state = 'FAILED';
     this.clearBursts();
     this.hud.hideLetterChallenge();
+    void this.audio.stopSilvioMissionMusic();
     this.hud.showMissionNotice('¡TIEMPO AGOTADO!', `Has conseguido ${recovered} de 6 letras.`);
   }
 
@@ -455,15 +654,31 @@ export class TwinCatsChallenge {
 
   public restoreCompleted(completed: boolean): void {
     this.savedCompleted = completed;
-    if (completed) this.state = 'COMPLETED';
+    if (completed) {
+      this.state = 'COMPLETED';
+      if (!this.rewardCollected) void this.ensureRewardSpawned();
+    }
+  }
+
+  private collectReward(): void {
+    if (!this.savedCompleted || this.rewardCollected || !this.rewardRoot) return;
+    this.rewardCollected = true;
+    const pickedPosition = this.rewardRoot.position.clone().add(new THREE.Vector3(0, 0.4, 0));
+    this.scene.remove(this.rewardRoot);
+    this.audio.playMagicLetterPickup();
+    this.createMagicBurst(pickedPosition, 20);
+    this.hud.setManekiNekoOwned(true, true);
+    this.onRewardCollected(true);
+    this.showShortDialogue('¡Cuídalo mucho, Wukong! Ojalá su pequeña patita te recuerde que siempre habrá amigos deseándote suerte, estés donde estés.');
   }
 
   public cancel(): void {
-    if (this.state === 'ACTIVE' || this.state === 'DIALOGUE') {
+    if (this.state === 'ACTIVE' || this.state === 'STARTING' || this.state === 'DIALOGUE') {
       this.setActiveLetter(-1);
       this.activeLetterIndex = -1;
       this.collectedCount = 0;
       this.elapsed = 0;
+      this.hudEntryElapsed = 0;
       this.state = this.savedCompleted ? 'COMPLETED' : 'AVAILABLE';
     }
     this.player.isControlsLocked = false;
@@ -471,6 +686,7 @@ export class TwinCatsChallenge {
     this.clearBursts();
     this.hud.hideLetterChallenge();
     this.hud.hideDialogue();
+    void this.audio.stopSilvioMissionMusic();
   }
 
   private clearBursts(): void {
