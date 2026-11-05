@@ -945,7 +945,7 @@ export class LevelToyStory {
         scene.add(ceilingEye);
       });
       anchors.forEach((position) => {
-        const light = new THREE.PointLight(0xffb85f, 1.25, 9, 2);
+        const light = new THREE.PointLight(0xffb85f, 1.45, 9, 2);
         light.position.copy(position);
         light.castShadow = false;
         scene.add(light);
@@ -960,7 +960,14 @@ export class LevelToyStory {
     // Existing lantern fill, tuned up to reveal the interior timber and floor
     // at night without adding shadow-casting lights or a global color filter.
     const warmFill = new THREE.PointLight(0xffc98c, 5.6, 34, 2);
-    warmFill.position.set(0, this.getTerrainHeight(0, -34) + 6.2, -34);
+    const templeFront = this.centralTempleObject
+      ? this.centralTempleObject.localToWorld(new THREE.Vector3(0, 0, -4.4))
+      : new THREE.Vector3(24, 0, -35.6);
+    warmFill.position.set(
+      templeFront.x,
+      this.getTerrainHeight(templeFront.x, templeFront.z) + 6.2,
+      templeFront.z
+    );
     warmFill.castShadow = false;
     scene.add(warmFill);
     this.dayNightCycle?.registerNightLight(warmFill);

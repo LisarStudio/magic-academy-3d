@@ -116,7 +116,9 @@ export class DayNightCycle {
 
     if (this.moonLight) {
       this.moonLight.color.copy(this.coolMoon);
-      this.moonLight.intensity = 0.48 * this.nightAmount;
+      // A modest non-shadowing cool fill restores roof, grass and column
+      // detail at night while fading fully out through the existing day cycle.
+      this.moonLight.intensity = 0.58 * this.nightAmount;
       this.moonLight.position.copy(cameraPosition).addScaledVector(this.moonDirection, 65);
       this.moonLight.target.position.copy(cameraPosition);
       if (this.moonLight.target.parent !== this.scene) this.scene.add(this.moonLight.target);
