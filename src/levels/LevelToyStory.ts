@@ -617,7 +617,14 @@ export class LevelToyStory {
       this.sceneManager.dirLight,
       this.sceneManager.ambientLight,
       this.cloudsUniforms,
-      { realSecondsPerGameHour: 60, initialHour: 21, renderer: this.sceneManager.renderer, moonLight }
+      {
+        realSecondsPerGameHour: 60,
+        initialHour: 21,
+        renderer: this.sceneManager.renderer,
+        moonLight,
+        hemisphereLight: hemiLight,
+        rimLight
+      }
     );
     this.skyPanorama = new SkyPanoramaSystem(skyAnchor);
     // The procedural sky is already valid on frame one. Do not hold the
