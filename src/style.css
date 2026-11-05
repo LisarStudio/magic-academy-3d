@@ -393,30 +393,58 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 /* Cinematic Dialogue Bubble */
 .dialogue-bubble-container {
   position: absolute;
-  bottom: 90px; left: 50%; transform: translateX(-50%);
-  width: 60%; max-width: 580px;
-  background: rgba(20, 14, 40, 0.55);
-  border: 1px solid rgba(245,200,66,0.3);
-  border-radius: 14px;
-  padding: 20px 28px;
-  text-align: left;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 0 8px rgba(245, 200, 66, 0.1), 0 12px 40px rgba(0,0,0,0.6);
-  transition: opacity 0.4s ease, transform 0.4s ease;
+  bottom: 28px; left: 50%; transform: translateX(-50%) scale(1);
+  width: min(660px, calc(100vw - 40px));
+  background:
+    radial-gradient(ellipse at 50% -20%, rgba(150, 74, 30, .2), transparent 55%),
+    linear-gradient(145deg, rgba(13, 20, 37, .94), rgba(41, 15, 24, .92));
+  border: 1px solid rgba(238, 184, 83, .76);
+  border-radius: 42px 30px 38px 32px / 28px 36px 30px 34px;
+  padding: 18px 30px 20px;
+  text-align: center;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 0 18px rgba(245, 188, 66, 0.16), 0 12px 36px rgba(0,0,0,0.56), inset 0 0 0 3px rgba(240, 183, 68, .08);
+  transition: opacity 0.3s ease, transform 0.3s cubic-bezier(.2,.75,.25,1), box-shadow .3s ease;
   z-index: 100;
 }
-.dialogue-bubble-container.hidden { opacity: 0; transform: translateX(-50%) translateY(20px); pointer-events: none; }
+.dialogue-bubble-container::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border: 1px solid rgba(255, 214, 129, .3);
+  border-radius: 36px 25px 32px 26px / 23px 30px 25px 28px;
+  pointer-events: none;
+}
+.dialogue-bubble-container::after {
+  content: '☁';
+  position: absolute;
+  top: -13px;
+  right: 28px;
+  padding: 0 8px;
+  color: rgba(248, 206, 111, .75);
+  background: #21151e;
+  font-size: 18px;
+  line-height: 20px;
+  text-shadow: 0 0 9px rgba(248, 190, 66, .32);
+  pointer-events: none;
+}
+.dialogue-bubble-container.hidden { opacity: 0; transform: translateX(-50%) translateY(8px) scale(.95); pointer-events: none; }
+.dialogue-bubble-container:not(.hidden) { animation: dialogueCloudIn .3s ease-out both; }
+@keyframes dialogueCloudIn {
+  from { box-shadow: 0 0 0 rgba(245, 188, 66, 0), 0 12px 36px rgba(0,0,0,0.4); }
+  to { box-shadow: 0 0 18px rgba(245, 188, 66, .16), 0 12px 36px rgba(0,0,0,0.56), inset 0 0 0 3px rgba(240, 183, 68, .08); }
+}
 .dialogue-speaker {
   font-family: var(--font-title); font-size: 15px; font-weight: 700;
   letter-spacing: 2px; color: var(--gold);
   margin-bottom: 8px; text-transform: uppercase;
   text-shadow: 0 0 8px var(--gold-glow);
-  border-bottom: 1px solid rgba(245,200,66,0.2);
+  border-bottom: 1px solid rgba(245,200,66,0.28);
   padding-bottom: 4px;
   display: inline-block;
 }
-.dialogue-text { font-size: 17px; font-weight: 600; line-height: 1.55; color: #f0eeff; min-height: 54px; }
+.dialogue-text { font-size: 17px; font-weight: 600; line-height: 1.5; color: #f0eeff; min-height: 0; text-wrap: pretty; }
 .dialogue-continue-hint { font-size: 11px; color: #888; margin-top: 12px; text-align: right; letter-spacing: 1px; animation: pulseOpacity 1.5s infinite ease-in-out; }
 .dialogue-options { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 .dialogue-options.hidden { display: none; }
@@ -1525,11 +1553,7 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
   }
 
   /* Dialogue adjustments */
-  .dialogue-bubble-container {
-    width: 85%;
-    bottom: 70px;
-    padding: 14px 18px;
-  }
+  .dialogue-bubble-container { width: calc(100vw - 28px); bottom: 22px; padding: 14px 20px 16px; }
 }
 
 /* Extra small mobile screens */
@@ -1581,7 +1605,7 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
   .letter-challenge-slot.is-next::before { inset: 2px; }
   .letter-challenge-slot.is-next::after { font-size: 6px; top: 2px; right: 2px; }
   .letter-challenge-footer { font-size: 10px; }
-  .dialogue-bubble-container { width: calc(100vw - 30px); box-sizing: border-box; padding: 15px 17px; }
+  .dialogue-bubble-container { width: calc(100vw - 20px); bottom: 12px; box-sizing: border-box; padding: 13px 16px 14px; border-radius: 28px 23px 28px 24px / 22px 28px 21px 26px; }
   .dialogue-text { font-size: 15px; min-height: 0; }
   .dialogue-choice-button { flex-basis: 100%; min-height: 40px; }
 }

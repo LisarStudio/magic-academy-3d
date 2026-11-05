@@ -60,6 +60,10 @@ export class TwinCatsChallenge {
   private rewardLoading: Promise<void> | null = null;
   private rewardLoadFailed = false;
   private rewardAge = 0;
+  private rewardBaseY = 0;
+  private rewardVisualRoot: THREE.Group | null = null;
+  private rewardParticles: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial> | null = null;
+  private readonly rewardParticlePhases = [0, 1.7, 3.2, 4.8, 5.7];
   private readonly interactionRadius = 3.4;
   private readonly lookRadius = 3;
   private readonly pickupRadius = 1.65;
@@ -292,11 +296,11 @@ export class TwinCatsChallenge {
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
     const text = retry
-        ? '¡Casi lo consigues! ¿Quieres intentarlo otra vez?'
-        : '¡Wukong! Loki y yo hemos escondido seis letras mágicas por todo el reino. Si consigues reunirlas en el orden correcto antes de que termine el tiempo, tendremos una sorpresa para ti. Solo dispones de sesenta segundos. Loki dice que es imposible, pero yo creo que un verdadero aventurero siempre encuentra la manera. ¿Te atreves?';
+        ? '\u00a1Casi lo consigues! \u00bfQuieres intentarlo otra vez?'
+        : '\u00a1Wukong! Hemos escondido seis letras m\u00e1gicas por el reino. \u00a1Encu\u00e9ntralas en orden antes de que pasen 60 segundos! \u00bfAceptas?';
     const choices = retry
         ? [{ label: 'Reintentar', value: 'accept' as const }, { label: 'Salir', value: 'decline' as const }]
-        : [{ label: '¡Acepto el desafío!', value: 'accept' as const }, { label: 'Ahora no.', value: 'decline' as const }];
+        : [{ label: '\u00a1Acepto!', value: 'accept' as const }, { label: 'Ahora no', value: 'decline' as const }];
 
     this.hud.showDialogueChoices('Silvio', text, choices, (choice) => {
       this.player.isControlsLocked = false;
@@ -373,18 +377,23 @@ export class TwinCatsChallenge {
       if (this.rewardCollected || !this.savedCompleted) return;
       const reward = new THREE.Group();
       reward.name = 'Maneki_Neko_Recompensa_Silvio_Loki';
-      reward.add(gltf.scene);
-      reward.updateMatrixWorld(true);
-      const bounds = new THREE.Box3().setFromObject(reward);
+      const visual = new THREE.Group();
+      visual.name = 'Maneki_Neko_Modelo_Levitante';
+      visual.add(gltf.scene);
+      visual.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(visual);
       const size = bounds.getSize(new THREE.Vector3());
       const center = bounds.getCenter(new THREE.Vector3());
       const scale = 0.86 / Math.max(0.001, size.y);
-      reward.scale.setScalar(scale);
-      reward.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
+      visual.scale.setScalar(scale);
+      visual.position.set(-center.x * scale, 0.38 - bounds.min.y * scale, -center.z * scale);
+      reward.add(visual);
+      this.rewardVisualRoot = visual;
       const localSide = new THREE.Vector3(2.1, 0, 0).applyQuaternion(this.root.quaternion);
       const x = this.position.x + localSide.x;
       const z = this.position.z + localSide.z;
-      reward.position.add(new THREE.Vector3(x, this.getTerrainHeight(x, z) + 0.035, z));
+      this.rewardBaseY = this.getTerrainHeight(x, z);
+      reward.position.set(x, this.rewardBaseY, z);
       reward.traverse((object) => {
         const mesh = object as THREE.Mesh;
         if (!mesh.isMesh) return;
@@ -393,6 +402,7 @@ export class TwinCatsChallenge {
         mesh.userData.twinCatsReward = true;
       });
       this.rewardRoot = reward;
+      this.addRewardFloatEffects(reward);
       this.scene.add(reward);
       this.createMagicBurst(reward.position.clone().add(new THREE.Vector3(0, 0.4, 0)), 18);
     }).catch((error) => {
@@ -401,6 +411,67 @@ export class TwinCatsChallenge {
       console.error('[TwinCats] Could not load the original Maneki Neko reward model.', error);
     });
     return this.rewardLoading;
+  }
+
+  private addRewardFloatEffects(reward: THREE.Group): void {
+    // The reward origin is at the model's feet; the shadow stays on the ground
+    // while the complete reward group gently floats around its fixed base.
+    const effects = new THREE.Group();
+    effects.name = 'Maneki_Neko_Efectos_Flotantes';
+    reward.add(effects);
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const context = canvas.getContext('2d');
+    if (context) {
+      const gradient = context.createRadialGradient(32, 32, 2, 32, 32, 31);
+      gradient.addColorStop(0, 'rgba(255, 220, 150, 0.55)');
+      gradient.addColorStop(0.42, 'rgba(255, 190, 90, 0.22)');
+      gradient.addColorStop(1, 'rgba(255, 170, 60, 0)');
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, 64, 64);
+    }
+    const shadowTexture = new THREE.CanvasTexture(canvas);
+    shadowTexture.colorSpace = THREE.SRGBColorSpace;
+    const shadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.05, 0.62),
+      new THREE.MeshBasicMaterial({ map: shadowTexture, color: 0x9c681d, transparent: true, opacity: 0.25, depthWrite: false, toneMapped: false })
+    );
+    shadow.name = 'Maneki_Neko_Sombra_Suave';
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.set(0, 0.002, 0);
+    shadow.renderOrder = 1;
+    effects.add(shadow);
+
+    const halo = new THREE.Mesh(
+      new THREE.TorusGeometry(0.43, 0.012, 5, 40),
+      new THREE.MeshBasicMaterial({ color: 0xffd56a, transparent: true, opacity: 0.24, depthWrite: false, toneMapped: false })
+    );
+    halo.name = 'Maneki_Neko_Halo_Dorado_Discreto';
+    halo.rotation.x = Math.PI / 2;
+    halo.position.y = 0.018;
+    effects.add(halo);
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.rewardParticlePhases.length * 3), 3));
+    const material = new THREE.PointsMaterial({ color: 0xffdf83, size: 0.035, transparent: true, opacity: 0.62, depthWrite: false, sizeAttenuation: true, toneMapped: false });
+    this.rewardParticles = new THREE.Points(geometry, material);
+    this.rewardParticles.name = 'Maneki_Neko_Chispas_Ascendentes';
+    this.rewardParticles.position.y = 0.4;
+    effects.add(this.rewardParticles);
+    this.updateRewardParticles(0);
+  }
+
+  private updateRewardParticles(time: number): void {
+    if (!this.rewardParticles) return;
+    const positions = this.rewardParticles.geometry.getAttribute('position') as THREE.BufferAttribute;
+    this.rewardParticlePhases.forEach((phase, index) => {
+      const lift = (time * 0.38 + phase / (Math.PI * 2)) % 1;
+      const angle = phase + time * 0.25;
+      const radius = 0.26 + 0.04 * Math.sin(phase * 2);
+      positions.setXYZ(index, Math.cos(angle) * radius, lift * 0.7, Math.sin(angle) * radius);
+    });
+    positions.needsUpdate = true;
   }
 
   public restoreRewardCollected(collected: boolean): void {
@@ -501,11 +572,12 @@ export class TwinCatsChallenge {
         if (this.rewardRoot?.parent === this.scene) {
           this.rewardAge += safeDelta;
           const { x, z } = this.rewardRoot.position;
-          this.rewardRoot.position.y = this.getTerrainHeight(x, z) + 0.035 + Math.sin(this.rewardAge * 1.6) * 0.035;
+      if (this.rewardVisualRoot) this.rewardVisualRoot.position.y = 0.38 + Math.sin(this.rewardAge * 1.5) * 0.1;
+          this.updateRewardParticles(this.rewardAge);
           const rewardDistance = Math.hypot(playerPos.x - x, playerPos.z - z);
           if (rewardDistance <= this.rewardHintRadius) {
             this.hud.showInteractionPrompt(rewardDistance <= this.pickupRadius ? 'Recoger Maneki Neko' : 'Acércate al Maneki Neko');
-            if (rewardDistance <= this.pickupRadius && Math.abs(playerPos.y - this.rewardRoot.position.y) < 2.1 && this.input.consumeInteractPress()) {
+            if (rewardDistance <= this.pickupRadius && Math.abs(playerPos.y - (this.rewardBaseY + 0.38)) < 2.1 && this.input.consumeInteractPress()) {
               this.collectReward();
             }
             return;
@@ -663,8 +735,10 @@ export class TwinCatsChallenge {
   private collectReward(): void {
     if (!this.savedCompleted || this.rewardCollected || !this.rewardRoot) return;
     this.rewardCollected = true;
-    const pickedPosition = this.rewardRoot.position.clone().add(new THREE.Vector3(0, 0.4, 0));
+    const pickedPosition = this.rewardRoot.position.clone().add(new THREE.Vector3(0, 0.75, 0));
     this.scene.remove(this.rewardRoot);
+    this.rewardParticles = null;
+    this.rewardVisualRoot = null;
     this.audio.playMagicLetterPickup();
     this.createMagicBurst(pickedPosition, 20);
     this.hud.setManekiNekoOwned(true, true);
