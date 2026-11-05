@@ -30,22 +30,8 @@ export class TwinCatsChallenge {
   public readonly root = new THREE.Group();
   public readonly colliders: THREE.Mesh[] = [];
   private readonly loader = new GLTFLoader();
-  private readonly actors: Array<{
-    root: THREE.Group;
-    mixer: THREE.AnimationMixer;
-    head: THREE.Bone | null;
-    headRestQuaternion: THREE.Quaternion;
-    headHasAnimatedRotation: boolean;
-    yaw: number;
-    pitch: number;
-  }> = [];
-  private readonly lookTarget = new THREE.Vector3();
-  private readonly headWorld = new THREE.Vector3();
-  private readonly headLocal = new THREE.Vector3();
-  private readonly headParentWorldQuaternion = new THREE.Quaternion();
-  private readonly headOffset = new THREE.Quaternion();
-  private readonly headEuler = new THREE.Euler(0, 0, 0, 'YXZ');
-  private readonly twinCatsFillLight = new THREE.PointLight(0xffd39a, 3.2, 8, 2);
+  private readonly actors: Array<{ mixer: THREE.AnimationMixer }> = [];
+  private readonly twinCatsFillLight = new THREE.PointLight(0xffd8b0, 1.05, 8, 2);
   private readonly letterRoots: THREE.Group[] = [];
   private letterAssetsReady = false;
   private preloading: Promise<void> | null = null;
@@ -67,7 +53,6 @@ export class TwinCatsChallenge {
   private rewardParticles: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial> | null = null;
   private readonly rewardParticlePhases = [0, 1.7, 3.2, 4.8, 5.7];
   private readonly interactionRadius = 3.4;
-  private readonly lookRadius = 3;
   private readonly pickupRadius = 1.65;
   private readonly rewardHintRadius = 4.5;
   private readonly catHeight = 1.8;
@@ -104,8 +89,11 @@ export class TwinCatsChallenge {
     this.rewardCollected = rewardCollected;
     this.root.name = 'NPC_Gatos_Gemelos';
     this.root.position.copy(spawn);
-    this.twinCatsFillLight.name = 'Twin_Cats_Warm_Fill_No_Shadows';
-    this.twinCatsFillLight.position.set(0, 1.55, 0);
+    this.twinCatsFillLight.name = 'Twin_Cats_Soft_Overhead_Fill_No_Shadows';
+    // Keep the warm accent above the characters instead of placing a strong
+    // point source at face height. Their authored albedo and roughness maps
+    // remain responsible for the visible materials.
+    this.twinCatsFillLight.position.set(0, 3.25, -0.35);
     this.twinCatsFillLight.castShadow = false;
     this.root.add(this.twinCatsFillLight);
     // The original GLBs face +Z. Face the pair toward the player's arrival;
@@ -147,45 +135,25 @@ export class TwinCatsChallenge {
         actorRoot.position.set(lateralOffsets[i] - scaledCenter.x, -scaledBounds.min.y, -scaledCenter.z);
         this.root.add(actorRoot);
 
-        let head: THREE.Bone | null = null;
         gltf.scene.traverse((object) => {
-          if ((object as THREE.Bone).isBone && /(?:head|cabeza)(?:\.\d+)?$/i.test(object.name)) head = object as THREE.Bone;
           const mesh = object as THREE.Mesh;
           if (mesh.isMesh) {
             mesh.castShadow = true;
             mesh.receiveShadow = true;
-            const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-            const warmMaterials = sourceMaterials.map((source) => {
-              const material = source.clone();
-              if ('emissive' in material && !/(?:iris|sclera)/i.test(source.name)) {
-                const litMaterial = material as THREE.MeshStandardMaterial;
-                litMaterial.emissive.setRGB(0.075, 0.043, 0.015);
-                litMaterial.emissiveIntensity = 0.7;
-              }
-              return material;
-            });
-            mesh.material = Array.isArray(mesh.material) ? warmMaterials : warmMaterials[0]!;
             this.revealAuthoredIris(mesh);
           }
         });
 
         const mixer = new THREE.AnimationMixer(gltf.scene);
-        if (gltf.animations.length) mixer.clipAction(gltf.animations[0]).play();
-        const headBone = head as THREE.Bone | null;
-        const headHasAnimatedRotation = Boolean(headBone && gltf.animations.some((clip) =>
-          clip.tracks.some((track) => track.name === `${headBone.name}.quaternion`)
-        ));
-        if (!headBone) console.warn(`[TwinCats] No head bone found on ${names[i]} rig; authored animation is preserved without procedural gaze.`);
-        if (headBone && !headHasAnimatedRotation) console.info(`[TwinCats] ${names[i]} head is not keyed by the source animation; gaze offset will reset from its bind pose each frame.`);
-        this.actors.push({
-          root: actorRoot,
-          mixer,
-          head: headBone,
-          headRestQuaternion: headBone?.quaternion.clone() ?? new THREE.Quaternion(),
-          headHasAnimatedRotation,
-          yaw: 0,
-          pitch: 0
-        });
+        const authoredLoop = gltf.animations[0];
+        if (authoredLoop) {
+          const action = mixer.clipAction(authoredLoop);
+          action.setLoop(THREE.LoopRepeat, Infinity);
+          action.clampWhenFinished = false;
+          action.timeScale = 1;
+          action.play();
+        }
+        this.actors.push({ mixer });
 
       }
       this.scene.add(this.root);
@@ -218,6 +186,20 @@ export class TwinCatsChallenge {
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         mesh.userData.letterIndex = index;
+        const accentMaterial = (source: THREE.Material): THREE.Material => {
+          if (!(source instanceof THREE.MeshStandardMaterial) || source.emissiveMap) return source;
+          const material = source.clone();
+          if (material.emissive.getHex() === 0) {
+            material.emissive.setHex(0x332007);
+            material.emissiveIntensity = 0.2;
+          } else {
+            material.emissiveIntensity = Math.min(material.emissiveIntensity, 0.24);
+          }
+          return material;
+        };
+        mesh.material = Array.isArray(mesh.material)
+          ? mesh.material.map(accentMaterial)
+          : accentMaterial(mesh.material);
       });
       this.letterRoots[index] = item;
     })).then(() => { this.letterAssetsReady = true; }).catch((error) => {
@@ -548,12 +530,6 @@ export class TwinCatsChallenge {
       return;
     }
 
-    if (playerDistance <= 8) {
-      this.lookTarget.copy(playerPos);
-      this.lookTarget.y += 1.35;
-    }
-    this.updateCatLook(safeDelta, playerDistance <= this.lookRadius ? this.lookTarget : null);
-
     // Let the HUD complete its 620 ms entrance before starting the 60-second
     // clock or enabling the first pickup. Movement remains unlocked.
     if (this.state === 'STARTING') {
@@ -634,41 +610,6 @@ export class TwinCatsChallenge {
       }
       this.showDialogue();
     }
-  }
-
-  private updateCatLook(delta: number, target: THREE.Vector3 | null): void {
-    this.root.updateMatrixWorld(true);
-    this.actors.forEach((actor) => {
-      if (!actor.head) return;
-      let desiredYaw = 0;
-      let desiredPitch = 0;
-      if (target) {
-        actor.head.getWorldPosition(this.headWorld);
-        this.headLocal.copy(target).sub(this.headWorld);
-        // Use the stable NPC root frame. The old code used the animated neck's
-        // frame, so each authored head/neck key changed the tracking target
-        // underneath the procedural controller and could cause snapping.
-        actor.root.getWorldQuaternion(this.headParentWorldQuaternion);
-        this.headLocal.applyQuaternion(this.headParentWorldQuaternion.invert());
-        const maxYaw = THREE.MathUtils.degToRad(35);
-        desiredYaw = THREE.MathUtils.clamp(Math.atan2(this.headLocal.x, this.headLocal.z), -maxYaw, maxYaw);
-        desiredPitch = THREE.MathUtils.clamp(
-          Math.atan2(this.headLocal.y, Math.hypot(this.headLocal.x, this.headLocal.z)),
-          THREE.MathUtils.degToRad(-15),
-          THREE.MathUtils.degToRad(15)
-        );
-      }
-      const maxStep = Math.max(0, delta) * THREE.MathUtils.degToRad(60);
-      actor.yaw += THREE.MathUtils.clamp(desiredYaw - actor.yaw, -maxStep, maxStep);
-      actor.pitch += THREE.MathUtils.clamp(desiredPitch - actor.pitch, -maxStep, maxStep);
-      this.headEuler.set(actor.pitch, actor.yaw, 0, 'YXZ');
-      this.headOffset.setFromEuler(this.headEuler);
-      // The mixer writes the authored quaternion first. Compose a constrained
-      // additive gaze on top; if a rig lacks a keyed head rotation, restore its
-      // bind pose first so repeated offsets can never accumulate.
-      if (!actor.headHasAnimatedRotation) actor.head.quaternion.copy(actor.headRestQuaternion);
-      actor.head.quaternion.multiply(this.headOffset);
-    });
   }
 
   private collectActiveLetter(): void {

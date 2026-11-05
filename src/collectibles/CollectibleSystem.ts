@@ -25,7 +25,7 @@ export class Collectible {
       const cardMat = new THREE.MeshStandardMaterial({
         color: 0xf3c644,
         emissive: 0x996e00,
-        emissiveIntensity: 0.5,
+        emissiveIntensity: 0.18,
         metalness: 0.8,
         roughness: 0.2
       });
@@ -58,7 +58,7 @@ export class Collectible {
         const coinMat = new THREE.MeshStandardMaterial({
           color: 0xffd700,
           emissive: 0xaa8800,
-          emissiveIntensity: 0.6,
+          emissiveIntensity: 0.2,
           metalness: 0.9,
           roughness: 0.1
         });
@@ -80,7 +80,7 @@ export class Collectible {
       const bottleMat = new THREE.MeshStandardMaterial({
         color: pColor,
         emissive: pColor,
-        emissiveIntensity: 0.4,
+        emissiveIntensity: 0.16,
         roughness: 0.2,
         transparent: true,
         opacity: 0.85
@@ -223,6 +223,26 @@ export class CollectibleSystem {
   public coinTemplate: THREE.Object3D | null = null;
 
   public setCoinTemplate(template: THREE.Object3D): void {
+    // Give the original coin a restrained warm read in dark areas. Preserve
+    // authored color/normal/roughness maps and avoid one dynamic light per coin.
+    template.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const tuneMaterial = (source: THREE.Material): THREE.Material => {
+        if (!(source instanceof THREE.MeshStandardMaterial) || source.emissiveMap) return source;
+        const material = source.clone();
+        if (material.emissive.getHex() === 0) {
+          material.emissive.setHex(0x382407);
+          material.emissiveIntensity = 0.2;
+        } else {
+          material.emissiveIntensity = Math.min(material.emissiveIntensity, 0.22);
+        }
+        return material;
+      };
+      mesh.material = Array.isArray(mesh.material)
+        ? mesh.material.map(tuneMaterial)
+        : tuneMaterial(mesh.material);
+    });
     this.coinTemplate = template;
     // Retroactively update all already spawned coins
     for (const item of this.collectibles) {

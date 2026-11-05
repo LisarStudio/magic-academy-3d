@@ -5110,7 +5110,23 @@ export class LevelToyStory {
       model.name = `Teara_wukong_vida_model_${config.id}`;
       model.traverse((part) => {
         const mesh = part as THREE.Mesh;
-        if (mesh.isMesh) { mesh.castShadow = false; mesh.receiveShadow = false; }
+        if (!mesh.isMesh) return;
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        const accentMaterial = (source: THREE.Material): THREE.Material => {
+          if (!(source instanceof THREE.MeshStandardMaterial) || source.emissiveMap) return source;
+          const material = source.clone();
+          if (material.emissive.getHex() === 0) {
+            material.emissive.setHex(0x281a06);
+            material.emissiveIntensity = 0.18;
+          } else {
+            material.emissiveIntensity = Math.min(material.emissiveIntensity, 0.22);
+          }
+          return material;
+        };
+        mesh.material = Array.isArray(mesh.material)
+          ? mesh.material.map(accentMaterial)
+          : accentMaterial(mesh.material);
       });
       model.updateMatrixWorld(true);
       const originalBounds = new THREE.Box3().setFromObject(model);
