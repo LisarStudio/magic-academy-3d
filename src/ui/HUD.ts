@@ -143,6 +143,16 @@ export class HUD {
     this.letterChallengeNextEl = document.getElementById('letter-challenge-next')!;
     this.letterChallengeSlotsEl = document.getElementById('letter-challenge-slots')!;
     this.createLetterChallengeSlots();
+    if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('hudDebug')) {
+      this.hudTopLeftEl.dataset.hudComponent = 'HUD.ts#hud-top-left';
+      this.letterChallengePanelEl.dataset.hudComponent = 'HUD.ts#letter-challenge-hud';
+      console.info('[HUD debug]', {
+        component: 'src/ui/HUD.ts',
+        player: this.hudTopLeftEl.id,
+        challenge: this.letterChallengePanelEl.id,
+        stylesheet: 'src/style.css',
+      });
+    }
 
     this.initAudioSliders();
     this.initPauseButton();

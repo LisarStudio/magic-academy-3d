@@ -6042,7 +6042,10 @@ export class LevelToyStory {
     const panel = document.createElement('div');
     panel.setAttribute('aria-label', 'Depuración del ciclo celeste');
     Object.assign(panel.style, {
-      position: 'fixed', right: '10px', top: '92px', zIndex: '1500',
+      // Keep developer-only sky controls below the compact Silvio/Loki tracker.
+      // At 92 px they overlaid its timer and letters, making the mission HUD
+      // look clipped or like an older panel was still mounted.
+      position: 'fixed', right: '10px', top: '168px', zIndex: '1500',
       maxWidth: 'min(360px, calc(100vw - 20px))', padding: '8px 10px',
       border: '1px solid #d8ad53', borderRadius: '8px',
       background: 'rgba(10, 15, 31, .88)', color: '#ffe4a0',
