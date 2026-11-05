@@ -448,7 +448,7 @@ export class TwinCatsChallenge {
       new THREE.MeshBasicMaterial({ color: 0xffd56a, transparent: true, opacity: 0.24, depthWrite: false, toneMapped: false })
     );
     halo.name = 'Maneki_Neko_Halo_Dorado_Discreto';
-    halo.rotation.x = Math.PI / 2;
+    halo.rotation.x = -Math.PI / 2;
     halo.position.y = 0.018;
     effects.add(halo);
 
