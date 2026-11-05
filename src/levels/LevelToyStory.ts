@@ -23,6 +23,7 @@ import { MovingPlatform } from '../world/MovingPlatform';
 import { KeyPickupSequence, type KeyData } from '../player/KeyPickupSequence';
 import { RunicPortal, PortalManager } from '../world/RunicPortal';
 import { DayNightCycle } from '../world/DayNightCycle';
+import { WorldWindController } from '../world/WorldWindController';
 import { applyGoldenTempleLut } from '../world/GoldenTempleLut';
 import { SkyPanoramaSystem, skyBlendForHour } from '../world/SkyPanoramaSystem';
 import { LampMothSystem } from '../world/LampMothSystem';
@@ -30,6 +31,11 @@ import { ConstellationSystem } from '../world/ConstellationSystem';
 import { VolcanicDragonRun } from './VolcanicDragonRun';
 import { PowerOrbSystem, type StaffUpgradeInfo } from '../collectibles/PowerOrbSystem';
 import { TreeSnakeEnemy } from '../enemies/TreeSnakeEnemy';
+import { getKeyAsset, loadKeyModel, preloadKeyModel } from '../collectibles/KeyAssetCatalog';
+import { TwinCatsChallenge } from './TwinCatsChallenge';
+
+const keyHaloGeometry = new THREE.TorusGeometry(0.27, 0.012, 6, 24);
+const keySparkGeometry = new THREE.OctahedronGeometry(0.026, 0);
 
 export class LevelToyStory {
   private sceneManager: SceneManager;
@@ -69,6 +75,8 @@ export class LevelToyStory {
   private staffChest!: TreasureChest;
   public exitDoor!: Door;
   private gekkoNPC!: GekkoNPC;
+  private twinCatsChallenge!: TwinCatsChallenge;
+  public letterChallengeCompleted = false;
   private floatingCoinMesh!: THREE.Group;
   private dragonSwitchMesh!: THREE.Group;
   private dragonLeverStick!: THREE.Mesh;
@@ -79,6 +87,7 @@ export class LevelToyStory {
   private portalAsset: THREE.Group | null = null;
   private curiosityCryptTrail!: THREE.Group;
   private grassUniforms: any = null;
+  private readonly worldWind = new WorldWindController();
   private grassSectors: THREE.InstancedMesh[] = [];
   private terrainGroundMaterial: THREE.MeshStandardMaterial | null = null;
   /** World-space center lines and safe widths for every authored stone route. */
@@ -116,7 +125,7 @@ export class LevelToyStory {
   private curiosityChest!: TreasureChest;
   private lifePickupSource: THREE.Object3D | null = null;
   private lifePickups: Array<{
-    id: string; root: THREE.Group; item: THREE.Object3D; ring: THREE.Mesh;
+    id: string; root: THREE.Group; item: THREE.Object3D;
     groundY: number; phase: number; collected: boolean; fade: number;
   }> = [];
   private collectedLifePickupIds = new Set<string>();
@@ -131,6 +140,7 @@ export class LevelToyStory {
   // approach to the temple or its stair landing.
   private readonly curiosityCryptSurface = new THREE.Vector3(-75, 0, -110);
   private readonly npcGazePoint = new THREE.Vector3();
+  private readonly gekkoLookTarget = new THREE.Vector3();
   private readonly curiosityCryptRoomEntry = new THREE.Vector3(-9.8, -5.82, -40);
   private isInsideCuriosityCrypt = false;
   private curiosityCryptTransitioning = false;
@@ -206,11 +216,11 @@ export class LevelToyStory {
 
   // Generic Key Registry with Color Data
   public keyDefinitions: Record<string, KeyData> = {
-    key1_gekko: { id: 'key1_gekko', name: 'Llave de la Riqueza (Gekko)', color: 0xff6600, emissiveColor: 0xff8800, obtained: false },
-    key2_boss: { id: 'key2_boss', name: 'Llave de la Valentía (Jefe Cangrejo)', color: 0xff2200, emissiveColor: 0xff4400, obtained: false },
-    key3_platform: { id: 'key3_platform', name: 'Llave de Plataformas (Tejado)', color: 0x00e5ff, emissiveColor: 0x00bfff, obtained: false },
-    key4_curiosity: { id: 'key4_curiosity', name: 'Llave de la Curiosidad', color: 0xffdc62, emissiveColor: 0xffb51b, obtained: false },
-    key6_gargoyles: { id: 'key6_gargoyles', name: 'Llave del Secreto (Gargolas)', color: 0xa855f7, emissiveColor: 0x9333ea, obtained: false },
+    key1_gekko: { id: 'key1_gekko', name: 'Llave de la Riqueza (Gekko)', color: 0xffc94e, emissiveColor: 0xffb51b, obtained: false, modelUrl: getKeyAsset('key1_gekko')?.modelUrl },
+    key2_boss: { id: 'key2_boss', name: 'Llave de la Valentía (Jefe Cangrejo)', color: 0x62dfff, emissiveColor: 0x248ccc, obtained: false, modelUrl: getKeyAsset('key2_boss')?.modelUrl },
+    key3_platform: { id: 'key3_platform', name: 'Llave de Plataformas (Tejado)', color: 0x79e6a3, emissiveColor: 0x20a967, obtained: false, modelUrl: getKeyAsset('key3_platform')?.modelUrl },
+    key4_curiosity: { id: 'key4_curiosity', name: 'Llave de la Curiosidad', color: 0xc49aff, emissiveColor: 0x7748bd, obtained: false, modelUrl: getKeyAsset('key4_curiosity')?.modelUrl },
+    key6_gargoyles: { id: 'key6_gargoyles', name: 'Llave del Secreto (Gargolas)', color: 0xffbd70, emissiveColor: 0xbf6b2b, obtained: false, modelUrl: getKeyAsset('key6_gargoyles')?.modelUrl },
     key5_pots: { id: 'key5_pots', name: 'Llave de Destrucción (Gemas)', color: 0xffd700, emissiveColor: 0xffaa00, obtained: false },
   };
 
@@ -590,7 +600,7 @@ export class LevelToyStory {
       this.sceneManager.dirLight,
       this.sceneManager.ambientLight,
       this.cloudsUniforms,
-      { cycleDuration: 48 * 60, initialHour: 21, renderer: this.sceneManager.renderer, moonLight }
+      { realSecondsPerGameHour: 180, initialHour: 21, renderer: this.sceneManager.renderer, moonLight }
     );
     this.skyPanorama = new SkyPanoramaSystem(skyAnchor);
     // The procedural sky is already valid on frame one. Do not hold the
@@ -1802,6 +1812,8 @@ export class LevelToyStory {
     this.grassUniforms = {
       uTime: { value: 0 },
       uPlayerPos: { value: new THREE.Vector3(999, 999, 999) },
+      uWindDirection: { value: new THREE.Vector2(1, 0) },
+      uWindStrength: { value: 0.12 },
     };
     sourceRoot.updateMatrixWorld(true);
     lodRoot.updateMatrixWorld(true);
@@ -1874,7 +1886,9 @@ export class LevelToyStory {
           previousCompile(shader, renderer);
           shader.uniforms.uTime = this.grassUniforms.uTime;
           shader.uniforms.uPlayerPos = this.grassUniforms.uPlayerPos;
-          shader.vertexShader = `uniform float uTime;\nuniform vec3 uPlayerPos;\n${shader.vertexShader}`;
+          shader.uniforms.uWindDirection = this.grassUniforms.uWindDirection;
+          shader.uniforms.uWindStrength = this.grassUniforms.uWindStrength;
+          shader.vertexShader = `uniform float uTime;\nuniform vec3 uPlayerPos;\nuniform vec2 uWindDirection;\nuniform float uWindStrength;\n${shader.vertexShader}`;
           shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `
             #include <begin_vertex>
             #ifdef USE_INSTANCING
@@ -1883,9 +1897,18 @@ export class LevelToyStory {
               vec3 grassWorld = vec3(0.0);
             #endif
             float grassTip = clamp(position.y / ${height.toFixed(4)}, 0.0, 1.0);
-            float grassWave = sin(uTime * 1.15 + grassWorld.x * 0.12 + grassWorld.z * 0.09) * 0.075
+            float grassWave = sin(uTime * 1.15 + grassWorld.x * 0.12 + grassWorld.z * 0.09) * (0.035 + uWindStrength * 0.075)
               + sin(uTime * 0.63 - grassWorld.x * 0.07 + grassWorld.z * 0.11) * 0.035;
             transformed.x += grassWave * grassTip * grassTip;
+            vec2 windDir = normalize(uWindDirection);
+            vec2 localWindDir = windDir;
+            #ifdef USE_INSTANCING
+              vec3 instanceRight = instanceMatrix[0].xyz;
+              localWindDir = vec2(instanceRight.x * windDir.x + instanceRight.z * windDir.y,
+                                  -instanceRight.z * windDir.x + instanceRight.x * windDir.y);
+            #endif
+            float broadGust = sin(uTime * 0.42 + dot(grassWorld.xz, windDir) * 0.075);
+            transformed.xz += localWindDir * broadGust * uWindStrength * 0.055 * grassTip * grassTip;
             vec2 fromPlayer = grassWorld.xz - uPlayerPos.xz;
             float playerDistance = length(fromPlayer);
             if (playerDistance < 1.25 && playerDistance > 0.001) {
@@ -3604,8 +3627,10 @@ export class LevelToyStory {
     this.createTreeLeafPool();
   }
 
-  private updateTreeReactions(delta: number): void {
+  private updateTreeReactions(delta: number, weatherDelta = delta): void {
     const now = performance.now() * 0.001;
+    const wind = this.worldWind.update(weatherDelta, this.dayNightCycle?.hour ?? 21);
+    if (wind.gustStarted) this.spawnWindLeafBurst(wind.direction);
     for (let i = this.appleDropAnimations.length - 1; i >= 0; i--) {
       const drop = this.appleDropAnimations[i];
       drop.elapsed = Math.min(drop.duration, drop.elapsed + delta);
@@ -3665,6 +3690,50 @@ export class LevelToyStory {
     }
     if (this.treeSwayTimers.some((timer) => timer >= 0)) {
       this.treeInstanceBatches.forEach(({ mesh }) => { mesh.instanceMatrix.needsUpdate = true; });
+    }
+  }
+
+  private spawnWindLeafBurst(windDirection: THREE.Vector2): void {
+    if (!this.treeReactionTrees.length || !this.player?.mesh) return;
+    const playerPos = this.player.mesh.position;
+    const yaw = this.player.mesh.rotation.y;
+    const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+    let source: THREE.Vector3 | null = null;
+    let bestDistance = 22;
+    for (const tree of this.treeReactionTrees) {
+      const dx = tree.x - playerPos.x;
+      const dz = tree.z - playerPos.z;
+      const distance = Math.hypot(dx, dz);
+      if (distance >= bestDistance || distance < 2) continue;
+      const ahead = (forward.x * dx + forward.z * dz) / distance;
+      if (ahead < 0.18) continue;
+      bestDistance = distance;
+      source = tree;
+    }
+    // Emit only when a real, nearby canopy is ahead of the player. Do not
+    // invent particles in open sky or across buildings from arbitrary points.
+    if (!source) return;
+
+    const count = isLowPowerDevice() ? 4 : 7;
+    for (let i = 0; i < count; i++) {
+      const leaf = this.treeLeafPool[this.treeLeafCursor++ % this.treeLeafPool.length];
+      leaf.mesh.visible = true;
+      leaf.mesh.position.set(
+        source.x + (Math.random() - 0.5) * 2.8,
+        source.y + 3.1 + Math.random() * 2.5,
+        source.z + (Math.random() - 0.5) * 2.8
+      );
+      leaf.mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+      leaf.mesh.scale.setScalar(0.55 + Math.random() * 0.42);
+      const alongWind = 1.2 + Math.random() * 1.35;
+      const crossFlow = 0.35 + Math.random() * 0.65;
+      leaf.velocity.set(
+        windDirection.x * alongWind + forward.x * crossFlow,
+        0.25 + Math.random() * 0.55,
+        windDirection.y * alongWind + forward.z * crossFlow
+      );
+      leaf.age = 0;
+      leaf.lifetime = 2.8 + Math.random() * 1.3;
     }
   }
 
@@ -4169,12 +4238,28 @@ export class LevelToyStory {
 
     // Gekko's physical collider (prevents Wukong from passing through Gekko)
     const gekkoCollider = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.8, 0.8, 2.5, 12),
+      new THREE.CylinderGeometry(GekkoNPC.COLLIDER_RADIUS, GekkoNPC.COLLIDER_RADIUS, GekkoNPC.COLLIDER_HEIGHT, 12),
       new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide })
     );
-    gekkoCollider.position.set(-2.8, gekkoY + 1.25, -10);
+    gekkoCollider.position.set(-2.8, gekkoY + GekkoNPC.COLLIDER_HEIGHT / 2, -10);
     this.sceneManager.scene.add(gekkoCollider);
     this.levelColliders.push(gekkoCollider);
+
+    const twinsPosition = new THREE.Vector3(-12, this.getTerrainHeight(-12, -23), -23);
+    this.twinCatsChallenge = new TwinCatsChallenge(
+      this.sceneManager.scene,
+      twinsPosition,
+      (x, z) => this.getTerrainHeight(x, z),
+      this.player,
+      this.inputManager,
+      (window as any).gameInstance?.hud,
+      this.audioManager,
+      (completed) => {
+        this.letterChallengeCompleted = completed;
+        if (completed) (window as any).gameInstance?.saveGame(false);
+      }
+    );
+    this.levelColliders.push(...this.twinCatsChallenge.colliders);
 
     // Setup floating coin model for dialog reference
     this.floatingCoinMesh = new THREE.Group();
@@ -4284,6 +4369,7 @@ export class LevelToyStory {
           this.isCinematicPlaying = true;
           this.bossEncounterActive = false;
           this.stateFlags.bossDefeated = true;
+          (window as any).gameInstance?.saveGame(false);
           void this.audioManager.stopBossMusic();
           const hud = (window as any).gameInstance?.hud;
           hud?.hideBossHealth();
@@ -4310,7 +4396,15 @@ export class LevelToyStory {
           // Run KeyPickupSequence for Crimson Boss Key (key2_boss)
           console.log('[BOSS] Reward key spawned — flying to player');
           const bossKeyData = this.keyDefinitions['key2_boss'];
-          const keySpawnPos = e.mesh.position.clone().add(new THREE.Vector3(0, 1.2, 0));
+          const playerPos = this.player.mesh.position.clone();
+          const facing = new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.mesh.quaternion).setY(0).normalize();
+          if (facing.lengthSq() < 0.001) facing.set(0, 0, 1);
+          const keySpawnPos = playerPos.clone().addScaledVector(facing, 0.5).add(new THREE.Vector3(0, 6.0, 0));
+          if (cinematicCamera) {
+            const camPos = playerPos.clone().add(new THREE.Vector3(0, 3.2, 6.8));
+            const lookAt = playerPos.clone().add(new THREE.Vector3(0, 1.6, 0));
+            cinematicCamera.moveCamera(camPos, camPos, lookAt, lookAt, 999.0);
+          }
 
           await KeyPickupSequence.runSequence(
             bossKeyData,
@@ -4328,7 +4422,8 @@ export class LevelToyStory {
               }
               this.enemies.forEach(other => other.isPaused = false);
               this.isCinematicPlaying = false;
-            }
+            },
+            'boss-celestial'
           );
         }
       };
@@ -4342,69 +4437,45 @@ export class LevelToyStory {
   }
 
   public spawn3DKey(id: string, pos: THREE.Vector3): void {
+    if (!getKeyAsset(id)) {
+      console.warn(`[KEY] No approved 3D asset is assigned to '${id}'; no substitute model will be spawned.`);
+      return;
+    }
     const scene = this.sceneManager.scene;
     const keyGroup = new THREE.Group();
     keyGroup.position.copy(pos);
     keyGroup.name = id;
-
-    // Distinct theme color per quest key
-    let baseColor = 0xffd700;
-    let emissiveColor = 0xffaa00;
-
-    if (id === 'key1_gekko') {
-      baseColor = 0xff6600;     // Vivid Orange for Gekko 50 coins quest!
-      emissiveColor = 0xff8800;
-    } else if (id === 'key2_boss') {
-      baseColor = 0xff2200;     // Crimson Red for Boss Victory
-      emissiveColor = 0xff4400;
-    } else if (id === 'key3_platform') {
-      baseColor = 0x00ff88;     // Emerald Green for Castle Roof
-      emissiveColor = 0x00cc66;
-    } else if (id === 'key4_curiosity') {
-      baseColor = 0xffdc62;
-      emissiveColor = 0xffb51b;
-    } else if (id === 'key6_gargoyles') {
-      baseColor = 0xa855f7;     // Arcane Violet for Gargoyles
-      emissiveColor = 0x9333ea;
-    } else if (id === 'key5_pots') {
-      baseColor = 0x00e5ff;     // Cyan Blue for Gem Pots
-      emissiveColor = 0x00bfff;
-    }
-
-    const keyMat = new THREE.MeshStandardMaterial({
-      color: baseColor,
-      emissive: emissiveColor,
-      emissiveIntensity: 1.0,
-      metalness: 0.85,
-      roughness: 0.2,
-    });
-
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.08, 12, 24), keyMat);
-    ring.rotation.x = Math.PI / 2;
-    
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.65, 12), keyMat);
-    shaft.position.y = -0.35;
-
-    const tooth1 = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.06), keyMat);
-    tooth1.position.set(0.12, -0.55, 0);
-
-    const tooth2 = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.06), keyMat);
-    tooth2.position.set(0.10, -0.42, 0);
-
-    // Keep the key visibly luminous without adding a PointLight per key.
-    // Changing the scene light count while collecting recompiles shader
-    // variants on some WebGL drivers and caused multi-second pickup stalls.
-    const glow = new THREE.Mesh(
-      new THREE.SphereGeometry(0.075, 8, 6),
-      new THREE.MeshBasicMaterial({ color: emissiveColor, toneMapped: false })
-    );
-    glow.name = 'key_emissive_glow';
-    keyGroup.add(glow);
-
-    keyGroup.add(ring, shaft, tooth1, tooth2);
+    keyGroup.userData.assetReady = false;
     scene.add(keyGroup);
     this.keysMeshes.push(keyGroup);
-    console.log(`[LevelToyStory] ✅ Spawned 3D Key '${id}' at`, pos);
+    void loadKeyModel(id).then((model) => {
+      if (!keyGroup.parent) return;
+      keyGroup.add(model);
+      const asset = getKeyAsset(id)!;
+      const halo = new THREE.Mesh(keyHaloGeometry, new THREE.MeshBasicMaterial({
+        color: asset.magicColor, transparent: true, opacity: 0.48, depthWrite: false, toneMapped: false,
+      }));
+      halo.rotation.x = Math.PI / 2;
+      halo.position.y = 0.12;
+      keyGroup.add(halo);
+      const sparkles = new THREE.InstancedMesh(keySparkGeometry, new THREE.MeshBasicMaterial({
+        color: asset.magicColor, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false,
+      }), 8);
+      const dummy = new THREE.Object3D();
+      for (let i = 0; i < 8; i++) {
+        const angle = i * Math.PI / 4;
+        dummy.position.set(Math.cos(angle) * 0.35, 0.08 + (i % 3) * 0.22, Math.sin(angle) * 0.35);
+        dummy.scale.setScalar(i % 2 === 0 ? 1 : 0.7);
+        dummy.updateMatrix();
+        sparkles.setMatrixAt(i, dummy.matrix);
+      }
+      sparkles.instanceMatrix.needsUpdate = true;
+      keyGroup.add(sparkles);
+      keyGroup.userData.assetReady = true;
+      console.log(`[LevelToyStory] Spawned authored key '${id}' at`, pos);
+    }).catch((error) => {
+      console.error(`[KEY] Could not load authored model for '${id}'.`, error);
+    });
   }
 
   // Spawns the sparkles and unlocks the key
@@ -4425,7 +4496,8 @@ export class LevelToyStory {
     // Increment keys count
     this.totalKeysCount++;
     const hud = (window as any).gameInstance?.hud;
-    if (hud) hud.setKeyCount(this.totalKeysCount);
+    if (hud) hud.setCollectedKeys(this.getCollectedKeyIds());
+    (window as any).gameInstance?.saveGame(false);
 
     let keyName = '';
     if (keyId === 'key1_gekko') keyName = 'Llave de la Riqueza (Gekko 50 Monedas)';
@@ -4442,6 +4514,12 @@ export class LevelToyStory {
       this.exitDoor.open();
       this.subtitleSystem.show('LISAR', '¡PORTÓN ABIERTO! Has reunido las 4 llaves místicas. El portal de salida en el castillo está desbloqueado.');
     }
+  }
+
+  public getCollectedKeyIds(): string[] {
+    return Object.entries(this.collectedKeys)
+      .filter(([id, collected]) => collected && !!getKeyAsset(id))
+      .map(([id]) => id);
   }
 
   public getStaffUpgradeInfo(): StaffUpgradeInfo {
@@ -4482,9 +4560,11 @@ export class LevelToyStory {
 
     // Gekko First Encounter Trigger Zone (Tutorial Level Proven Architecture)
     const tGekko = new TriggerZone('trig_gekko', new THREE.Vector3(-6.0, -2.0, -16.0), new THREE.Vector3(4.0, 6.0, -6.0), () => {
-      if (this.gekkoMissionState === 'NOT_STARTED') {
+      if (this.gekkoMissionState === 'NOT_STARTED' && !this.stateFlags.gekkoTalked) {
         this.gekkoMissionState = 'MISSION_ACTIVE';
+        void preloadKeyModel('key1_gekko').catch((error) => console.warn('[KEY] Wealth key preload failed.', error));
         this.stateFlags.gekkoTalked = true;
+        (window as any).gameInstance?.saveGame(false);
         console.log('[GEKKO] TriggerZone entered -> Starting First Cinematic');
         this.runGekkoCinematic();
       }
@@ -4895,11 +4975,6 @@ export class LevelToyStory {
     }
     scene.add(this.lifeSparkles);
 
-    const ringGeometry = new THREE.TorusGeometry(0.48, 0.018, 5, 28);
-    const ringMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffca56, transparent: true, opacity: 0.56,
-      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
-    });
     configs.forEach((config, index) => {
       const groundY = config.floor();
       const root = new THREE.Group();
@@ -4924,17 +4999,14 @@ export class LevelToyStory {
       item.add(model);
       const displayHeight = 0.58;
       item.scale.setScalar(displayHeight / Math.max(0.001, originalSize.y));
-      const ring = new THREE.Mesh(ringGeometry, ringMaterial);
-      ring.name = `life_pickup_halo_${config.id}`;
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = -0.63;
-      ring.castShadow = false;
-      ring.receiveShadow = false;
-      root.add(ring);
+      // The model was previously prepared and animated but never attached to
+      // the world root. Only its ground torus was visible, making the reward
+      // look like a bare ring with floating sparkles.
+      root.add(item);
       scene.add(root);
       const collected = this.collectedLifePickupIds.has(config.id);
       root.visible = !collected;
-      this.lifePickups.push({ id: config.id, root, item, ring, groundY, phase: index * 1.71, collected, fade: collected ? 1 : 0 });
+      this.lifePickups.push({ id: config.id, root, item, groundY, phase: index * 1.71, collected, fade: collected ? 1 : 0 });
     });
     this.refreshLifeSparkles();
   }
@@ -4963,7 +5035,6 @@ export class LevelToyStory {
       const yawDelta = THREE.MathUtils.euclideanModulo(targetYaw - pickup.item.rotation.y + Math.PI, Math.PI * 2) - Math.PI;
       pickup.item.rotation.y += THREE.MathUtils.clamp(yawDelta, -delta * 2.8, delta * 2.8);
       pickup.item.rotation.z = Math.sin(this.lifePickupElapsed * 1.45 + pickup.phase) * 0.035;
-      pickup.ring.rotation.z += delta * 0.22;
       const dx = playerPos.x - pickup.root.position.x;
       const dz = playerPos.z - pickup.root.position.z;
       if (dx * dx + dz * dz <= 1.45 * 1.45 && Math.abs(playerPos.y - pickup.groundY) < 2.35 && this.player.grantLife(1)) {
@@ -4975,10 +5046,18 @@ export class LevelToyStory {
       }
       const t = this.lifePickupElapsed * 1.35 + pickup.phase;
       for (let i = 0; i < sparkleCount; i++) {
-        const angle = t + (i / sparkleCount) * Math.PI * 2;
-        const radius = 0.48 + Math.sin(t * 0.8 + i) * 0.12;
-        const y = pickup.root.position.y + 0.08 + Math.sin(t * 1.4 + i * 1.7) * 0.38;
-        dummy.position.set(pickup.root.position.x + Math.cos(angle) * radius, y, pickup.root.position.z + Math.sin(angle) * radius);
+        // Scatter the glints through a loose 3D cloud so they don't read as a
+        // ground marker or a fixed orbit around the collectible.
+        const seed = i + pickupIndex * 17;
+        const offsetX = Math.sin(seed * 12.9898) * 0.42;
+        const offsetY = Math.cos(seed * 7.233) * 0.34;
+        const offsetZ = Math.sin(seed * 4.117 + 1.8) * 0.34;
+        const drift = t + seed * 1.73;
+        dummy.position.set(
+          pickup.root.position.x + offsetX + Math.sin(drift * 0.72) * 0.07,
+          pickup.root.position.y + offsetY + Math.sin(drift * 1.1) * 0.09,
+          pickup.root.position.z + offsetZ + Math.cos(drift * 0.83) * 0.07,
+        );
         const pulse = 0.5 + 0.5 * Math.sin(t * 2 + i * 2.1);
         dummy.scale.setScalar(0.45 + pulse * 0.9);
         dummy.updateMatrix();
@@ -5023,15 +5102,27 @@ export class LevelToyStory {
 
   public getCollectedLifePickupIds(): string[] { return [...this.collectedLifePickupIds]; }
 
-  public update(delta: number, playerPos: THREE.Vector3): void {
+  public restoreLetterChallengeCompleted(completed: boolean): void {
+    this.letterChallengeCompleted = completed;
+    this.twinCatsChallenge?.restoreCompleted(completed);
+  }
+
+  public cancelLetterChallenge(): void { this.twinCatsChallenge?.cancel(); }
+
+  public update(delta: number, playerPos: THREE.Vector3, realElapsed = delta): void {
     this.updateLifePickups(delta, playerPos);
     this.syncStructureColliders(playerPos);
     this.loadOptionalArchitectureNearPlayer(playerPos);
     if (this.skyAnchor) this.skyAnchor.position.copy(playerPos);
     const interactionHud = (window as any).gameInstance?.hud;
     interactionHud?.beginInteractionFrame();
+    this.twinCatsChallenge?.update(
+      realElapsed,
+      playerPos,
+      (window as any).gameInstance?.menuState === 'Playing' && this.player.health > 0
+    );
     this.updateCanopyTrial(delta, playerPos);
-    this.updateTreeReactions(delta);
+    this.updateTreeReactions(delta, realElapsed);
     for (let i = this.treeSnakes.length - 1; i >= 0; i--) {
       const snake = this.treeSnakes[i];
       snake.update(delta, playerPos, (x, z) => this.getTerrainHeight(x, z), (amount) => this.player.takeDamage(amount));
@@ -5039,7 +5130,7 @@ export class LevelToyStory {
     }
     // Tick Dynamic Day/Night Cycle
     if (this.dayNightCycle) {
-      this.dayNightCycle.update(delta, playerPos);
+      this.dayNightCycle.update(realElapsed, playerPos);
     }
     const skyPhase = this.dayNightCycle?.phase ?? 0.05;
     const nightAmount = this.dayNightCycle?.nightAmount ?? 1;
@@ -5072,6 +5163,9 @@ export class LevelToyStory {
       if (this.grassUniforms.uPlayerPos) {
         this.grassUniforms.uPlayerPos.value.copy(playerPos);
       }
+      const wind = this.worldWind.state;
+      this.grassUniforms.uWindDirection?.value.copy(wind.direction);
+      if (this.grassUniforms.uWindStrength) this.grassUniforms.uWindStrength.value = wind.intensity;
     }
     if (this.bridgeWaterUniforms) this.bridgeWaterUniforms.uTime.value += Math.min(delta, 0.05);
     const lavaTime = performance.now() / 1000;
@@ -5179,7 +5273,7 @@ export class LevelToyStory {
       : Infinity;
     const gekkoNeedsAction = gekkoDistanceForAction < 5.5 && !this.isCinematicPlaying &&
       !this.player.isControlsLocked && !this.player.isMovementLocked &&
-      ((this.gekkoMissionState === 'MISSION_ACTIVE' && this.collectibleSystem.coinCount < 50) || this.gekkoMissionState === 'REWARD_GIVEN');
+      this.gekkoMissionState === 'NOT_STARTED' || this.gekkoMissionState === 'MISSION_ACTIVE' || this.gekkoMissionState === 'REWARD_GIVEN';
     const interactWithGekko = gekkoNeedsAction && this.inputManager.consumeInteractPress();
 
     const activeGame = (window as any).gameInstance;
@@ -5200,9 +5294,14 @@ export class LevelToyStory {
     
     // Update NPC
     if (this.gekkoNPC) {
-      this.gekkoNPC.update(delta);
       const gekkoPosition = this.gekkoNPC.mesh.position;
-      const nearGekko = Math.hypot(playerPos.x - gekkoPosition.x, playerPos.z - gekkoPosition.z) < 7;
+      const nearGekko = Math.hypot(playerPos.x - gekkoPosition.x, playerPos.z - gekkoPosition.z) < GekkoNPC.HEAD_TRACKING_RADIUS;
+      const canTrackGekko = nearGekko && !this.isCinematicPlaying && !this.player.isControlsLocked;
+      if (canTrackGekko) {
+        this.gekkoLookTarget.copy(playerPos);
+        this.gekkoLookTarget.y += 1.35;
+      }
+      this.gekkoNPC.update(delta, canTrackGekko ? this.gekkoLookTarget : null);
       if (nearGekko && !this.isCinematicPlaying && !this.player.isControlsLocked) {
         this.npcGazePoint.copy(gekkoPosition);
         this.npcGazePoint.y += 1.5;
@@ -5221,6 +5320,7 @@ export class LevelToyStory {
     // Spin 3D floating keys in the world & check for collection with manual E key
     for (let idx = this.keysMeshes.length - 1; idx >= 0; idx--) {
       const kMesh = this.keysMeshes[idx];
+      if (!kMesh.userData.assetReady) continue;
       kMesh.rotation.y += delta * 2.0;
       kMesh.position.y += Math.sin(Date.now() * 0.003) * 0.001;
 
@@ -5242,13 +5342,11 @@ export class LevelToyStory {
 
         if (this.inputManager.consumeInteractPress()) {
           hud?.hideInteractionPrompt();
-          // Remove key mesh from scene and array immediately
           this.sceneManager.scene.remove(kMesh);
           this.keysMeshes.splice(idx, 1);
-
-          KeyPickupSequence.runSequence(keyData, keyPos, this.player, this.sceneManager.scene, () => {
-            this.awardKey(keyId as any, keyPos);
-          });
+          // Exploration keys keep their original E interaction and do not
+          // take over movement or camera for a reward cinematic.
+          this.awardKey(keyId as any, keyPos);
         }
       }
     }
@@ -5292,17 +5390,21 @@ export class LevelToyStory {
     const distToGekko = Math.hypot(playerPos.x - gekkoPos.x, playerPos.z - gekkoPos.z);
 
     if (distToGekko < 5.5 && !this.isCinematicPlaying && !this.player.isControlsLocked) {
-      if (this.gekkoMissionState === 'NOT_STARTED') {
+      if (this.gekkoMissionState === 'NOT_STARTED' && !this.stateFlags.gekkoTalked) {
         this.gekkoMissionState = 'MISSION_ACTIVE';
         this.stateFlags.gekkoTalked = true;
         console.log('[GEKKO] Auto-triggering First Cinematic on proximity (dist: ' + distToGekko.toFixed(2) + 'm)');
+        (window as any).gameInstance?.saveGame(false);
         this.runGekkoCinematic();
       } else if (this.gekkoMissionState === 'MISSION_ACTIVE') {
         const currentCoins = this.collectibleSystem.coinCount;
         if (currentCoins >= 50) {
-          this.gekkoMissionState = 'MISSION_COMPLETE';
-          console.log('[GEKKO] Auto-triggering Second Cinematic (Reward) on proximity (dist: ' + distToGekko.toFixed(2) + 'm)');
-          this.runGekkoSecondCinematic();
+          const hud = (window as any).gameInstance?.hud;
+          hud?.showInteractionPrompt('Hablar con Gekko para canjear [E]');
+          if (interactWithGekko) {
+            this.gekkoMissionState = 'MISSION_COMPLETE';
+            this.runGekkoSecondCinematic();
+          }
         } else {
           const hud = (window as any).gameInstance?.hud;
           hud?.showInteractionPrompt(`Hablar con Gekko (${currentCoins}/50 Monedas) [E]`);
@@ -5315,6 +5417,15 @@ export class LevelToyStory {
         hud?.showInteractionPrompt('Hablar con Gekko [E]');
         if (interactWithGekko) {
           this.subtitleSystem.show('Gekko', '¡Gracias por ayudarme con las 50 Lisar Coins! Usa esa llave para abrir el portón principal.');
+        }
+      }
+      if (this.gekkoMissionState === 'NOT_STARTED' && this.stateFlags.gekkoTalked) {
+        const hud = (window as any).gameInstance?.hud;
+        hud?.showInteractionPrompt('Hablar con Gekko [E]');
+        if (interactWithGekko) {
+          this.gekkoMissionState = 'MISSION_ACTIVE';
+          void preloadKeyModel('key1_gekko').catch((error) => console.warn('[KEY] Wealth key preload failed.', error));
+          this.runGekkoCinematic();
         }
       }
     }
@@ -5640,6 +5751,7 @@ export class LevelToyStory {
     if (!cinematicCamera || !cameraController || !hud) return;
 
     this.bossEncounterActive = true;
+    void preloadKeyModel('key2_boss').catch((error) => console.warn('[KEY] Boss reward preload failed.', error));
     this.isCinematicPlaying = true;
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;

@@ -55,6 +55,7 @@ export class Level01 {
 
   private crabsDefeated = 0;
   private gekkoNPC!: GekkoNPC;
+  private readonly gekkoLookTarget = new THREE.Vector3();
   private floatingCoinMesh!: THREE.Group;
 
   constructor(
@@ -337,8 +338,11 @@ export class Level01 {
     this.sceneManager.scene.add(this.gekkoNPC.mesh);
 
     // Add Gekko's collider so player doesn't walk through him
-    const gekkoCollider = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 2), new THREE.MeshBasicMaterial({visible: false}));
-    gekkoCollider.position.copy(this.gekkoNPC.mesh.position);
+    const gekkoCollider = new THREE.Mesh(
+      new THREE.CylinderGeometry(GekkoNPC.COLLIDER_RADIUS, GekkoNPC.COLLIDER_RADIUS, GekkoNPC.COLLIDER_HEIGHT, 12),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    gekkoCollider.position.set(-1.5, GekkoNPC.COLLIDER_HEIGHT / 2, -28.5);
     this.sceneManager.scene.add(gekkoCollider);
     this.levelColliders.push(gekkoCollider);
 
@@ -516,7 +520,12 @@ export class Level01 {
     
     // Update NPC
     if (this.gekkoNPC) {
-      this.gekkoNPC.update(delta);
+      const nearGekko = Math.hypot(playerPos.x - this.gekkoNPC.mesh.position.x, playerPos.z - this.gekkoNPC.mesh.position.z) < GekkoNPC.HEAD_TRACKING_RADIUS;
+      if (nearGekko) {
+        this.gekkoLookTarget.copy(playerPos);
+        this.gekkoLookTarget.y += 1.35;
+      }
+      this.gekkoNPC.update(delta, nearGekko ? this.gekkoLookTarget : null);
     }
     
     if (this.floatingCoinMesh && this.floatingCoinMesh.visible) {

@@ -935,6 +935,36 @@ export class AudioManager {
     });
   }
 
+  /** Short two-note shimmer for each letter; synth-only so the mission adds no audio download. */
+  public playMagicLetterPickup(): void {
+    if (this.sfxVolume * this.masterVolume <= 0.001) return;
+    try {
+      const ctx = this.initCtx();
+      const now = ctx.currentTime;
+      const masterGain = ctx.createGain();
+      masterGain.gain.setValueAtTime(0.0001, now);
+      masterGain.gain.exponentialRampToValueAtTime(Math.max(0.0001, 0.12 * this.sfxVolume * this.masterVolume), now + 0.025);
+      masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
+      masterGain.connect(ctx.destination);
+
+      [660, 990, 1320].forEach((frequency, index) => {
+        const oscillator = ctx.createOscillator();
+        const partialGain = ctx.createGain();
+        oscillator.type = index === 0 ? 'sine' : 'triangle';
+        oscillator.frequency.setValueAtTime(frequency, now + index * 0.025);
+        oscillator.frequency.exponentialRampToValueAtTime(frequency * 1.18, now + 0.24);
+        partialGain.gain.setValueAtTime(index === 0 ? 0.62 : 0.2, now);
+        oscillator.connect(partialGain);
+        partialGain.connect(masterGain);
+        oscillator.start(now + index * 0.025);
+        oscillator.stop(now + 0.4);
+      });
+      window.setTimeout(() => { try { masterGain.disconnect(); } catch { /* already disconnected */ } }, 500);
+    } catch (error) {
+      console.debug('[AudioManager] Letter shimmer was skipped.', error);
+    }
+  }
+
   private prepareFootstepSet(surface: 'grass' | 'walk'): Promise<AudioBuffer[]> {
     const existing = this.footstepBuffers.get(surface);
     if (existing) return Promise.resolve(existing);

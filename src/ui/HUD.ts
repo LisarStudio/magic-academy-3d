@@ -2,6 +2,7 @@ import type { SpellType } from '../spells/SpellProjectile';
 import { EquipmentViewer } from './EquipmentViewer';
 import { MobileTouchControls } from './MobileTouchControls';
 import { usesTouchControls } from '../core/ControlMode';
+import { KEY_ASSETS, type ProgressKeyId } from '../collectibles/KeyAssetCatalog';
 
 export class HUD {
   private hudTopLeftEl: HTMLElement;
@@ -25,7 +26,8 @@ export class HUD {
   private hpBarFillEl: HTMLElement;
   private mpBarFillEl: HTMLElement;
   private coinCounterEl: HTMLElement | null = null;
-  private keyCounterEl: HTMLElement | null = null;
+  private collectedKeysEl: HTMLElement | null = null;
+  private collectedKeyIds = new Set<string>();
   private gekkoQuestBadgeEl: HTMLElement | null = null;
   private damageFlashEl: HTMLElement;
   private screenFadeEl: HTMLElement;
@@ -44,6 +46,18 @@ export class HUD {
   private dialogueBubbleEl: HTMLElement;
   private dialogueSpeakerEl: HTMLElement;
   private dialogueTextEl: HTMLElement;
+  private dialogueOptionsEl: HTMLElement;
+  private dialogueChoiceKeyHandler: ((event: KeyboardEvent) => void) | null = null;
+  private dialogueChoiceCallback: ((choice: 'accept' | 'decline') => void) | null = null;
+  private dialogueChoices: Array<{ label: string; value: 'accept' | 'decline' }> = [];
+  private selectedDialogueChoice = 0;
+  private letterChallengePanelEl: HTMLElement;
+  private letterChallengeTimeEl: HTMLElement;
+  private letterChallengeProgressEl: HTMLElement;
+  private letterChallengeNextEl: HTMLElement;
+  private letterChallengeSlotsEl: HTMLElement;
+  private letterChallengeSlotElements: HTMLElement[] = [];
+  private missionNoticeTimer = 0;
 
   private slotSpell1El: HTMLElement;
   private slotSpell2El: HTMLElement;
@@ -93,7 +107,8 @@ export class HUD {
     this.fxVolTextEl = document.getElementById('fx-vol-text');
 
     this.coinCounterEl = document.getElementById('coin-count');
-    this.keyCounterEl = document.getElementById('key-count');
+    this.collectedKeysEl = document.getElementById('hud-collected-keys');
+    this.setCollectedKeys([], false);
     this.cardCounterEl = document.getElementById('card-count');
     this.gekkoQuestBadgeEl = document.getElementById('gekko-quest-complete');
 
@@ -114,6 +129,13 @@ export class HUD {
     this.dialogueBubbleEl = document.getElementById('dialogue-bubble')!;
     this.dialogueSpeakerEl = document.getElementById('dialogue-speaker')!;
     this.dialogueTextEl = document.getElementById('dialogue-text')!;
+    this.dialogueOptionsEl = document.getElementById('dialogue-options')!;
+    this.letterChallengePanelEl = document.getElementById('letter-challenge-hud')!;
+    this.letterChallengeTimeEl = document.getElementById('letter-challenge-time')!;
+    this.letterChallengeProgressEl = document.getElementById('letter-challenge-progress')!;
+    this.letterChallengeNextEl = document.getElementById('letter-challenge-next')!;
+    this.letterChallengeSlotsEl = document.getElementById('letter-challenge-slots')!;
+    this.createLetterChallengeSlots();
 
     this.initAudioSliders();
     this.initPauseButton();
@@ -242,6 +264,151 @@ export class HUD {
     this.spellHotbarEl.classList.remove('hidden');
   }
 
+  private createLetterChallengeSlots(): void {
+    const letters = ['W', 'U', 'K', 'O', 'N', 'G'];
+    this.letterChallengeSlotsEl.replaceChildren();
+    this.letterChallengeSlotElements = letters.map((letter) => {
+      const slot = document.createElement('div');
+      slot.className = 'letter-challenge-slot';
+      slot.setAttribute('role', 'listitem');
+      slot.setAttribute('aria-label', `Letra ${letter} pendiente`);
+      const icon = document.createElement('img');
+      icon.src = `${import.meta.env.BASE_URL}assets/letter-challenge/${letter}.png`;
+      icon.alt = `Letra ${letter}`;
+      icon.decoding = 'async';
+      icon.draggable = false;
+      slot.appendChild(icon);
+      this.letterChallengeSlotsEl.appendChild(slot);
+      return slot;
+    });
+  }
+
+  public showLetterChallenge(): void {
+    this.letterChallengePanelEl.classList.remove('hidden', 'is-urgent');
+    this.letterChallengePanelEl.setAttribute('aria-hidden', 'false');
+    this.letterChallengeTimeEl.textContent = '01:00';
+    this.letterChallengeProgressEl.textContent = 'Letras recuperadas: 0/6';
+    this.letterChallengeNextEl.textContent = 'Siguiente: W';
+    this.updateLetterChallenge(60, 0);
+    requestAnimationFrame(() => this.letterChallengePanelEl.classList.add('is-visible'));
+  }
+
+  public updateLetterChallenge(secondsRemaining: number, nextLetterIndex: number): void {
+    const seconds = Math.max(0, Math.ceil(secondsRemaining));
+    const minutesText = String(Math.floor(seconds / 60)).padStart(2, '0');
+    const secondsText = String(seconds % 60).padStart(2, '0');
+    this.letterChallengeTimeEl.textContent = `${minutesText}:${secondsText}`;
+    this.letterChallengePanelEl.classList.toggle('is-urgent', seconds <= 10);
+    const count = Math.max(0, Math.min(6, Math.floor(nextLetterIndex)));
+    this.letterChallengeProgressEl.textContent = `Letras recuperadas: ${count}/6`;
+    this.letterChallengeNextEl.textContent = count < 6 ? `Siguiente: ${['W', 'U', 'K', 'O', 'N', 'G'][count]}` : '¡Completado!';
+    this.letterChallengeSlotElements.forEach((slot, index) => {
+      const collected = index < count;
+      const next = index === count && count < 6;
+      slot.classList.toggle('is-collected', collected);
+      slot.classList.toggle('is-next', next);
+      slot.setAttribute('aria-label', `Letra ${['W', 'U', 'K', 'O', 'N', 'G'][index]} ${collected ? 'recuperada' : next ? 'siguiente' : 'pendiente'}`);
+    });
+  }
+
+  public hideLetterChallenge(): void {
+    this.letterChallengePanelEl.classList.remove('is-visible', 'is-urgent');
+    this.letterChallengePanelEl.classList.add('hidden');
+    this.letterChallengePanelEl.setAttribute('aria-hidden', 'true');
+  }
+
+  public showMissionNotice(title: string, message: string): void {
+    window.clearTimeout(this.missionNoticeTimer);
+    this.showTypewriterDialogue(title, message, () => {
+      this.missionNoticeTimer = window.setTimeout(() => this.hideDialogue(), 2600);
+    });
+  }
+
+  public isDialogueOpen(): boolean {
+    return !this.dialogueBubbleEl.classList.contains('hidden');
+  }
+
+  public showDialogueChoices(
+    speaker: string,
+    text: string,
+    choices: Array<{ label: string; value: 'accept' | 'decline' }>,
+    onChoose: (choice: 'accept' | 'decline') => void
+  ): void {
+    this.clearDialogueChoiceState();
+    if (this.typewriterInterval) window.clearInterval(this.typewriterInterval);
+    window.clearTimeout(this.missionNoticeTimer);
+    this.dialogueBubbleEl.classList.remove('hidden');
+    this.dialogueSpeakerEl.textContent = speaker;
+    this.dialogueTextEl.textContent = '';
+    this.dialogueChoices = choices;
+    this.dialogueChoiceCallback = onChoose;
+    this.selectedDialogueChoice = 0;
+    this.dialogueOptionsEl.replaceChildren();
+    this.dialogueOptionsEl.classList.remove('hidden');
+    choices.forEach((choice, index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'dialogue-choice-button';
+      button.textContent = choice.label;
+      button.setAttribute('aria-pressed', index === 0 ? 'true' : 'false');
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.chooseDialogueOption(index);
+      });
+      this.dialogueOptionsEl.appendChild(button);
+    });
+
+    let charIndex = 0;
+    this.typewriterInterval = window.setInterval(() => {
+      if (charIndex >= text.length) {
+        window.clearInterval(this.typewriterInterval);
+        this.typewriterInterval = null;
+        return;
+      }
+      this.dialogueTextEl.textContent += text.charAt(charIndex++);
+    }, 24);
+    this.dialogueChoiceKeyHandler = (event: KeyboardEvent) => {
+      if (event.code === 'ArrowLeft' || event.code === 'ArrowUp') {
+        event.preventDefault();
+        this.selectedDialogueChoice = (this.selectedDialogueChoice + choices.length - 1) % choices.length;
+        this.refreshDialogueChoiceFocus();
+      } else if (event.code === 'ArrowRight' || event.code === 'ArrowDown') {
+        event.preventDefault();
+        this.selectedDialogueChoice = (this.selectedDialogueChoice + 1) % choices.length;
+        this.refreshDialogueChoiceFocus();
+      } else if (event.code === 'Enter' || event.code === 'Space') {
+        event.preventDefault();
+        this.chooseDialogueOption();
+      }
+    };
+    window.addEventListener('keydown', this.dialogueChoiceKeyHandler);
+  }
+
+  private refreshDialogueChoiceFocus(): void {
+    const buttons = Array.from(this.dialogueOptionsEl.querySelectorAll<HTMLButtonElement>('button'));
+    buttons.forEach((button, index) => button.setAttribute('aria-pressed', index === this.selectedDialogueChoice ? 'true' : 'false'));
+    buttons[this.selectedDialogueChoice]?.focus({ preventScroll: true });
+  }
+
+  public chooseDialogueOption(index = this.selectedDialogueChoice): void {
+    const choice = this.dialogueChoices[index];
+    if (!choice || !this.dialogueChoiceCallback) return;
+    const callback = this.dialogueChoiceCallback;
+    this.clearDialogueChoiceState();
+    this.hideDialogue();
+    callback(choice.value);
+  }
+
+  private clearDialogueChoiceState(): void {
+    if (this.dialogueChoiceKeyHandler) window.removeEventListener('keydown', this.dialogueChoiceKeyHandler);
+    this.dialogueChoiceKeyHandler = null;
+    this.dialogueChoiceCallback = null;
+    this.dialogueChoices = [];
+    this.dialogueOptionsEl.classList.add('hidden');
+    this.dialogueOptionsEl.replaceChildren();
+  }
+
   /** Creates a one-use authorization for the currently active boss encounter. */
   public beginBossEncounter(): symbol {
     this.hideBossHealth();
@@ -360,7 +527,6 @@ export class HUD {
   private lastMp = -1;
   private lastMaxMp = -1;
   private lastCoins = -1;
-  private lastKeys = -1;
   private hpImpactTimer = 0;
 
   /**
@@ -442,13 +608,43 @@ export class HUD {
     }
   }
 
-  public setKeyCount(count: number): void {
-    if (count === this.lastKeys) return;
-    this.lastKeys = count;
+  public setCollectedKeys(ids: string[], animateNewlyAcquired = true): void {
+    if (!this.collectedKeysEl) return;
+    const uniqueIds = [...new Set(ids)].filter((id) => !!KEY_ASSETS[id as ProgressKeyId]);
+    this.collectedKeysEl.replaceChildren();
+    this.collectedKeysEl.setAttribute('aria-label', uniqueIds.length
+      ? `Llaves obtenidas: ${uniqueIds.map((id) => KEY_ASSETS[id as ProgressKeyId]!.name).join(', ')}`
+      : 'Todavía no has obtenido llaves');
 
-    if (this.keyCounterEl) {
-      this.keyCounterEl.textContent = `Llaves: ${count} / 6`;
-    }
+    const acquired = new Set(uniqueIds);
+    const ordered = Object.entries(KEY_ASSETS)
+      .filter((entry): entry is [ProgressKeyId, NonNullable<typeof entry[1]>] => !!entry[1])
+      .sort((a, b) => a[1].slotIndex - b[1].slotIndex);
+    ordered.forEach(([id, asset]) => {
+      const slot = document.createElement('span');
+      const unlocked = acquired.has(id);
+      slot.className = `imperial-key-socket ${unlocked ? 'is-unlocked' : 'is-locked'}`;
+      slot.dataset.keyId = id;
+      slot.title = asset.name;
+      if (unlocked) {
+        const icon = document.createElement('img');
+        icon.src = asset.iconUrl;
+        icon.alt = asset.name;
+        icon.loading = 'eager';
+        icon.decoding = 'async';
+        slot.appendChild(icon);
+        if (animateNewlyAcquired && !this.collectedKeyIds.has(id)) {
+          slot.classList.add('key-unlock-flash');
+          window.setTimeout(() => slot.classList.remove('key-unlock-flash'), 800);
+        }
+      } else {
+        slot.setAttribute('aria-label', `${asset.name}, bloqueada`);
+        slot.innerHTML = '<svg class="imperial-key-lock" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.25 10V7.2a4.75 4.75 0 0 1 9.5 0V10"/><rect x="5.5" y="10" width="13" height="10.5" rx="1.8"/><circle cx="12" cy="15" r="1.15"/><path d="M12 16v2"/></svg>';
+      }
+      this.collectedKeysEl!.appendChild(slot);
+    });
+    this.collectedKeyIds = acquired;
+    this.collectedKeysEl.classList.add('has-keys');
   }
 
   public setActiveSpellSlot(spell: SpellType): void {
@@ -581,6 +777,8 @@ export class HUD {
   // Typewriter Dialogue Effect (Supports Touch Tap Anywhere to Advance)
   private typewriterInterval: any;
   public showTypewriterDialogue(speaker: string, text: string, onComplete?: () => void): void {
+    this.clearDialogueChoiceState();
+    window.clearTimeout(this.missionNoticeTimer);
     this.dialogueBubbleEl.classList.remove('hidden');
     this.dialogueSpeakerEl.textContent = speaker;
     this.dialogueTextEl.textContent = '';
@@ -621,6 +819,9 @@ export class HUD {
   public hideDialogue(): void {
     this.dialogueBubbleEl.classList.add('hidden');
     if (this.typewriterInterval) clearInterval(this.typewriterInterval);
+    this.typewriterInterval = null;
+    this.clearDialogueChoiceState();
+    window.clearTimeout(this.missionNoticeTimer);
   }
 
   public fadeScreenOut(durationMs: number = 1000): Promise<void> {

@@ -18,9 +18,11 @@ import { EquipmentViewer } from '../ui/EquipmentViewer';
 import { MobileTouchControls } from '../ui/MobileTouchControls';
 import { MainMenu, type MenuState, type StartMode } from '../ui/MainMenu';
 import { isLowPowerDevice, renderPixelRatio } from './DevicePerformance';
+import { RuntimeDiagnostics } from './RuntimeDiagnostics';
 
 export class Game {
   private sceneManager: SceneManager;
+  private diagnostics: RuntimeDiagnostics;
   private inputManager: InputManager;
   private audioManager: AudioManager;
   private assetManager: AssetManager;
@@ -53,6 +55,8 @@ export class Game {
   private performanceSampleElapsed = 0;
   private performanceAdjustCooldown = 0;
   private fastFrameSeconds = 0;
+  private loopFrameScheduled = false;
+  private contextRestoreHandler: (() => void) | null = null;
   private gameOverActive = false;
   private gameOverElapsed = 0;
   private gameOverSpot: THREE.SpotLight | null = null;
@@ -60,6 +64,20 @@ export class Game {
 
   constructor(canvas: HTMLCanvasElement) {
     this.sceneManager = new SceneManager(canvas);
+    this.diagnostics = new RuntimeDiagnostics();
+    this.diagnostics.attachRenderer(canvas);
+    canvas.addEventListener('webglcontextlost', () => {
+      this.loopFrameScheduled = false;
+    });
+    this.contextRestoreHandler = () => {
+      this.lastFrameTime = performance.now();
+      this.scheduleLoopFrame();
+    };
+    canvas.addEventListener('webglcontextrestored', this.contextRestoreHandler);
+    document.addEventListener('visibilitychange', () => {
+      this.lastFrameTime = performance.now();
+      if (!document.hidden) this.scheduleLoopFrame();
+    });
     this.inputManager = new InputManager(canvas);
     this.audioManager = new AudioManager();
     this.assetManager = new AssetManager();
@@ -68,8 +86,12 @@ export class Game {
 
     this.mainMenu = new MainMenu({
       onStateChange: (state) => {
+        this.diagnostics.recordTransition(this.menuState, state);
         this.menuState = state;
-        if (state !== 'Playing') this.hud.hideBossHealth();
+        if (state !== 'Playing') {
+          this.hud.hideBossHealth();
+          this.level01?.cancelLetterChallenge();
+        }
       },
       onStartIntroMusic: () => this.audioManager.startIntroMusic(),
       onBeginTransition: () => {
@@ -120,7 +142,7 @@ export class Game {
     // Waiting for all gameplay clips, the level and shader compilation here
     // previously kept the blue backdrop onscreen during the whole preparation.
     this.lastFrameTime = performance.now();
-    requestAnimationFrame((t) => this.loop(t));
+    this.scheduleLoopFrame();
     const mobileMedia = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
     if (mobileMedia) {
       // iOS/Safari may ignore preload=auto until a tap. Waiting for loadeddata
@@ -752,6 +774,8 @@ export class Game {
   }
 
   private loop(currentTime: number): void {
+    this.loopFrameScheduled = false;
+    if (this.diagnostics.isContextLost) return;
     // Limit movement and collision updates after a slow mobile frame; a 100 ms
     // step moves Wukong almost a meter at sprint speed and looks like teleporting.
     const elapsed = Math.max(0, (currentTime - this.lastFrameTime) / 1000);
@@ -761,16 +785,19 @@ export class Game {
     // tens of seconds on a throttled device and outlive its timeline.
     const animationDelta = Math.min(0.5, elapsed);
     this.lastFrameTime = currentTime;
+    if (this.menuState === 'Playing' && !document.hidden) {
+      this.diagnostics.recordFrame(elapsed * 1000, this.sceneManager.renderer, this.menuState, this.isPaused, elapsed);
+    }
     this.updateAdaptiveResolution(elapsed);
     this.hud.mobileControls?.setGameplayEnabled(this.menuState === 'Playing' && !this.isPaused);
 
-    if (!this.isPaused) {
-      this.update(delta, animationDelta);
+    if (!this.isPaused && !document.hidden) {
+      this.update(delta, animationDelta, elapsed);
     }
     // HTML video owns the Loading, Intro, MenuIdle and StartingGame screens.
     // Redrawing an empty/covered WebGL scene at 60 Hz competes with video
     // decoding on phones; render continuously only after gameplay begins.
-    if (this.menuState === 'Playing') {
+    if (this.menuState === 'Playing' && !document.hidden) {
       this.scheduleGameplayWarmup();
       this.sceneManager.render();
     }
@@ -783,7 +810,13 @@ export class Game {
       this.lastFpsCalcTime = currentTime;
     }
 
-    requestAnimationFrame((t) => this.loop(t));
+    this.scheduleLoopFrame();
+  }
+
+  private scheduleLoopFrame(): void {
+    if (this.loopFrameScheduled || this.diagnostics.isContextLost) return;
+    this.loopFrameScheduled = true;
+    requestAnimationFrame((time) => this.loop(time));
   }
 
   /**
@@ -824,7 +857,7 @@ export class Game {
     this.sceneManager.renderer.setPixelRatio(renderPixelRatio(this.renderQuality * this.renderScale));
   }
 
-  private update(delta: number, animationDelta: number): void {
+  private update(delta: number, animationDelta: number, realElapsed = delta): void {
     if (this.menuState !== 'Playing') return;
     this.inputManager.beginFrame();
     // Update Game Components
@@ -849,7 +882,7 @@ export class Game {
     // render/mixer/camera loop alive so Continue remains animated and responsive.
     if (!this.gameOverActive) {
       this.spellSystem.update(delta, this.level01.levelColliders);
-      this.level01.update(delta, this.player.mesh.position);
+      this.level01.update(delta, this.player.mesh.position, Math.min(0.5, Math.max(0, realElapsed)));
     }
 
     // Update Debug Panel
@@ -875,7 +908,7 @@ export class Game {
 
   public saveGame(showNotification = true): void {
     const saveData = {
-      version: 5,
+      version: 6,
       levelId: 'magic-academy-3d',
       playerPos: { x: this.player.mesh.position.x, y: this.player.mesh.position.y, z: this.player.mesh.position.z },
       playerRotY: this.player.mesh.rotation.y,
@@ -895,6 +928,7 @@ export class Game {
       curiosityHatchOpen: this.level01.isLavaVaultOpen,
       curiosityChestOpen: this.level01.curiosityChestOpen,
       collectedLifePickupIds: this.level01.getCollectedLifePickupIds(),
+      letterChallengeCompleted: this.level01.letterChallengeCompleted,
       stateFlags: {
         staffFound: this.level01.stateFlags.staffFound,
         gekkoTalked: this.level01.stateFlags.gekkoTalked,
@@ -916,7 +950,7 @@ export class Game {
     }
     try {
       const data = JSON.parse(raw);
-      if (data.version !== undefined && ![1, 2, 3, 4, 5].includes(data.version)) throw new Error('Versión de partida no compatible.');
+      if (data.version !== undefined && ![1, 2, 3, 4, 5, 6].includes(data.version)) throw new Error('Versión de partida no compatible.');
       if (Number.isFinite(data.lives)) this.player.lives = THREE.MathUtils.clamp(Math.floor(data.lives), 0, PlayerController.MAX_LIVES);
       this.hud.setLives(this.player.lives);
       if (data.playerPos) {
@@ -955,11 +989,12 @@ export class Game {
         delete migratedKeys.key4_gargoyles;
         Object.assign(this.level01.collectedKeys, migratedKeys);
         this.level01.totalKeysCount = Number(data.totalKeysCount) || 0;
-        this.hud.setKeyCount(this.level01.totalKeysCount);
+        this.hud.setCollectedKeys(this.level01.getCollectedKeyIds(), false);
       }
       if (data.stateFlags && typeof data.stateFlags === 'object') {
         Object.assign(this.level01.stateFlags, data.stateFlags);
       }
+      this.level01.restoreLetterChallengeCompleted(data.letterChallengeCompleted === true);
       this.level01.restoreStaffChest();
       this.level01.restoreCuriosityPuzzle(
         data.curiosityHatchOpen === true || (data.version === 1 && (Number(data.totalKeysCount) || 0) >= 3),
@@ -971,6 +1006,11 @@ export class Game {
       this.level01.stateFlags.bossDefeated = data.stateFlags?.bossDefeated === true;
       this.level01.stateFlags.bossCinematicPlayed = this.level01.stateFlags.bossDefeated;
       this.level01.restoreBossDefeated();
+      // A saved boss victory can interrupt its reward cinematic. Resolve the
+      // pending, mission-defined reward idempotently when the save is restored.
+      if (this.level01.stateFlags.bossDefeated && !this.level01.collectedKeys.key2_boss) {
+        this.level01.awardKey('key2_boss');
+      }
       this.level01.stateFlags.introCompleted = true;
       this.subtitleSystem.show('Cargado', '¡Partida cargada exitosamente!');
       console.log('[SaveSystem] Game loaded:', data);

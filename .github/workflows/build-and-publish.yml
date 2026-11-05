@@ -1,0 +1,74 @@
+name: Build and publish Wukong
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wukong-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Production build and asset verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build production site
+        run: npm run build:public
+        env:
+          BUILD_ID: ${{ github.run_id }}.${{ github.run_attempt }}
+      - name: Verify output, version, hashed bundles, and critical assets
+        run: node scripts/verify-public-build.mjs
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+      - name: Save production artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wukong-production-site
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    name: Publish and verify GitHub Pages
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download validated production artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wukong-production-site
+          path: dist
+      - name: Publish to the existing gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./dist
+          force_orphan: false
+          enable_jekyll: false
+      - name: Verify the live site and expected source commit
+        run: node scripts/verify-pages-deploy.mjs
+        env:
+          GITHUB_SHA: ${{ github.sha }}

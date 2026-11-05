@@ -28,6 +28,7 @@ export class MainMenu {
   private readonly introVideo = document.getElementById('intro-video') as HTMLVideoElement;
   private readonly idleVideo = document.getElementById('idle-video') as HTMLVideoElement;
   private readonly startVideo = document.getElementById('start-video') as HTMLVideoElement;
+  private readonly introSkipButton = document.getElementById('intro-skip') as HTMLButtonElement;
   private readonly loadingPanel = document.getElementById('loading-panel')!;
   private readonly startIntroButton = document.getElementById('btn-start-intro') as HTMLButtonElement;
   private readonly mainMenu = document.getElementById('main-menu')!;
@@ -60,6 +61,8 @@ export class MainMenu {
   ];
   private introStartPending = false;
   private introFallbackStarted = false;
+  private introSkipPending = false;
+  private introExitPending = false;
 
   constructor(callbacks: MainMenuCallbacks) {
     this.callbacks = callbacks;
@@ -85,6 +88,7 @@ export class MainMenu {
     this.startIntroButton.addEventListener('click', () => void this.playIntro(true));
     this.refreshContinueButton();
     document.getElementById('project-version')!.textContent = `Versión ${__APP_VERSION__}`;
+    document.getElementById('project-version')!.title = `Commit ${__BUILD_COMMIT__}\nBuild ${__BUILD_ID__}\n${__BUILD_TIME_UTC__} UTC`;
   }
 
   private setState(state: MenuState): void {
@@ -297,6 +301,8 @@ export class MainMenu {
 
   private async startIntroVideo(): Promise<void> {
     this.introFallbackStarted = false;
+    this.introSkipPending = false;
+    this.introExitPending = false;
     this.startIntroButton.classList.add('hidden');
     this.mainMenu.classList.add('hidden');
     this.introVideo.currentTime = 0;
@@ -312,9 +318,16 @@ export class MainMenu {
     await this.waitForOpacityTransition(this.loadingPanel);
     this.loadingPanel.classList.add('hidden');
     this.loadingPanel.classList.remove('is-dismissing');
+    if (this.state === 'Intro' && !this.introExitPending && !this.introSkipPending && !this.introFallbackStarted) {
+      this.introSkipButton.classList.remove('hidden', 'is-dismissing');
+      requestAnimationFrame(() => {
+        if (this.state === 'Intro' && !this.introExitPending) this.introSkipButton.classList.add('is-visible');
+      });
+    }
   }
 
   private showIntroStartPrompt(): void {
+    this.hideIntroSkip();
     this.introVideo.pause();
     this.introVideo.currentTime = 0;
     this.introVideo.classList.add('is-visible');
@@ -334,6 +347,7 @@ export class MainMenu {
   private handleIntroMediaError(): void {
     if (this.state !== 'Intro' || this.introFallbackStarted) return;
     this.introFallbackStarted = true;
+    this.hideIntroSkip();
     console.error('[MainMenu] Intro media error:', this.describeVideoFailure(this.introVideo));
     this.introVideo.pause();
     this.showLoadingError('No se pudo cargar la intro. Revisa la conexión e inténtalo otra vez.', () => {
@@ -346,7 +360,12 @@ export class MainMenu {
   }
 
   private async enterMenuIdle(): Promise<void> {
-    if (this.state !== 'Intro') return;
+    if (this.state !== 'Intro' || this.introExitPending) return;
+    this.introExitPending = true;
+    this.hideIntroSkip();
+    this.introVideo.onended = null;
+    this.introVideo.onerror = null;
+    this.introVideo.pause();
     this.idleVideo.currentTime = 0;
     try {
       await this.idleVideo.play();
@@ -357,6 +376,7 @@ export class MainMenu {
       this.loadOfficialMenuLogo();
       this.mainMenu.classList.remove('hidden');
       this.setState('MenuIdle');
+      this.introExitPending = false;
       this.refreshContinueButton();
       void this.prepareStartVideo().catch((error: unknown) => {
         console.error('[MainMenu] Start-video preparation failed:', this.describeVideoFailure(this.startVideo, error));
@@ -369,8 +389,32 @@ export class MainMenu {
         }
       }, 800);
     } catch (error) {
+      this.introExitPending = false;
       console.error('[MainMenu] Menu-idle playback failed:', this.describeVideoFailure(this.idleVideo, error));
       this.showLoadingError('No se pudo reproducir el fondo animado del menú. Reintenta para volver a cargarlo.', () => void this.retryMenuIdleVideo());
+    }
+  }
+
+  private hideIntroSkip(): void {
+    this.introSkipButton.classList.remove('is-visible', 'is-dismissing');
+    this.introSkipButton.classList.add('hidden');
+  }
+
+  private async skipIntro(): Promise<void> {
+    if (this.state !== 'Intro' || this.introSkipPending || this.introExitPending) return;
+    this.introSkipPending = true;
+    this.introSkipButton.classList.remove('is-visible');
+    this.introSkipButton.classList.add('is-dismissing');
+    // Detach the natural-end/error callbacks before stopping the video so an
+    // already queued media event cannot start a second menu transition.
+    this.introVideo.onended = null;
+    this.introVideo.onerror = null;
+    this.introVideo.pause();
+    this.introVideo.currentTime = 0;
+    try {
+      await this.enterMenuIdle();
+    } finally {
+      this.introSkipPending = false;
     }
   }
 
@@ -418,6 +462,7 @@ export class MainMenu {
     this.introVideo.addEventListener('error', () => {
       this.handleIntroMediaError();
     });
+    this.introSkipButton.addEventListener('click', () => void this.skipIntro());
     document.getElementById('btn-retry-loading')!.addEventListener('click', () => this.loadingRetry());
     this.newGameButton.addEventListener('click', () => this.requestStart('new'));
     this.continueButton.addEventListener('click', () => this.requestStart('continue'));
@@ -467,6 +512,11 @@ export class MainMenu {
     });
 
     window.addEventListener('keydown', (event) => {
+      if (event.code === 'Enter' && this.state === 'Intro') {
+        event.preventDefault();
+        void this.skipIntro();
+        return;
+      }
       if (this.state !== 'MenuIdle') {
         if (event.code === 'Escape' && !this.dialog.classList.contains('hidden')) this.closeDialog();
         return;
@@ -712,6 +762,7 @@ export class MainMenu {
   private async finishTransition(): Promise<void> {
     if (!this.transitionStarted || this.state !== 'StartingGame') return;
     this.transitionStarted = false;
+    this.hideIntroSkip();
     try {
       this.showInGameLoading();
       await this.callbacks.onTransitionComplete(this.startMode);

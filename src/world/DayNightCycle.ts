@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 
 export interface DayNightConfig {
-  /** Seconds for a complete 24-hour game day. */
+  /** Real seconds per in-game hour. The resulting full day is 24x this value. */
+  realSecondsPerGameHour?: number;
+  /** Legacy full-cycle setting, retained for callers that still use it. */
   cycleDuration?: number;
   initialHour?: number;
   renderer?: THREE.WebGLRenderer;
@@ -48,7 +50,7 @@ export class DayNightCycle {
     this.ambientLight = ambientLight;
     this.renderer = config.renderer;
     this.moonLight = config.moonLight;
-    this.cycleDuration = config.cycleDuration ?? 48 * 60;
+    this.cycleDuration = (config.realSecondsPerGameHour ?? (config.cycleDuration ?? 72 * 60) / 24) * 24;
     this.initialHour = ((config.initialHour ?? 21) % 24 + 24) % 24;
     this.hour = this.initialHour;
 
@@ -84,7 +86,7 @@ export class DayNightCycle {
     if (!this.paused && Number.isFinite(delta)) {
       // Avoid large jumps after a suspended tab; gameplay normally supplies a
       // capped delta, and this is an additional guard for the clock.
-      this.time = (this.time + Math.min(Math.max(delta, 0), 0.1) * this.timeScale) % this.cycleDuration;
+      this.time = (this.time + Math.min(Math.max(delta, 0), 0.5) * this.timeScale) % this.cycleDuration;
     }
     this.hour = (this.initialHour + this.time / this.cycleDuration * 24) % 24;
     this.applyState(cameraPosition);
