@@ -5768,10 +5768,12 @@ export class LevelToyStory {
       const wallThickness = 0.38;
       const wallHeight = Math.max(5, houseSize.y);
       const wallBottom = houseGroundY;
-      // The authored front steps sit about one metre off the normalized
-      // bounds center. Match the gap to those steps and leave room for Wukong's
-      // capsule, rather than sealing it with an undersized door proxy.
-      const entranceCenterX = this.highHouseCenter.x + 1.0;
+      // The GLB's front doorway is strongly offset from its bounding-box
+      // center: its opening is around local X=0.5 while the model bounds
+      // center is around local X=-6.2. Align the proxy opening to that actual
+      // doorway (world X ~= center + 6.7); centering it on the house sealed
+      // the entrance with the front-wall collision box.
+      const entranceCenterX = this.highHouseCenter.x + 6.7;
       const doorWidth = Math.min(5.2, houseSize.x * 0.40);
       const doorHeight = Math.min(wallHeight, this.abandonedHouseDeckHeight + 3.0);
       const collisionRoot = new THREE.Group();
@@ -5814,7 +5816,7 @@ export class LevelToyStory {
       // modest support aligned with that authored deck instead of colliding
       // against the 330k-triangle visual mesh.
       this.optionalHouseFloorCollider = new THREE.Mesh(
-        new THREE.BoxGeometry(14.5, 0.16, 18.5),
+        new THREE.BoxGeometry(16.5, 0.16, 18.5),
         new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide })
       );
       this.optionalHouseFloorCollider.name = 'abandoned_house_floor_support';
