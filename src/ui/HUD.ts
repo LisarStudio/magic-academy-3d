@@ -296,7 +296,7 @@ export class HUD {
     this.letterChallengePanelEl.classList.remove('hidden', 'is-urgent');
     this.letterChallengePanelEl.setAttribute('aria-hidden', 'false');
     this.letterChallengeTimeEl.textContent = '01:00';
-    this.letterChallengeProgressEl.textContent = 'Letras recuperadas: 0/6';
+    this.letterChallengeProgressEl.textContent = '0/6 recuperadas';
     this.letterChallengeNextEl.textContent = 'Siguiente: W';
     this.updateLetterChallenge(60, 0);
     requestAnimationFrame(() => this.letterChallengePanelEl.classList.add('is-visible'));
@@ -309,7 +309,7 @@ export class HUD {
     this.letterChallengeTimeEl.textContent = `${minutesText}:${secondsText}`;
     this.letterChallengePanelEl.classList.toggle('is-urgent', seconds <= 10);
     const count = Math.max(0, Math.min(6, Math.floor(collectedCount)));
-    this.letterChallengeProgressEl.textContent = `Letras recuperadas: ${count}/6`;
+    this.letterChallengeProgressEl.textContent = `${count}/6 recuperadas`;
     this.letterChallengeNextEl.textContent = count < 6 ? `Siguiente: ${['W', 'U', 'K', 'O', 'N', 'G'][count]}` : '¡Completado!';
     this.letterChallengeSlotElements.forEach((slot, index) => {
       const collected = index < count;
