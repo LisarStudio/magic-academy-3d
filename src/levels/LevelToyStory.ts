@@ -2132,6 +2132,12 @@ export class LevelToyStory {
         const seed = 81271;
         let randomSeed = seed;
         const rand = () => { randomSeed = (randomSeed * 1664525 + 1013904223) >>> 0; return randomSeed / 4294967296; };
+        const blossomPalette = [
+          new THREE.Color('#e9a2c6'), // cherry pink
+          new THREE.Color('#f2c1d8'), // warm white-pink
+          new THREE.Color('#c9a8df'), // soft lilac
+          new THREE.Color('#dc8eb9'), // deeper rose
+        ];
         for (const mesh of meshes) {
           const relative = rootInverse.clone().multiply(mesh.matrixWorld);
           const treeMaterials = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).map((sourceMaterial) => {
@@ -2139,13 +2145,21 @@ export class LevelToyStory {
             const looksLikeFoliage = /leaf|leaves|foliage|needle|hoja|foliage/i.test(material.name)
               || (material.color.r > 0.68 && material.color.g > 0.68 && material.color.b > 0.68);
             if (looksLikeFoliage) {
-              // Keep the supplied pine albedo/map, but remove its near-white,
-              // glossy render values that blew out the crown under moonlight.
-              material.color.multiply(new THREE.Color(0.48, 0.78, 0.48));
-              material.roughness = 0.82;
+              // Retain the source leaf geometry while tinting it as soft,
+              // stylized cherry blossom. Per-instance colors below vary whole
+              // crowns, keeping the existing instanced draw-call count.
+              material.color.set(0xffffff);
+              material.vertexColors = true;
+              material.roughness = 0.9;
               material.metalness = 0;
-              material.emissive.set(0x071208);
-              material.emissiveIntensity = 0.08;
+              material.emissive.set(0x000000);
+              material.emissiveIntensity = 0;
+            } else if (/bark|trunk|wood/i.test(material.name)) {
+              // Keep bark texture and relief; a mild warm bias keeps the
+              // trunk readable under the existing moon and lantern lighting.
+              material.color.multiply(new THREE.Color(1.06, 0.94, 0.84));
+              material.roughness = Math.max(material.roughness, 0.84);
+              material.metalness = 0;
             }
             return material;
           });
@@ -2165,7 +2179,7 @@ export class LevelToyStory {
             const baseMatrix = dummy.matrix.clone().multiply(relative);
             baseMatrices.push(baseMatrix.clone());
             instances.setMatrixAt(i, baseMatrix);
-            if (mesh.material instanceof THREE.Material && mesh.material.transparent) instances.setColorAt(i, new THREE.Color().setHSL(0.29 + rand() * 0.04, 0.42, 0.38 + rand() * 0.08));
+            instances.setColorAt(i, blossomPalette[Math.floor(rand() * blossomPalette.length)]!);
           });
           instances.instanceMatrix.needsUpdate = true;
           if (instances.instanceColor) instances.instanceColor.needsUpdate = true;
@@ -3676,33 +3690,32 @@ export class LevelToyStory {
     }
 
     for (let i = 0; i < this.treeSwayTimers.length; i++) {
-      const timer = this.treeSwayTimers[i];
-      if (timer < 0) continue;
+      let timer = this.treeSwayTimers[i];
       const root = this.treeReactionTrees[i];
-      if (timer <= 0) {
-        for (const batch of this.treeInstanceBatches) {
-          batch.mesh.setMatrixAt(i, batch.baseMatrices[i]);
-          batch.mesh.instanceMatrix.needsUpdate = true;
-        }
-        this.treeSwayTimers[i] = -1;
-        continue;
+      if (!root) continue;
+      if (timer >= 0) {
+        timer = timer - delta;
+        if (timer <= 0) timer = -1;
+        this.treeSwayTimers[i] = timer;
       }
-      this.treeSwayTimers[i] = Math.max(0, timer - delta);
-      const envelope = Math.sin(Math.PI * (1 - timer / 1.15));
-      const sway = Math.sin(now * 12 + i * 2.1) * 0.075 * envelope;
+      const hitEnvelope = timer >= 0 ? Math.sin(Math.PI * (1 - timer / 1.15)) : 0;
+      const windPhase = now * 0.72 + root.x * 0.047 + root.z * 0.031 + i * 1.37;
+      const ambientSway = Math.sin(windPhase) * wind.intensity * 0.035;
+      const sway = ambientSway + Math.sin(now * 12 + i * 2.1) * 0.075 * hitEnvelope;
       const pivot = this.treeSwayPivot.makeTranslation(root.x, root.y, root.z);
       const unpivot = this.treeSwayUnpivot.makeTranslation(-root.x, -root.y, -root.z);
       const rotation = this.treeSwayRotation.makeRotationFromEuler(
-        this.treeSwayEuler.set(sway, Math.sin(now * 7 + i) * 0.018 * envelope, -sway * 0.55)
+        this.treeSwayEuler.set(sway, Math.sin(windPhase * 0.65) * wind.intensity * 0.008 + Math.sin(now * 7 + i) * 0.018 * hitEnvelope, -sway * 0.55)
       );
       for (const batch of this.treeInstanceBatches) {
         const transformed = this.treeSwayTransform.copy(pivot).multiply(rotation).multiply(unpivot).multiply(batch.baseMatrices[i]);
         batch.mesh.setMatrixAt(i, transformed);
       }
     }
-    if (this.treeSwayTimers.some((timer) => timer >= 0)) {
-      this.treeInstanceBatches.forEach(({ mesh }) => { mesh.instanceMatrix.needsUpdate = true; });
-    }
+    // Only a small set of authored tree instances is transformed, with shared
+    // scratch matrices and no per-frame allocations. Their phase differs by
+    // position so a breeze does not move every crown in sync.
+    this.treeInstanceBatches.forEach(({ mesh }) => { mesh.instanceMatrix.needsUpdate = true; });
   }
 
   private spawnWindLeafBurst(windDirection: THREE.Vector2): void {
@@ -3756,7 +3769,7 @@ export class LevelToyStory {
     shape.moveTo(0, 0.13); shape.quadraticCurveTo(0.1, 0.05, 0.07, -0.07);
     shape.quadraticCurveTo(0, -0.16, -0.07, -0.07); shape.quadraticCurveTo(-0.1, 0.05, 0, 0.13);
     const geometry = new THREE.ShapeGeometry(shape, 4);
-    const colors = [0xb9d76a, 0x8faf43, 0xe0b958, 0xd58e4d];
+    const colors = [0xf4b6d3, 0xffdceb, 0xdcb9ef, 0xe994c1];
     for (let i = 0; i < 28; i++) {
       const material = new THREE.MeshBasicMaterial({ color: colors[i % colors.length], side: THREE.DoubleSide, transparent: true, opacity: 0.92, depthWrite: false });
       const mesh = new THREE.Mesh(geometry, material);
