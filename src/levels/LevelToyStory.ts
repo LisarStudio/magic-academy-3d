@@ -122,6 +122,9 @@ export class LevelToyStory {
   private optionalArchitectureLoading = false;
   private optionalHouseFloorCollider: THREE.Mesh | null = null;
   private readonly highHouseCenter = new THREE.Vector3(38, 0, -92);
+  // The original GLB's walkable first-storey deck sits at Y=6.0 relative to
+  // its base. Keep its gameplay floor aligned to that authored surface.
+  private readonly abandonedHouseDeckHeight = 6.04;
   private centralTempleFloorTopY: number | null = null;
   private centralTempleFloorWidth = 0;
   private centralTempleFloorDepth = 0;
@@ -189,6 +192,10 @@ export class LevelToyStory {
     const lavaDistance = Math.hypot(x - 66, z + 105);
     const basinBlend = 1 - THREE.MathUtils.smoothstep(lavaDistance, 15, 36);
     return THREE.MathUtils.lerp(naturalHeight, -13.2, basinBlend);
+  }
+
+  private getAbandonedHouseFloorTopY(): number {
+    return this.getTerrainHeight(this.highHouseCenter.x, this.highHouseCenter.z) + this.abandonedHouseDeckHeight;
   }
 
   /** Keep the player ground resolver on the crypt floor during transitions. */
@@ -4203,10 +4210,13 @@ export class LevelToyStory {
 
     // Keep the existing 50-coin quest total; redistribute eight route coins
     // inside the new wooden house rather than creating extra quest currency.
+    // Their vertical position uses the authored first-storey deck height, not
+    // the varying hillside underneath the raised house.
+    const houseCoinY = this.getAbandonedHouseFloorTopY() + 0.15;
     const highHouseCoins = [
       [34, -88], [38, -88], [42, -88], [34, -92],
       [42, -92], [34, -96], [38, -96], [42, -96]
-    ].map(([x, z]) => new THREE.Vector3(x, this.getTerrainHeight(x, z) + 2.2, z));
+    ].map(([x, z]) => new THREE.Vector3(x, houseCoinY, z));
     rawCoins.splice(rawCoins.length - highHouseCoins.length, highHouseCoins.length, ...highHouseCoins);
 
     // ── AUTOMATED COIN POSITION VALIDATION & COLLISION CHECKER ──
@@ -4236,7 +4246,7 @@ export class LevelToyStory {
         checkedPos.y = templeFloorY + 0.6;
       } else if (Math.abs(checkedPos.x - this.highHouseCenter.x) < 7.5 &&
                  Math.abs(checkedPos.z - this.highHouseCenter.z) < 8.5) {
-        checkedPos.y = this.getTerrainHeight(checkedPos.x, checkedPos.z) + 2.2;
+        checkedPos.y = this.getAbandonedHouseFloorTopY() + 0.15;
       } else {
         checkedPos.y = this.getTerrainHeight(checkedPos.x, checkedPos.z) + 0.6;
       }
@@ -4299,7 +4309,7 @@ export class LevelToyStory {
         const rows = coinMeshes.map((item) => {
           const position = item.mesh.position;
           const inHouseInterior = Math.abs(position.x - this.highHouseCenter.x) < 5 && Math.abs(position.z - this.highHouseCenter.z) < 5 &&
-            Math.abs(position.y - (this.getTerrainHeight(position.x, position.z) + 2.2)) < 0.35;
+            Math.abs(position.y - (this.getAbandonedHouseFloorTopY() + 0.15)) < 0.35;
           const inTempleInterior = this.centralTempleFloorTopY !== null && Math.abs(position.x) <= this.centralTempleFloorWidth * 0.5 &&
             position.z >= this.centralTempleFloorCenterZ - this.centralTempleFloorDepth * 0.5 &&
             position.z <= this.centralTempleFloorCenterZ + this.centralTempleFloorDepth * 0.5 &&
@@ -5751,14 +5761,19 @@ export class LevelToyStory {
       // physics mesh. Register a small set of boxes for collision instead of
       // raycasting that entire facade on each movement/ground/camera query.
       const houseGroundY = this.getTerrainHeight(this.highHouseCenter.x, this.highHouseCenter.z);
+      const houseFloorTopY = this.getAbandonedHouseFloorTopY();
       const houseSize = bounds.getSize(new THREE.Vector3());
       const halfWidth = houseSize.x * 0.5;
       const halfDepth = houseSize.z * 0.5;
       const wallThickness = 0.38;
       const wallHeight = Math.max(5, houseSize.y);
       const wallBottom = houseGroundY;
-      const doorWidth = Math.min(3.6, houseSize.x * 0.28);
-      const doorHeight = Math.min(4.2, wallHeight * 0.48);
+      // The authored front steps sit about one metre off the normalized
+      // bounds center. Match the gap to those steps and leave room for Wukong's
+      // capsule, rather than sealing it with an undersized door proxy.
+      const entranceCenterX = this.highHouseCenter.x + 1.0;
+      const doorWidth = Math.min(5.2, houseSize.x * 0.40);
+      const doorHeight = Math.min(wallHeight, this.abandonedHouseDeckHeight + 3.0);
       const collisionRoot = new THREE.Group();
       collisionRoot.name = 'abandoned_house_simplified_collision';
       const collisionMaterial = new THREE.MeshBasicMaterial({
@@ -5774,36 +5789,64 @@ export class LevelToyStory {
         collisionRoot.add(wall);
       };
       const wallCenterY = wallBottom + wallHeight * 0.5;
-      const sideWidth = (houseSize.x - doorWidth) * 0.5;
       addWall('abandoned_house_back_wall', houseSize.x, wallHeight, wallThickness,
         this.highHouseCenter.x, wallCenterY, this.highHouseCenter.z - halfDepth);
       addWall('abandoned_house_left_wall', wallThickness, wallHeight, houseSize.z,
         this.highHouseCenter.x - halfWidth, wallCenterY, this.highHouseCenter.z);
       addWall('abandoned_house_right_wall', wallThickness, wallHeight, houseSize.z,
         this.highHouseCenter.x + halfWidth, wallCenterY, this.highHouseCenter.z);
-      addWall('abandoned_house_front_left', sideWidth, wallHeight, wallThickness,
-        this.highHouseCenter.x - (doorWidth + sideWidth) * 0.5, wallCenterY, this.highHouseCenter.z + halfDepth);
-      addWall('abandoned_house_front_right', sideWidth, wallHeight, wallThickness,
-        this.highHouseCenter.x + (doorWidth + sideWidth) * 0.5, wallCenterY, this.highHouseCenter.z + halfDepth);
+      const leftWidth = entranceCenterX - doorWidth * 0.5 - (this.highHouseCenter.x - halfWidth);
+      const rightWidth = this.highHouseCenter.x + halfWidth - (entranceCenterX + doorWidth * 0.5);
+      addWall('abandoned_house_front_left', leftWidth, wallHeight, wallThickness,
+        this.highHouseCenter.x - halfWidth + leftWidth * 0.5, wallCenterY, this.highHouseCenter.z + halfDepth);
+      addWall('abandoned_house_front_right', rightWidth, wallHeight, wallThickness,
+        entranceCenterX + doorWidth * 0.5 + rightWidth * 0.5, wallCenterY, this.highHouseCenter.z + halfDepth);
       if (wallHeight > doorHeight) {
         addWall('abandoned_house_front_lintel', doorWidth, wallHeight - doorHeight, wallThickness,
-          this.highHouseCenter.x, wallBottom + doorHeight + (wallHeight - doorHeight) * 0.5,
+          entranceCenterX, wallBottom + doorHeight + (wallHeight - doorHeight) * 0.5,
           this.highHouseCenter.z + halfDepth);
       }
       this.sceneManager.scene.add(collisionRoot);
 
-      // Coins in the cabin are authored at terrain + 2.2m, confirming an
-      // elevated interior deck. Give that same footprint a walkable support
-      // so Wukong cannot drop through gaps in the decorative floor meshes.
+      // The GLB's first-storey walkable deck is at local Y=6. The previous
+      // support at terrain+2.12 was several metres below the visible floor,
+      // leaving Wukong and the coins underneath the cabin. Keep a cheap,
+      // modest support aligned with that authored deck instead of colliding
+      // against the 330k-triangle visual mesh.
       this.optionalHouseFloorCollider = new THREE.Mesh(
-        new THREE.BoxGeometry(8.4, 0.12, 8.4),
+        new THREE.BoxGeometry(14.5, 0.16, 18.5),
         new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide })
       );
       this.optionalHouseFloorCollider.name = 'abandoned_house_floor_support';
-      this.optionalHouseFloorCollider.position.set(this.highHouseCenter.x, houseGroundY + 2.12, this.highHouseCenter.z);
+      this.optionalHouseFloorCollider.position.set(this.highHouseCenter.x, houseFloorTopY - 0.08, this.highHouseCenter.z);
       this.optionalHouseFloorCollider.userData.walkableSupport = true;
       this.sceneManager.scene.add(this.optionalHouseFloorCollider);
-      this.levelColliders.push(collisionRoot, this.optionalHouseFloorCollider);
+
+      // Supply a low-cost walkable ramp through the entrance, aligned with
+      // the GLB's exterior steps. This lets the player reach the raised deck
+      // without a jump while preserving the house's wall boundaries.
+      const rampLength = 8.5;
+      const rampThickness = 0.16;
+      const rampInnerZ = this.highHouseCenter.z + halfDepth - 0.9;
+      const rampOuterZ = rampInnerZ + rampLength;
+      const rampApproachY = this.getTerrainHeight(entranceCenterX, rampOuterZ);
+      const rampRise = houseFloorTopY - rampApproachY - rampThickness * 0.5;
+      const rampAngle = Math.atan2(rampRise, rampLength);
+      const ramp = new THREE.Mesh(
+        new THREE.BoxGeometry(doorWidth + 0.6, rampThickness, rampLength),
+        new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide })
+      );
+      ramp.name = 'abandoned_house_entry_ramp_support';
+      ramp.position.set(
+        entranceCenterX,
+        (rampApproachY + houseFloorTopY) * 0.5 - 0.04,
+        rampInnerZ + rampLength * 0.5
+      );
+      ramp.rotation.x = rampAngle;
+      ramp.userData.walkableSupport = true;
+      this.sceneManager.scene.add(ramp);
+
+      this.levelColliders.push(collisionRoot, this.optionalHouseFloorCollider, ramp);
       this.player.setColliders(this.levelColliders);
       this.cameraController.setCollisionObjects(this.levelColliders);
       this.optionalArchitectureStarted = true;
@@ -5812,7 +5855,7 @@ export class LevelToyStory {
       const triangleCount = houseMesh?.geometry.index?.count
         ? houseMesh.geometry.index.count / 3
         : (houseMesh?.geometry.getAttribute('position')?.count ?? 0) / 3;
-      console.info(`[LevelToyStory] Loaded high-house visual (${Math.round(triangleCount).toLocaleString()} tris) in ${Math.round(performance.now() - loadStartedAt)}ms; gameplay collision uses 6 simplified proxies.`);
+      console.info(`[LevelToyStory] Loaded high-house visual (${Math.round(triangleCount).toLocaleString()} tris) in ${Math.round(performance.now() - loadStartedAt)}ms; gameplay collision uses 6 simplified wall proxies, deck support and entry ramp.`);
     }, undefined, (error) => {
       this.optionalArchitectureLoading = false;
       console.warn('[LevelToyStory] Optional high-house annex could not load.', error);
