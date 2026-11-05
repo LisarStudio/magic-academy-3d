@@ -28,12 +28,13 @@ export class HUD {
   private coinCounterEl: HTMLElement | null = null;
   private collectedKeysEl: HTMLElement | null = null;
   private collectedKeyIds = new Set<string>();
+  private manekiNekoSlotEl: HTMLElement | null = null;
+  private manekiNekoIconEl: HTMLImageElement | null = null;
   private gekkoQuestBadgeEl: HTMLElement | null = null;
   private damageFlashEl: HTMLElement;
   private screenFadeEl: HTMLElement;
   private bossHealthPanelEl: HTMLElement;
   private bossHealthFillEl: HTMLElement;
-  private bossHealthValueEl: HTMLElement;
   private bossHealthRevealTimer: number | null = null;
   private bossHealthRafFirst = 0;
   private bossHealthRafSecond = 0;
@@ -109,6 +110,9 @@ export class HUD {
     this.coinCounterEl = document.getElementById('coin-count');
     this.collectedKeysEl = document.getElementById('hud-collected-keys');
     this.setCollectedKeys([], false);
+    this.manekiNekoSlotEl = document.getElementById('hud-maneki-neko');
+    this.manekiNekoIconEl = this.manekiNekoSlotEl?.querySelector('img') ?? null;
+    this.setManekiNekoOwned(false);
     this.cardCounterEl = document.getElementById('card-count');
     this.gekkoQuestBadgeEl = document.getElementById('gekko-quest-complete');
 
@@ -123,7 +127,6 @@ export class HUD {
     this.screenFadeEl = document.getElementById('screen-fade')!;
     this.bossHealthPanelEl = document.getElementById('boss-health-panel')!;
     this.bossHealthFillEl = document.getElementById('boss-health-fill')!;
-    this.bossHealthValueEl = document.getElementById('boss-health-value')!;
     this.hideBossHealth();
 
     this.dialogueBubbleEl = document.getElementById('dialogue-bubble')!;
@@ -273,7 +276,9 @@ export class HUD {
       slot.setAttribute('role', 'listitem');
       slot.setAttribute('aria-label', `Letra ${letter} pendiente`);
       const icon = document.createElement('img');
-      icon.src = `${import.meta.env.BASE_URL}assets/letter-challenge/${letter}.png`;
+      // The authored 1254px originals remain untouched. These transparent,
+      // tightly cropped 512px HUD derivatives retain their look at 1x/2x UI.
+      icon.src = `${import.meta.env.BASE_URL}assets/letter-challenge/hud-${letter}.png`;
       icon.alt = `Letra ${letter}`;
       icon.decoding = 'async';
       icon.draggable = false;
@@ -481,7 +486,6 @@ export class HUD {
       mask.style.left = `${barLeft + barWidth * ratio}%`;
       mask.style.width = `${barWidth * (1 - ratio)}%`;
     }
-    this.bossHealthValueEl.textContent = `${Math.ceil(safeHealth)} / ${safeMax}`;
     this.bossHealthFillEl.parentElement?.setAttribute('aria-valuenow', String(Math.ceil(safeHealth)));
     this.bossHealthFillEl.parentElement?.setAttribute('aria-valuemax', String(safeMax));
   }
@@ -501,7 +505,6 @@ export class HUD {
       mask.style.width = '56.1%';
     }
     this.bossHealthFillEl.style.removeProperty('--boss-health-color');
-    this.bossHealthValueEl.textContent = '';
     const progress = this.bossHealthFillEl.parentElement;
     progress?.setAttribute('aria-valuenow', '0');
     progress?.setAttribute('aria-valuemax', '1');
@@ -646,6 +649,21 @@ export class HUD {
     });
     this.collectedKeyIds = acquired;
     this.collectedKeysEl.classList.add('has-keys');
+  }
+
+  public setManekiNekoOwned(owned: boolean, animate = false): void {
+    if (!this.manekiNekoSlotEl || !this.manekiNekoIconEl) return;
+    if (owned && !this.manekiNekoIconEl.getAttribute('src')) {
+      this.manekiNekoIconEl.src = `${import.meta.env.BASE_URL}assets/quest/maneki_neko.png`;
+    }
+    this.manekiNekoSlotEl.classList.toggle('hidden', !owned);
+    this.manekiNekoSlotEl.setAttribute('aria-hidden', String(!owned));
+    this.manekiNekoIconEl.alt = owned ? 'Maneki Neko — Amuleto del Gato de la Abundancia' : '';
+    if (owned && animate) {
+      this.manekiNekoSlotEl.classList.remove('maneki-neko-arrive');
+      void this.manekiNekoSlotEl.offsetWidth;
+      this.manekiNekoSlotEl.classList.add('maneki-neko-arrive');
+    }
   }
 
   public setActiveSpellSlot(spell: SpellType): void {

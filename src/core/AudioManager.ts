@@ -4,15 +4,17 @@ export class AudioManager {
   private readonly musicPaths = {
     intro: 'assets/music/optimized/wukong-intro-theme-128.mp3',
     gameplayB: 'assets/music/wukong-game-lisar-studio.mp3',
-    crabBoss: 'assets/music/crab-boss-theme.mp3'
+    crabBoss: 'assets/music/crab-boss-theme.mp3',
+    silvioMission: 'assets/music/Silvio_OST.mp3'
   } as const;
   private readonly musicUrls = new Map<keyof typeof this.musicPaths, string>();
   private musicPreparation: Promise<void> | null = null;
   private gameplayMusicPreparation: Promise<void> | null = null;
   private bossMusicPreparation: Promise<void> | null = null;
+  private silvioMusicPreparation: Promise<void> | null = null;
   private musicPrepared = false;
   private readonly preparedGameplayTracks = new Set<'intro' | 'gameplayB'>();
-  private musicMode: 'intro' | 'gameplay' | 'boss' | null = null;
+  private musicMode: 'intro' | 'gameplay' | 'boss' | 'silvio-mission' | null = null;
   private currentMusicTrack: keyof typeof this.musicPaths | null = null;
   private returnTrack: 'intro' | 'gameplayB' = 'intro';
   private returnTrackTime = 0;
@@ -226,6 +228,69 @@ export class AudioManager {
     if (this.musicMode !== 'boss') return;
     this.musicMode = 'gameplay';
     await this.fadeMusicTo(0, 520);
+    if (this.musicMode !== 'gameplay') return;
+    this.restoreGameplayMusic();
+  }
+
+  /** Preloads Silvio's mission track without starting playback or changing the current song. */
+  public prepareSilvioMissionMusic(): Promise<void> {
+    if (this.musicUrls.has('silvioMission')) return Promise.resolve();
+    if (this.silvioMusicPreparation) return this.silvioMusicPreparation;
+    const path = this.musicPaths.silvioMission;
+    this.silvioMusicPreparation = this.fetchMusicAsset(`${import.meta.env.BASE_URL}${path}`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Could not load Silvio mission music (${response.status}).`);
+        const url = URL.createObjectURL(await response.blob());
+        this.musicUrls.set('silvioMission', url);
+        try {
+          await this.preflightTrack(url);
+        } catch (error) {
+          URL.revokeObjectURL(url);
+          this.musicUrls.delete('silvioMission');
+          throw error;
+        }
+      })
+      .finally(() => { this.silvioMusicPreparation = null; });
+    return this.silvioMusicPreparation;
+  }
+
+  /** Called only after the player accepts and the existing quest enters ACTIVE. */
+  public async startSilvioMissionMusic(): Promise<void> {
+    if (!this.musicPrepared || this.musicMode === 'silvio-mission' || this.musicMode === 'boss') return;
+    if (this.musicMode === 'gameplay' && (this.currentMusicTrack === 'intro' || this.currentMusicTrack === 'gameplayB')) {
+      this.returnTrack = this.currentMusicTrack;
+      this.returnTrackTime = this.bgmAudio.currentTime;
+    }
+    this.musicMode = 'silvio-mission';
+    try {
+      await this.prepareSilvioMissionMusic();
+    } catch (error) {
+      if (this.musicMode === 'silvio-mission') this.musicMode = 'gameplay';
+      console.warn('[AudioManager] Silvio mission track could not be prepared.', error);
+      return;
+    }
+    if (this.musicMode !== 'silvio-mission') return;
+    await this.fadeMusicTo(0, 800);
+    if (this.musicMode !== 'silvio-mission') return;
+    this.setMusicSource('silvioMission');
+    this.bgmAudio.loop = true;
+    this.musicGain = 0;
+    this.applyMusicVolume();
+    try {
+      await this.bgmAudio.play();
+      if (this.musicMode === 'silvio-mission') await this.fadeMusicTo(1, 800);
+    } catch (error) {
+      console.warn('[AudioManager] Silvio mission track playback failed.', error);
+      this.musicMode = 'gameplay';
+      this.restoreGameplayMusic();
+    }
+  }
+
+  /** Restores the saved gameplay track and its position using the same player. */
+  public async stopSilvioMissionMusic(): Promise<void> {
+    if (this.musicMode !== 'silvio-mission') return;
+    this.musicMode = 'gameplay';
+    await this.fadeMusicTo(0, 800);
     if (this.musicMode !== 'gameplay') return;
     this.restoreGameplayMusic();
   }

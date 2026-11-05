@@ -908,7 +908,7 @@ export class Game {
 
   public saveGame(showNotification = true): void {
     const saveData = {
-      version: 6,
+      version: 7,
       levelId: 'magic-academy-3d',
       playerPos: { x: this.player.mesh.position.x, y: this.player.mesh.position.y, z: this.player.mesh.position.z },
       playerRotY: this.player.mesh.rotation.y,
@@ -929,6 +929,7 @@ export class Game {
       curiosityChestOpen: this.level01.curiosityChestOpen,
       collectedLifePickupIds: this.level01.getCollectedLifePickupIds(),
       letterChallengeCompleted: this.level01.letterChallengeCompleted,
+      manekiNekoCollected: this.level01.manekiNekoCollected,
       stateFlags: {
         staffFound: this.level01.stateFlags.staffFound,
         gekkoTalked: this.level01.stateFlags.gekkoTalked,
@@ -950,7 +951,7 @@ export class Game {
     }
     try {
       const data = JSON.parse(raw);
-      if (data.version !== undefined && ![1, 2, 3, 4, 5, 6].includes(data.version)) throw new Error('Versión de partida no compatible.');
+      if (data.version !== undefined && ![1, 2, 3, 4, 5, 6, 7].includes(data.version)) throw new Error('Versión de partida no compatible.');
       if (Number.isFinite(data.lives)) this.player.lives = THREE.MathUtils.clamp(Math.floor(data.lives), 0, PlayerController.MAX_LIVES);
       this.hud.setLives(this.player.lives);
       if (data.playerPos) {
@@ -995,6 +996,8 @@ export class Game {
         Object.assign(this.level01.stateFlags, data.stateFlags);
       }
       this.level01.restoreLetterChallengeCompleted(data.letterChallengeCompleted === true);
+      this.level01.restoreManekiNekoCollected(data.manekiNekoCollected === true);
+      this.hud.setManekiNekoOwned(data.manekiNekoCollected === true);
       this.level01.restoreStaffChest();
       this.level01.restoreCuriosityPuzzle(
         data.curiosityHatchOpen === true || (data.version === 1 && (Number(data.totalKeysCount) || 0) >= 3),

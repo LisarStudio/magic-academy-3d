@@ -77,6 +77,7 @@ export class LevelToyStory {
   private gekkoNPC!: GekkoNPC;
   private twinCatsChallenge!: TwinCatsChallenge;
   public letterChallengeCompleted = false;
+  public manekiNekoCollected = false;
   private floatingCoinMesh!: THREE.Group;
   private dragonSwitchMesh!: THREE.Group;
   private dragonLeverStick!: THREE.Mesh;
@@ -88,6 +89,13 @@ export class LevelToyStory {
   private curiosityCryptTrail!: THREE.Group;
   private grassUniforms: any = null;
   private readonly worldWind = new WorldWindController();
+  // Reused scratch transforms for the rare animated-tree gust path. The old
+  // loop allocated several matrices per affected tree on every frame.
+  private readonly treeSwayPivot = new THREE.Matrix4();
+  private readonly treeSwayUnpivot = new THREE.Matrix4();
+  private readonly treeSwayRotation = new THREE.Matrix4();
+  private readonly treeSwayTransform = new THREE.Matrix4();
+  private readonly treeSwayEuler = new THREE.Euler();
   private grassSectors: THREE.InstancedMesh[] = [];
   private terrainGroundMaterial: THREE.MeshStandardMaterial | null = null;
   /** World-space center lines and safe widths for every authored stone route. */
@@ -594,14 +602,14 @@ export class LevelToyStory {
     skyAnchor.add(starField);
     scene.add(skyAnchor);
 
-    // One 48-minute game clock drives sky, lighting, lanterns and constellation
+    // One 24-minute game clock drives sky, lighting, lanterns and constellation
     // night-window presentation. World updates already stop while gameplay is paused.
     this.dayNightCycle = new DayNightCycle(
       scene,
       this.sceneManager.dirLight,
       this.sceneManager.ambientLight,
       this.cloudsUniforms,
-      { realSecondsPerGameHour: 180, initialHour: 21, renderer: this.sceneManager.renderer, moonLight }
+      { realSecondsPerGameHour: 60, initialHour: 21, renderer: this.sceneManager.renderer, moonLight }
     );
     this.skyPanorama = new SkyPanoramaSystem(skyAnchor);
     // The procedural sky is already valid on frame one. Do not hold the
@@ -1898,8 +1906,8 @@ export class LevelToyStory {
               vec3 grassWorld = vec3(0.0);
             #endif
             float grassTip = clamp(position.y / ${height.toFixed(4)}, 0.0, 1.0);
-            float grassWave = sin(uTime * 1.15 + grassWorld.x * 0.12 + grassWorld.z * 0.09) * (0.035 + uWindStrength * 0.075)
-              + sin(uTime * 0.63 - grassWorld.x * 0.07 + grassWorld.z * 0.11) * 0.035;
+            float grassWave = sin(uTime * 1.15 + grassWorld.x * 0.12 + grassWorld.z * 0.09) * (0.045 + uWindStrength * 0.11)
+              + sin(uTime * 0.63 - grassWorld.x * 0.07 + grassWorld.z * 0.11) * 0.04;
             transformed.x += grassWave * grassTip * grassTip;
             vec2 windDir = normalize(uWindDirection);
             vec2 localWindDir = windDir;
@@ -1909,7 +1917,7 @@ export class LevelToyStory {
                                   -instanceRight.z * windDir.x + instanceRight.x * windDir.y);
             #endif
             float broadGust = sin(uTime * 0.42 + dot(grassWorld.xz, windDir) * 0.075);
-            transformed.xz += localWindDir * broadGust * uWindStrength * 0.055 * grassTip * grassTip;
+            transformed.xz += localWindDir * broadGust * uWindStrength * 0.11 * grassTip * grassTip;
             vec2 fromPlayer = grassWorld.xz - uPlayerPos.xz;
             float playerDistance = length(fromPlayer);
             if (playerDistance < 1.25 && playerDistance > 0.001) {
@@ -3681,11 +3689,13 @@ export class LevelToyStory {
       this.treeSwayTimers[i] = Math.max(0, timer - delta);
       const envelope = Math.sin(Math.PI * (1 - timer / 1.15));
       const sway = Math.sin(now * 12 + i * 2.1) * 0.075 * envelope;
-      const pivot = new THREE.Matrix4().makeTranslation(root.x, root.y, root.z);
-      const unpivot = new THREE.Matrix4().makeTranslation(-root.x, -root.y, -root.z);
-      const rotation = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(sway, Math.sin(now * 7 + i) * 0.018 * envelope, -sway * 0.55));
+      const pivot = this.treeSwayPivot.makeTranslation(root.x, root.y, root.z);
+      const unpivot = this.treeSwayUnpivot.makeTranslation(-root.x, -root.y, -root.z);
+      const rotation = this.treeSwayRotation.makeRotationFromEuler(
+        this.treeSwayEuler.set(sway, Math.sin(now * 7 + i) * 0.018 * envelope, -sway * 0.55)
+      );
       for (const batch of this.treeInstanceBatches) {
-        const transformed = pivot.clone().multiply(rotation).multiply(unpivot).multiply(batch.baseMatrices[i]);
+        const transformed = this.treeSwayTransform.copy(pivot).multiply(rotation).multiply(unpivot).multiply(batch.baseMatrices[i]);
         batch.mesh.setMatrixAt(i, transformed);
       }
     }
@@ -4179,8 +4189,20 @@ export class LevelToyStory {
     rawCoins.splice(rawCoins.length - highHouseCoins.length, highHouseCoins.length, ...highHouseCoins);
 
     // ── AUTOMATED COIN POSITION VALIDATION & COLLISION CHECKER ──
-    const validateCoinPosition = (pos: THREE.Vector3): THREE.Vector3 => {
+    const coinColliderBounds = this.levelColliders.map((root) => {
+      root.updateWorldMatrix(true, true);
+      return { root, bounds: new THREE.Box3().setFromObject(root) };
+    });
+    const coinRaycaster = new THREE.Raycaster();
+    const coinDirections = [
+      new THREE.Vector3(1, 0, 0),
+      new THREE.Vector3(-1, 0, 0),
+      new THREE.Vector3(0, 0, 1),
+      new THREE.Vector3(0, 0, -1)
+    ];
+    const validateCoinPosition = (pos: THREE.Vector3): { position: THREE.Vector3; corrected: boolean; pendingReview: boolean } => {
       const checkedPos = pos.clone();
+      let corrected = false;
 
       // Use the raised stone plane for temple coins; all other route coins
       // remain attached to the natural terrain surface.
@@ -4199,35 +4221,91 @@ export class LevelToyStory {
       }
 
       // 2. Horizontal Wall Collision Test (Cast rays in 4 cardinal directions to ensure no clipping inside walls)
-      const raycaster = new THREE.Raycaster();
-      const directions = [
-        new THREE.Vector3(1, 0, 0),
-        new THREE.Vector3(-1, 0, 0),
-        new THREE.Vector3(0, 0, 1),
-        new THREE.Vector3(0, 0, -1)
-      ];
-
-      for (const dir of directions) {
-        raycaster.set(checkedPos, dir);
-        raycaster.far = 0.4;
-        const hits = raycaster.intersectObjects(this.levelColliders, true);
-        if (hits.length > 0) {
-          // If too close to a wall, nudge 0.5m away from the wall normal
-          const hitNorm = hits[0].face?.normal?.clone() || new THREE.Vector3(0, 0, 1);
-          checkedPos.addScaledVector(hitNorm, 0.5);
+      // Reuse broad-phase bounds and the raycaster; do not raycast unrelated
+      // architecture (or the whole map) for every coin candidate.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        let moved = false;
+        const nearby = coinColliderBounds
+          .filter(({ bounds }) => bounds.distanceToPoint(checkedPos) <= 0.9)
+          .map(({ root }) => root);
+        for (const dir of coinDirections) {
+          coinRaycaster.set(checkedPos, dir);
+          coinRaycaster.far = 0.42;
+          const hit = coinRaycaster.intersectObjects(nearby, true)[0];
+          if (!hit) continue;
+          const hitNorm = hit.face?.normal?.clone() ?? dir.clone().negate();
+          hitNorm.transformDirection(hit.object.matrixWorld);
+          hitNorm.y = 0;
+          if (hitNorm.lengthSq() < 0.001) hitNorm.copy(dir).negate();
+          hitNorm.normalize();
+          checkedPos.addScaledVector(hitNorm, 0.55);
+          corrected = true;
+          moved = true;
         }
+        if (!moved) break;
       }
 
-      return checkedPos;
+      // A remaining solid AABB intersection is a review case, never silently
+      // accepted as a successful automatic correction.
+      const pendingReview = coinColliderBounds.some(({ bounds }) => bounds.containsPoint(checkedPos));
+      return { position: checkedPos, corrected, pendingReview };
     };
 
-    const finalCoins = rawCoins.map((pos) => validateCoinPosition(pos));
+    const coinAudit = rawCoins.map((pos) => validateCoinPosition(pos));
+    const finalCoins = coinAudit.map((result) => result.position);
 
-    console.log(`[COINS-VALIDATION] Validated & Synchronously Spawning EXACTLY ${finalCoins.length}/${EXPECTED_LISAR_COINS} Lisar Coins.`);
+    const correctedCoins = coinAudit.filter((result) => result.corrected).length;
+    const pendingCoins = coinAudit.filter((result) => result.pendingReview).length;
+    console.info(`[COINS-VALIDATION] ${finalCoins.length}/${EXPECTED_LISAR_COINS} candidates; corrected ${correctedCoins}; pending geometry review ${pendingCoins}.`);
 
     finalCoins.forEach((pos, idx) => {
       this.collectibleSystem.spawnCoin(`coin_${idx}`, pos);
     });
+
+    if (import.meta.env.DEV) {
+      (window as Window & { __wukongCoinAudit?: () => object }).__wukongCoinAudit = () => {
+        const coinMeshes = this.collectibleSystem.collectibles.filter((item) => item.type === 'COIN');
+        const obstacles: Array<{ name: string; bounds: THREE.Box3 }> = [];
+        for (const root of this.levelColliders) {
+          root.updateWorldMatrix(true, true);
+          root.traverse((child) => {
+            const mesh = child as THREE.Mesh;
+            if (!mesh.isMesh || !mesh.geometry) return;
+            if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+            obstacles.push({ name: mesh.name || root.name || 'unnamed-collider', bounds: new THREE.Box3().setFromObject(mesh) });
+          });
+        }
+        const rows = coinMeshes.map((item) => {
+          const position = item.mesh.position;
+          const inHouseInterior = Math.abs(position.x - this.highHouseCenter.x) < 5 && Math.abs(position.z - this.highHouseCenter.z) < 5 &&
+            Math.abs(position.y - (this.getTerrainHeight(position.x, position.z) + 2.2)) < 0.35;
+          const inTempleInterior = this.centralTempleFloorTopY !== null && Math.abs(position.x) <= this.centralTempleFloorWidth * 0.5 &&
+            position.z >= this.centralTempleFloorCenterZ - this.centralTempleFloorDepth * 0.5 &&
+            position.z <= this.centralTempleFloorCenterZ + this.centralTempleFloorDepth * 0.5 &&
+            Math.abs(position.y - (this.centralTempleFloorTopY + 0.6)) < 0.35;
+          const expectedGround = this.getTerrainHeight(position.x, position.z) + 0.6;
+          const unexpectedElevation = !inHouseInterior && !inTempleInterior && Math.abs(position.y - expectedGround) > 0.85;
+          const overlaps = obstacles.filter(({ bounds }) => bounds.containsPoint(position)).map(({ name }) => name);
+          return {
+            id: item.id,
+            position: { x: +position.x.toFixed(2), y: +position.y.toFixed(2), z: +position.z.toFixed(2) },
+            status: overlaps.length || unexpectedElevation ? 'POTENTIAL_ISSUE' : 'GEOMETRY_CLEAR',
+            overlappingColliderBounds: overlaps,
+            reachability: 'not_path_tested'
+          };
+        });
+        const report = {
+          totalCoins: rows.length,
+          geometricallyClear: rows.filter((row) => row.status === 'GEOMETRY_CLEAR').length,
+          potentialIssues: rows.filter((row) => row.status !== 'GEOMETRY_CLEAR').length,
+          correctedAtPlacement: correctedCoins,
+          pendingReviewAtPlacement: pendingCoins,
+          rows
+        };
+        console.table(rows);
+        return report;
+      };
+    }
   }
 
   private setupNPCs(): void {
@@ -4262,7 +4340,12 @@ export class LevelToyStory {
       (completed) => {
         this.letterChallengeCompleted = completed;
         if (completed) (window as any).gameInstance?.saveGame(false);
-      }
+      },
+      (collected) => {
+        this.manekiNekoCollected = collected;
+        (window as any).gameInstance?.saveGame(false);
+      },
+      this.manekiNekoCollected
     );
     this.levelColliders.push(...this.twinCatsChallenge.colliders);
 
@@ -5112,6 +5195,11 @@ export class LevelToyStory {
     this.twinCatsChallenge?.restoreCompleted(completed);
   }
 
+  public restoreManekiNekoCollected(collected: boolean): void {
+    this.manekiNekoCollected = collected;
+    this.twinCatsChallenge?.restoreRewardCollected(collected);
+  }
+
   public cancelLetterChallenge(): void { this.twinCatsChallenge?.cancel(); }
 
   public update(delta: number, playerPos: THREE.Vector3, realElapsed = delta): void {
@@ -5601,6 +5689,7 @@ export class LevelToyStory {
     if (this.optionalArchitectureStarted || this.optionalArchitectureLoading) return;
     if (playerPos.distanceToSquared(this.highHouseCenter) > 58 * 58) return;
     this.optionalArchitectureLoading = true;
+    const loadStartedAt = performance.now();
     const loader = new GLTFLoader();
     const base = import.meta.env.BASE_URL + 'assets/environment/';
     loader.load(base + 'wukong-chinese-high-house-original.glb', (gltf) => {
@@ -5626,10 +5715,54 @@ export class LevelToyStory {
       house.position.y += this.getTerrainHeight(this.highHouseCenter.x, this.highHouseCenter.z) - bounds.min.y;
       house.updateMatrixWorld(true);
 
+      // The architectural GLB is a visual asset (330k triangles), not a
+      // physics mesh. Register a small set of boxes for collision instead of
+      // raycasting that entire facade on each movement/ground/camera query.
+      const houseGroundY = this.getTerrainHeight(this.highHouseCenter.x, this.highHouseCenter.z);
+      const houseSize = bounds.getSize(new THREE.Vector3());
+      const halfWidth = houseSize.x * 0.5;
+      const halfDepth = houseSize.z * 0.5;
+      const wallThickness = 0.38;
+      const wallHeight = Math.max(5, houseSize.y);
+      const wallBottom = houseGroundY;
+      const doorWidth = Math.min(3.6, houseSize.x * 0.28);
+      const doorHeight = Math.min(4.2, wallHeight * 0.48);
+      const collisionRoot = new THREE.Group();
+      collisionRoot.name = 'abandoned_house_simplified_collision';
+      const collisionMaterial = new THREE.MeshBasicMaterial({
+        colorWrite: false,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      });
+      const addWall = (name: string, width: number, height: number, depth: number, x: number, y: number, z: number) => {
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), collisionMaterial);
+        wall.name = name;
+        wall.position.set(x, y, z);
+        wall.userData.solidPlayerBlocker = true;
+        collisionRoot.add(wall);
+      };
+      const wallCenterY = wallBottom + wallHeight * 0.5;
+      const sideWidth = (houseSize.x - doorWidth) * 0.5;
+      addWall('abandoned_house_back_wall', houseSize.x, wallHeight, wallThickness,
+        this.highHouseCenter.x, wallCenterY, this.highHouseCenter.z - halfDepth);
+      addWall('abandoned_house_left_wall', wallThickness, wallHeight, houseSize.z,
+        this.highHouseCenter.x - halfWidth, wallCenterY, this.highHouseCenter.z);
+      addWall('abandoned_house_right_wall', wallThickness, wallHeight, houseSize.z,
+        this.highHouseCenter.x + halfWidth, wallCenterY, this.highHouseCenter.z);
+      addWall('abandoned_house_front_left', sideWidth, wallHeight, wallThickness,
+        this.highHouseCenter.x - (doorWidth + sideWidth) * 0.5, wallCenterY, this.highHouseCenter.z + halfDepth);
+      addWall('abandoned_house_front_right', sideWidth, wallHeight, wallThickness,
+        this.highHouseCenter.x + (doorWidth + sideWidth) * 0.5, wallCenterY, this.highHouseCenter.z + halfDepth);
+      if (wallHeight > doorHeight) {
+        addWall('abandoned_house_front_lintel', doorWidth, wallHeight - doorHeight, wallThickness,
+          this.highHouseCenter.x, wallBottom + doorHeight + (wallHeight - doorHeight) * 0.5,
+          this.highHouseCenter.z + halfDepth);
+      }
+      this.sceneManager.scene.add(collisionRoot);
+
       // Coins in the cabin are authored at terrain + 2.2m, confirming an
       // elevated interior deck. Give that same footprint a walkable support
       // so Wukong cannot drop through gaps in the decorative floor meshes.
-      const houseGroundY = this.getTerrainHeight(this.highHouseCenter.x, this.highHouseCenter.z);
       this.optionalHouseFloorCollider = new THREE.Mesh(
         new THREE.BoxGeometry(8.4, 0.12, 8.4),
         new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide })
@@ -5638,12 +5771,16 @@ export class LevelToyStory {
       this.optionalHouseFloorCollider.position.set(this.highHouseCenter.x, houseGroundY + 2.12, this.highHouseCenter.z);
       this.optionalHouseFloorCollider.userData.walkableSupport = true;
       this.sceneManager.scene.add(this.optionalHouseFloorCollider);
-      this.levelColliders.push(house, this.optionalHouseFloorCollider);
+      this.levelColliders.push(collisionRoot, this.optionalHouseFloorCollider);
       this.player.setColliders(this.levelColliders);
       this.cameraController.setCollisionObjects(this.levelColliders);
       this.optionalArchitectureStarted = true;
       this.optionalArchitectureLoading = false;
-      console.info('[LevelToyStory] Loaded original Chinese High House Wood annex on demand.');
+      const houseMesh = house.children.find((part) => (part as THREE.Mesh).isMesh) as THREE.Mesh | undefined;
+      const triangleCount = houseMesh?.geometry.index?.count
+        ? houseMesh.geometry.index.count / 3
+        : (houseMesh?.geometry.getAttribute('position')?.count ?? 0) / 3;
+      console.info(`[LevelToyStory] Loaded high-house visual (${Math.round(triangleCount).toLocaleString()} tris) in ${Math.round(performance.now() - loadStartedAt)}ms; gameplay collision uses 6 simplified proxies.`);
     }, undefined, (error) => {
       this.optionalArchitectureLoading = false;
       console.warn('[LevelToyStory] Optional high-house annex could not load.', error);
