@@ -7,16 +7,15 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>La leyenda de Wukong — Lisar Studio</title>
-    <link rel="preload" as="image" href="./assets/ui/hud-vida-imperial.png?v=0.0.36" fetchpriority="high" />
-    <link rel="preload" as="image" href="./assets/ui/hud-baculo-vida.png?v=0.0.36" />
-    <link rel="preload" as="image" href="./assets/ui/hud-boss-imperial.png?v=0.0.36" />
+    <link rel="preload" as="image" href="./assets/ui/hud-vida-imperial.png?v=0.0.37" fetchpriority="high" />
+    <link rel="preload" as="image" href="./assets/ui/hud-baculo-vida.png?v=0.0.37" />
     <link rel="icon" type="image/svg+xml" href="/magic-academy-3d/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/magic-academy-3d/assets/index-CC8SLEoR.js"></script>
-    <link rel="modulepreload" crossorigin href="/magic-academy-3d/assets/three-vendor-CwaGYmYl.js">
-    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-Djq4ZwSR.css">
+    <script type="module" crossorigin src="/magic-academy-3d/assets/index-D-PUX8V7.js"></script>
+    <link rel="modulepreload" crossorigin href="/magic-academy-3d/assets/three-vendor-By6RnL2H.js">
+    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-B36dE5if.css">
   </head>
   <body>
     <div id="app">
@@ -75,18 +74,20 @@
 
         <section id="boss-health-panel" class="boss-health-panel hidden" role="status" aria-label="Salud del jefe" hidden>
           <div class="boss-hud-artwork">
-            <div class="boss-health-track" role="progressbar" aria-label="Salud del jefe" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0">
+            <div class="boss-hud-sigil" aria-hidden="true"><span></span></div>
+            <div class="boss-hud-content">
+              <div class="boss-hud-heading"><span id="boss-health-name">NEZHA-X</span></div>
+              <div class="boss-health-track" role="progressbar" aria-label="Salud del jefe" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0">
                 <div id="boss-health-fill" class="boss-health-fill" style="width: 0%"></div>
+              </div>
             </div>
-            <img class="boss-hud-frame" src="./assets/ui/hud-boss-imperial.png?v=0.0.36" alt="" />
-              <div class="boss-health-mask" aria-hidden="true"></div>
           </div>
         </section>
 
         <!-- Objectives & Status HUD Top Left -->
         <div id="hud-top-left" class="hud-panel hidden modern-hud imperial-hud">
           <div class="imperial-hud-art">
-            <img class="imperial-health-frame" src="./assets/ui/hud-vida-imperial.png?v=0.0.36" alt="" />
+            <img class="imperial-health-frame" src="./assets/ui/hud-vida-imperial.png?v=0.0.37" alt="" />
             <span class="imperial-hud-name" aria-hidden="true">WUKONG</span>
             <div class="imperial-health-fill-clip" role="progressbar" aria-label="Salud" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><div id="hp-bar-fill" class="imperial-health-fill"></div></div>
             <span id="hp-text" class="imperial-health-value">100 / 100</span>
@@ -155,6 +156,15 @@
 
         <!-- NPC Cinematic Dialogue Bubble -->
         <div id="dialogue-bubble" class="dialogue-bubble-container hidden" aria-hidden="true" inert>
+          <svg class="dialogue-cloud-frame" viewBox="0 0 1000 340" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+            <defs>
+              <linearGradient id="dialogue-cloud-fill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#30101b" stop-opacity=".97"/><stop offset=".55" stop-color="#53151b" stop-opacity=".96"/><stop offset="1" stop-color="#21101c" stop-opacity=".97"/></linearGradient>
+              <linearGradient id="dialogue-cloud-gold" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#ad6a22"/><stop offset=".25" stop-color="#f6d579"/><stop offset=".7" stop-color="#dca541"/><stop offset="1" stop-color="#9b561d"/></linearGradient>
+            </defs>
+            <path class="dialogue-cloud-body" d="M91 75 C45 71 24 111 47 145 C5 178 31 232 80 239 C92 278 145 292 187 265 C236 302 302 299 347 272 C407 302 473 299 514 271 C574 301 646 293 681 265 C727 286 789 278 814 249 C876 263 925 229 908 185 C961 149 935 91 886 88 C873 42 818 32 780 62 C730 25 664 30 626 62 C575 27 512 32 473 64 C426 25 358 30 321 65 C273 29 211 39 183 67 C148 43 111 49 91 75 Z" fill="url(#dialogue-cloud-fill)" stroke="url(#dialogue-cloud-gold)" stroke-width="8" stroke-linejoin="round"/>
+            <path d="M94 82 C57 79 42 111 63 143 C22 174 47 224 91 230 C106 265 149 277 190 252 C239 286 300 284 348 258 C405 284 468 284 513 257 C571 284 638 278 677 251 C724 273 781 264 807 237 C860 249 908 221 893 184 C941 147 919 102 877 98 C865 56 816 47 781 74 C730 40 668 45 629 74 C578 42 516 45 473 76 C426 41 363 46 322 77 C274 43 217 51 185 79 C149 57 115 63 94 82 Z" fill="none" stroke="#ffe49a" stroke-opacity=".46" stroke-width="2"/>
+            <path d="M250 250 Q290 232 330 250 T410 250 M606 250 Q646 232 686 250 T766 250" fill="none" stroke="#e5b85f" stroke-opacity=".22" stroke-width="3"/>
+          </svg>
           <div class="dialogue-portrait-frame" aria-hidden="true"><img data-dialogue-portrait alt="" decoding="async" /><span data-dialogue-portrait-fallback>NPC</span></div>
           <div class="dialogue-content">
             <div id="dialogue-speaker" class="dialogue-speaker">Gekko</div>
