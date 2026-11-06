@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { isLowPowerDevice, renderPixelRatio } from './DevicePerformance';
+import { isMobileDevice, renderPixelRatio } from './DevicePerformance';
 
 export class SceneManager {
   public scene: THREE.Scene;
@@ -24,7 +24,7 @@ export class SceneManager {
     this.camera.position.set(0, 3, 5);
 
     // 3. Renderer
-    const isMobile = isLowPowerDevice();
+    const isMobile = isMobileDevice();
 
     this.renderer = new THREE.WebGLRenderer({
       canvas,
@@ -50,7 +50,7 @@ export class SceneManager {
   }
 
   private setupLighting(): void {
-    const isMobile = isLowPowerDevice();
+    const isMobile = isMobileDevice();
 
     // Ambient moon / morning glow
     this.ambientLight = new THREE.AmbientLight(0x404870, 1.0);
