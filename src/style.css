@@ -2792,3 +2792,93 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
   .dialogue-bubble-container { width: calc(100vw - 10px); padding: 14px 12px 12px 72px; }
   .dialogue-portrait-frame { width: 50px; height: 50px; left: 9px; }
 }
+
+/* Original dialogue HUD art supplied in Dialogue_Huds. The NPC portrait and
+   speaker heading are already composed into these images; only dialogue text
+   and existing choice buttons remain live HTML. */
+.dialogue-bubble-container[data-dialogue-skin] {
+  width: min(1000px, calc(100vw - 32px));
+  height: auto;
+  min-height: 0;
+  aspect-ratio: 2048 / 682;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--dialogue-artwork) center / 100% 100% no-repeat;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  overflow: visible;
+}
+.dialogue-bubble-container[data-dialogue-skin]::before,
+.dialogue-bubble-container[data-dialogue-skin]::after,
+.dialogue-bubble-container[data-dialogue-skin] .dialogue-cloud-frame,
+.dialogue-bubble-container[data-dialogue-skin] .dialogue-portrait-frame { display: none !important; }
+.dialogue-bubble-container[data-dialogue-skin] .dialogue-speaker {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  box-shadow: none;
+}
+.dialogue-bubble-container[data-dialogue-skin] .dialogue-content {
+  position: absolute;
+  inset: 35% 7% 15% 25%;
+  z-index: 1;
+  max-height: none;
+  overflow-y: auto;
+  padding: 0 1% 0 0;
+  scrollbar-width: thin;
+  scrollbar-color: #e7b950 transparent;
+}
+.dialogue-bubble-container[data-dialogue-skin] .dialogue-text {
+  color: #f5d78e;
+  font: 600 clamp(13px, 1.05vw, 18px)/1.42 var(--font-title);
+  text-shadow: 0 1px 2px #160911, 0 0 5px #16091199;
+}
+.dialogue-bubble-container[data-dialogue-skin] .dialogue-options {
+  gap: clamp(6px, 1vw, 12px);
+  margin-top: clamp(6px, .9vw, 12px);
+}
+.dialogue-bubble-container[data-dialogue-skin] .dialogue-choice-button {
+  flex: 1 1 140px;
+  min-height: 38px;
+  padding: 6px 12px;
+  color: #f5d78e;
+  border-color: #e7b950;
+  background: linear-gradient(180deg, #4c241b, #20101a);
+  box-shadow: inset 0 1px #fff0b44a, 0 0 7px #e7b9502b;
+  font-size: clamp(12px, .95vw, 15px);
+}
+.dialogue-bubble-container[data-dialogue-skin] .dialogue-continue-hint { display: none; }
+.dialogue-bubble-container[data-dialogue-skin="gekko"] .dialogue-text { color: #f5d78e; }
+.dialogue-bubble-container[data-dialogue-skin="nezha-x"] .dialogue-text { color: #f5d78e; }
+@media (max-width: 700px) {
+  .dialogue-bubble-container[data-dialogue-skin] {
+    width: calc(100vw - 12px);
+    padding: 0;
+    min-height: 0;
+    max-height: none;
+  }
+  .dialogue-bubble-container[data-dialogue-skin] .dialogue-content { inset: 34% 7% 14% 25%; }
+  .dialogue-bubble-container[data-dialogue-skin] .dialogue-text {
+    font-size: clamp(10px, 3vw, 13px);
+    line-height: 1.25;
+  }
+  .dialogue-bubble-container[data-dialogue-skin] .dialogue-options { gap: 5px; margin-top: 5px; }
+  .dialogue-bubble-container[data-dialogue-skin] .dialogue-choice-button {
+    flex-basis: calc(50% - 4px);
+    min-height: 30px;
+    padding: 4px 6px;
+    font-size: clamp(10px, 2.8vw, 12px);
+  }
+}
+@media (max-width: 380px) {
+  .dialogue-bubble-container[data-dialogue-skin] { width: calc(100vw - 8px); }
+  .dialogue-bubble-container[data-dialogue-skin] .dialogue-content { inset: 34% 6.5% 14% 25%; }
+}

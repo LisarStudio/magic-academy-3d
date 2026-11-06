@@ -23,6 +23,9 @@ const missionAssets = ['silvio', 'loki'].map((name) => `assets/npc/twin-cats/${n
 missionAssets.push('assets/npc/twin-cats/hud-silvio-loki.png');
 missionAssets.push('assets/quest/maneki_neko.png');
 missionAssets.push('assets/quest/maneki_neko.glb');
+missionAssets.push('assets/dialogue-huds/Silvio_Loki_Dialogue.png');
+missionAssets.push('assets/dialogue-huds/Gekko_Dialogue.png');
+missionAssets.push('assets/dialogue-huds/Nezha_X_Dialogue.png');
 for (const letter of ['w', 'u', 'k', 'o', 'n', 'g']) {
   missionAssets.push(`assets/letter-challenge/letter-${letter}.glb`);
   missionAssets.push(`assets/letter-challenge/${letter.toUpperCase()}.png`);

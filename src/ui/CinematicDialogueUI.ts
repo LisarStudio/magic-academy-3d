@@ -65,8 +65,22 @@ export class CinematicDialogueUI {
     const previousOpen = this.open;
     this.currentOptions = options;
     if (!previousOpen) options.cameraBehavior?.onOpen?.();
-    this.speaker.textContent = name;
-    const portraitUrl = options.portraitUrl ?? this.defaultPortrait(name);
+    const skin = this.dialogueSkin(name);
+    if (skin) {
+      const base = import.meta.env.BASE_URL;
+      const artwork = skin === 'silvio-loki' ? 'Silvio_Loki_Dialogue.png'
+        : skin === 'gekko' ? 'Gekko_Dialogue.png' : 'Nezha_X_Dialogue.png';
+      this.panel.dataset.dialogueSkin = skin;
+      this.panel.style.setProperty('--dialogue-artwork', `url("${base}assets/dialogue-huds/${artwork}")`);
+    } else {
+      delete this.panel.dataset.dialogueSkin;
+      this.panel.style.removeProperty('--dialogue-artwork');
+    }
+    // The provided artwork already includes its exact speaker heading. Keep a
+    // matching accessible label in the existing live dialogue markup.
+    this.speaker.textContent = skin === 'silvio-loki' ? 'Silvio y Loki'
+      : skin === 'gekko' ? 'Gekko' : skin === 'nezha-x' ? 'NEZHA-X' : name;
+    const portraitUrl = skin ? undefined : options.portraitUrl ?? this.defaultPortrait(name);
     if (this.portrait) {
       this.portrait.alt = portraitUrl ? (options.portraitAlt ?? `${name}, retrato`) : '';
       this.portrait.hidden = !portraitUrl;
@@ -89,6 +103,8 @@ export class CinematicDialogueUI {
     this.panel.inert = true;
     this.panel.removeAttribute('data-placement');
     this.panel.removeAttribute('data-type');
+    delete this.panel.dataset.dialogueSkin;
+    this.panel.style.removeProperty('--dialogue-artwork');
     this.currentOptions.cameraBehavior?.onClose?.();
     this.currentOptions.onAfterDialogue?.();
     this.currentOptions = {};
@@ -129,8 +145,9 @@ export class CinematicDialogueUI {
     const width = window.visualViewport?.width ?? window.innerWidth;
     const height = window.visualViewport?.height ?? window.innerHeight;
     const mobile = width <= 700;
-    const panelWidth = Math.min(width - (mobile ? 20 : 32), mobile ? 580 : Math.min(760, width * 0.46));
-    const panelHeight = Math.min(mobile ? 250 : 230, Math.max(150, this.panel.getBoundingClientRect().height || (mobile ? 220 : 190)));
+    const measuredPanel = this.panel.getBoundingClientRect();
+    const panelWidth = measuredPanel.width || Math.min(width - (mobile ? 20 : 32), mobile ? 580 : Math.min(760, width * 0.46));
+    const panelHeight = measuredPanel.height || (mobile ? 220 : 190);
     const safeTop = this.readSafeInset('top') + (mobile ? 10 : 18);
     const safeBottom = this.readSafeInset('bottom') + (mobile ? 12 : 20);
     const obstacles = this.visibleObstacles();
@@ -217,6 +234,14 @@ export class CinematicDialogueUI {
     if (/maneki|gato de la abundancia/.test(normalized)) return `${base}assets/quest/maneki_neko.png`;
     if (/cangrejo|crab/.test(normalized)) return `${base}assets/ui/crab-boss-portrait.png`;
     return undefined;
+  }
+
+  private dialogueSkin(name: string): 'silvio-loki' | 'gekko' | 'nezha-x' | null {
+    const normalized = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+    if (/silv|loki|gemelo/.test(normalized)) return 'silvio-loki';
+    if (/gekko/.test(normalized)) return 'gekko';
+    if (/nezha|cangrejo|crab/.test(normalized)) return 'nezha-x';
+    return null;
   }
 
   private initials(name: string): string {
