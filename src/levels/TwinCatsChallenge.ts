@@ -9,6 +9,39 @@ import { projectDialogueFocus } from '../ui/CinematicDialogueUI';
 const LETTERS = ['W', 'U', 'K', 'O', 'N', 'G'] as const;
 type MissionState = 'AVAILABLE' | 'DIALOGUE' | 'STARTING' | 'ACTIVE' | 'FAILED' | 'COMPLETED';
 
+let letterGlowTexture: THREE.CanvasTexture | null = null;
+const letterGlowMaterial = new THREE.SpriteMaterial({
+  color: 0xffb83e, transparent: true, opacity: 0.28, depthWrite: false, toneMapped: false
+});
+const letterSparkMaterial = new THREE.PointsMaterial({
+  size: 0.045, vertexColors: true, transparent: true, opacity: 0.8,
+  depthWrite: false, sizeAttenuation: true, toneMapped: false
+});
+const letterHaloMaterial = new THREE.MeshBasicMaterial({
+  color: 0xffc451, transparent: true, opacity: 0.2, depthWrite: false,
+  side: THREE.DoubleSide, toneMapped: false
+});
+
+function getLetterGlowTexture(): THREE.CanvasTexture {
+  if (letterGlowTexture) return letterGlowTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 128;
+  const context = canvas.getContext('2d');
+  if (context) {
+    const gradient = context.createRadialGradient(64, 64, 2, 64, 64, 62);
+    gradient.addColorStop(0, 'rgba(255, 210, 116, 0.5)');
+    gradient.addColorStop(0.32, 'rgba(255, 169, 50, 0.24)');
+    gradient.addColorStop(1, 'rgba(255, 135, 24, 0)');
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, 128, 128);
+  }
+  letterGlowTexture = new THREE.CanvasTexture(canvas);
+  letterGlowTexture.colorSpace = THREE.SRGBColorSpace;
+  letterGlowMaterial.map = letterGlowTexture;
+  letterGlowMaterial.needsUpdate = true;
+  return letterGlowTexture;
+}
+
 const LETTER_POSITIONS: ReadonlyArray<THREE.Vector2> = [
   new THREE.Vector2(29, -73),
   new THREE.Vector2(4, -74),
@@ -170,6 +203,7 @@ export class TwinCatsChallenge {
   private preloadLetters(): Promise<void> {
     if (this.letterAssetsReady) return Promise.resolve();
     if (this.preloading) return this.preloading;
+    getLetterGlowTexture();
     this.preloading = Promise.all(LETTERS.map(async (letter, index) => {
       const gltf = await this.loader.loadAsync(`${import.meta.env.BASE_URL}assets/letter-challenge/letter-${letter.toLowerCase()}.glb`);
       const item = new THREE.Group();
@@ -185,6 +219,7 @@ export class TwinCatsChallenge {
       item.rotation.y = this.getLetterApproachYaw(index);
       item.userData.approachYaw = item.rotation.y;
       item.visible = false;
+      const magicMaterials: THREE.MeshStandardMaterial[] = [];
       item.traverse((object) => {
         const mesh = object as THREE.Mesh;
         if (!mesh.isMesh) return;
@@ -192,20 +227,65 @@ export class TwinCatsChallenge {
         mesh.receiveShadow = true;
         mesh.userData.letterIndex = index;
         const accentMaterial = (source: THREE.Material): THREE.Material => {
-          if (!(source instanceof THREE.MeshStandardMaterial) || source.emissiveMap) return source;
+          if (!(source instanceof THREE.MeshStandardMaterial)) return source;
           const material = source.clone();
-          if (material.emissive.getHex() === 0) {
-            material.emissive.setHex(0x332007);
-            material.emissiveIntensity = 0.2;
-          } else {
-            material.emissiveIntensity = Math.min(material.emissiveIntensity, 0.24);
-          }
+          // Preserve the authored base-color/roughness maps and use the color
+          // texture as a restrained emissive mask when the GLB has no dedicated
+          // emission map. This brightens the original relief without flattening it.
+          if (!material.emissiveMap && material.map) material.emissiveMap = material.map;
+          material.emissive.setHex(0xffb23a);
+          material.emissiveIntensity = 0.76;
+          material.userData.magicEmissionBase = 0.76;
+          magicMaterials.push(material);
           return material;
         };
         mesh.material = Array.isArray(mesh.material)
           ? mesh.material.map(accentMaterial)
           : accentMaterial(mesh.material);
       });
+      item.userData.magicMaterials = magicMaterials;
+
+      // One cheap shared glow texture, a subtle ground ring and eight animated
+      // points give each authored letter a magical silhouette without lights,
+      // bloom passes, or per-frame geometry allocation.
+      const inverseScale = 1 / Math.max(0.001, item.scale.x);
+      const magic = new THREE.Group();
+      magic.name = `Aura_Letra_${letter}`;
+      magic.scale.setScalar(inverseScale);
+      const glow = new THREE.Sprite(letterGlowMaterial);
+      glow.position.set(0, 0.46, 0);
+      glow.scale.set(1.5, 1.5, 1);
+      magic.add(glow);
+      const halo = new THREE.Mesh(new THREE.RingGeometry(0.38, 0.58, 32), letterHaloMaterial);
+      halo.rotation.x = -Math.PI / 2;
+      // The existing challenge floats the model root by ~0.82 m; counter-offset
+      // the ring so its quiet ground marker stays at the actual terrain plane.
+      halo.position.y = -0.78 * inverseScale;
+      halo.renderOrder = 2;
+      magic.add(halo);
+      const sparkGeometry = new THREE.BufferGeometry();
+      const sparkPositions = new Float32Array(8 * 3);
+      const sparkColors = new Float32Array(8 * 3);
+      const sparkPhases = new Float32Array(8);
+      const sparkRadii = new Float32Array(8);
+      const sparkColorPalette = [0xffd56b, 0xff9e38, 0xffe9aa, 0x83e8ee, 0xffb5df, 0xffc94e, 0xb7f3e9, 0xffefbd];
+      for (let particle = 0; particle < 8; particle++) {
+        const color = new THREE.Color(sparkColorPalette[particle]);
+        sparkColors.set([color.r, color.g, color.b], particle * 3);
+        sparkPhases[particle] = particle * 0.785 + index * 0.47;
+        sparkRadii[particle] = 0.42 + (particle % 4) * 0.105;
+      }
+      sparkGeometry.setAttribute('position', new THREE.BufferAttribute(sparkPositions, 3));
+      sparkGeometry.setAttribute('color', new THREE.BufferAttribute(sparkColors, 3));
+      const sparks = new THREE.Points(sparkGeometry, letterSparkMaterial);
+      sparks.name = `Chispas_Letra_${letter}`;
+      magic.add(sparks);
+      item.add(magic);
+      item.userData.magicSparkGeometry = sparkGeometry;
+      item.userData.magicSparkPhases = sparkPhases;
+      item.userData.magicSparkRadii = sparkRadii;
+      item.userData.magicHalo = halo;
+      item.userData.magicGlow = glow;
       this.letterRoots[index] = item;
     })).then(() => { this.letterAssetsReady = true; }).catch((error) => {
       this.preloading = null;
@@ -555,6 +635,7 @@ export class TwinCatsChallenge {
       if (letter) {
         letter.position.y = this.getTerrainHeight(letter.position.x, letter.position.z) + 0.82 + Math.sin(this.activeLetterAge * 2.2) * 0.12;
         letter.rotation.y = (letter.userData.approachYaw as number) + Math.sin(this.activeLetterAge * 0.7) * 0.12;
+        this.updateLetterMagic(letter, this.activeLetterAge);
         if (Math.hypot(playerPos.x - letter.position.x, playerPos.z - letter.position.z) < this.pickupRadius && Math.abs(playerPos.y - letter.position.y) < 2.2) {
           this.collectActiveLetter();
         }
@@ -615,6 +696,37 @@ export class TwinCatsChallenge {
       }
       this.showDialogue();
     }
+  }
+
+  private updateLetterMagic(letter: THREE.Group, age: number): void {
+    const pulse = 0.5 + 0.5 * Math.sin(age * 1.75);
+    const materials = letter.userData.magicMaterials as THREE.MeshStandardMaterial[] | undefined;
+    materials?.forEach((material) => {
+      material.emissiveIntensity = (material.userData.magicEmissionBase as number) + pulse * 0.34;
+    });
+    const glow = letter.userData.magicGlow as THREE.Sprite | undefined;
+    if (glow) {
+      glow.material.opacity = 0.2 + pulse * 0.12;
+      const scale = 1.42 + pulse * 0.12;
+      glow.scale.set(scale, scale, 1);
+    }
+    const halo = letter.userData.magicHalo as THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial> | undefined;
+    if (halo) halo.material.opacity = 0.13 + pulse * 0.09;
+    const geometry = letter.userData.magicSparkGeometry as THREE.BufferGeometry | undefined;
+    const phases = letter.userData.magicSparkPhases as Float32Array | undefined;
+    const radii = letter.userData.magicSparkRadii as Float32Array | undefined;
+    if (!geometry || !phases || !radii) return;
+    const positions = geometry.getAttribute('position') as THREE.BufferAttribute;
+    for (let particle = 0; particle < phases.length; particle++) {
+      const phase = phases[particle] + age * (0.65 + (particle % 3) * 0.08);
+      const radius = radii[particle];
+      positions.setXYZ(particle,
+        Math.cos(phase) * radius,
+        0.15 + ((age * 0.28 + particle * 0.137) % 0.82),
+        Math.sin(phase) * radius
+      );
+    }
+    positions.needsUpdate = true;
   }
 
   private collectActiveLetter(): void {

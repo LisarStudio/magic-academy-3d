@@ -479,20 +479,19 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 .letter-challenge-hud.hidden { display: block !important; transform: translateY(-8px); opacity: 0; pointer-events: none; }
 .letter-challenge-header, .letter-challenge-footer { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .letter-challenge-header { min-height: 20px; }
-.letter-challenge-brand { display:flex; align-items:center; flex:1 1 auto; min-width:0; gap:7px; }
-.letter-challenge-portrait { flex:0 0 25px; width:25px; height:25px; object-fit:contain; padding:1px; border:1px solid rgba(217,174,98,.55); border-radius:50%; background:radial-gradient(circle,rgba(119,42,27,.48),rgba(8,12,20,.92) 72%); box-shadow:inset 0 0 5px rgba(255,202,91,.12); }
+.letter-challenge-brand { display:flex; align-items:center; flex:1 1 auto; min-width:0; }
 .letter-challenge-title { overflow:hidden; color:#f8e9c8; font:700 11px/1.15 var(--font-ui); letter-spacing:.055em; text-overflow:ellipsis; white-space:nowrap; }
 .letter-challenge-clock { display:flex; flex:0 0 auto; align-items:center; justify-content:center; padding:2px 6px; border:1px solid rgba(201,151,77,.48); border-radius:4px; background:rgba(76,23,23,.55); }
 .letter-challenge-clock strong { color:#ffcf58; font:700 14px/1 Georgia,serif; font-variant-numeric:tabular-nums; }
 .letter-challenge-hud.is-urgent .letter-challenge-clock strong { color:#ff685c; animation: letter-clock-pulse .72s ease-in-out infinite alternate; }
 @keyframes letter-clock-pulse { to { text-shadow: 0 0 8px rgba(255,77,67,.7); } }
 .letter-challenge-slots { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:5px; margin:5px 0; }
-.letter-challenge-slot { position:relative; height:32px; display:grid; place-items:center; overflow:hidden; background:linear-gradient(150deg,rgba(20,25,36,.9),rgba(7,10,17,.8)); border:1px solid rgba(172,134,74,.42); border-radius:5px; box-shadow:inset 0 1px rgba(255,255,255,.035); transition:background .18s,border-color .18s,box-shadow .18s; }
-.letter-challenge-slot img { width:100%; height:100%; object-fit:contain; padding:2px 5px; box-sizing:border-box; filter:grayscale(1) brightness(.38); opacity:.55; transition:filter .2s,opacity .2s; }
+.letter-challenge-slot { position:relative; height:38px; display:grid; place-items:center; overflow:visible; background:linear-gradient(150deg,rgba(20,25,36,.9),rgba(7,10,17,.8)); border:1px solid rgba(172,134,74,.42); border-radius:5px; box-shadow:inset 0 1px rgba(255,255,255,.035); transition:background .18s,border-color .18s,box-shadow .18s; }
+.letter-challenge-slot img { display:block; width:min(100%, 38px); height:calc(100% - 2px); max-width:100%; object-fit:contain; object-position:center; padding:0; box-sizing:border-box; filter:grayscale(.92) brightness(.52); opacity:.68; transition:filter .2s,opacity .2s,transform .2s; }
 .letter-challenge-slot.is-next { border-color:#d9ae62; box-shadow:inset 0 0 7px rgba(217,174,98,.12); }
-.letter-challenge-slot.is-next img { filter:grayscale(.25) brightness(.92); opacity:.9; }
+.letter-challenge-slot.is-next img { filter:saturate(1.06) brightness(1.04); opacity:1; }
 .letter-challenge-slot.is-collected { background:linear-gradient(150deg,rgba(105,67,18,.72),rgba(56,32,13,.8)); border-color:#f1cb6c; animation:letter-pickup-flash .3s ease-out; }
-.letter-challenge-slot.is-collected img { filter:drop-shadow(0 0 5px rgba(255,194,56,.8)); opacity:1; }
+.letter-challenge-slot.is-collected img { filter:drop-shadow(0 0 5px rgba(255,194,56,.8)); opacity:1; transform:scale(1.035); }
 @keyframes letter-pickup-flash { 50% { box-shadow:inset 0 0 10px rgba(255,201,69,.55),0 0 7px rgba(255,195,65,.5); } }
 .letter-challenge-footer { min-height:12px; color:#d6d0c6; font:500 9px/1.2 var(--font-ui); }
 .letter-challenge-footer span:last-child { color:#edc66e; font-weight:700; }
@@ -1585,7 +1584,7 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
   .letter-challenge-clock strong { font-size: 12px; }
   .letter-challenge-slots { gap: 3px; margin: 3px 0; }
   .letter-challenge-slot { height: 25px; }
-  .letter-challenge-slot img { padding: 1px 3px; }
+  .letter-challenge-slot img { width: min(100%, 24px); height: calc(100% - 1px); }
   .letter-challenge-footer { min-height: 10px; font-size: 8px; }
   .dialogue-bubble-container {
     width: calc(100vw - 20px); bottom: max(10px, env(safe-area-inset-bottom)); box-sizing: border-box;
@@ -2755,6 +2754,7 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
   .letter-challenge-title { font-size: clamp(8px, 2.25vw, 10px); }
   .letter-challenge-clock strong { font-size: 12px; }
   .letter-challenge-slot { height: clamp(21px, 6vw, 25px); }
+  .letter-challenge-slot img { width: min(100%, 24px); }
   .letter-challenge-footer { font-size: clamp(7px, 1.95vw, 8px); }
   .boss-health-panel {
     top: max(158px, calc(env(safe-area-inset-top, 0px) + 150px));
