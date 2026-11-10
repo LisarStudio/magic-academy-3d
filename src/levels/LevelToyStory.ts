@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { isLowPowerDevice } from '../core/DevicePerformance';
+import { isLowPowerDevice, isMobileDevice } from '../core/DevicePerformance';
 import { SceneManager } from '../core/SceneManager';
 import { CameraController } from '../camera/CameraController';
 import { PlayerController } from '../player/PlayerController';
@@ -76,6 +76,7 @@ export class LevelToyStory {
   private staffChest!: TreasureChest;
   public exitDoor!: Door;
   private gekkoNPC!: GekkoNPC;
+  private gekkoModelsReady: Promise<void> = Promise.resolve();
   private twinCatsChallenge!: TwinCatsChallenge;
   public letterChallengeCompleted = false;
   public manekiNekoCollected = false;
@@ -667,8 +668,9 @@ export class LevelToyStory {
     // Load the visual identity before play so the in-game loader can report real
     // resource progress and the first playable frame includes the temple assets.
     await this.loadIntroEnvironmentAssets();
-    // Build the original grass in yielding sector batches after level setup.
-    void this.loadGrassInBackground();
+    // Original grass is deferred until the browser has gameplay idle time.
+    // Starting its GLB decode/instancing here overlaps the level handoff and
+    // caused avoidable memory and frame-time spikes on mobile GPUs.
   }
 
   /** Adds the pavilion and a subtle green ground texture as scenery only. */
@@ -1985,7 +1987,11 @@ export class LevelToyStory {
       return false;
     };
 
-    const isMobile = isLowPowerDevice();
+    // Mobile GPUs need the mobile instance spacing even when the browser does
+    // not expose deviceMemory/hardwareConcurrency (common on iOS). Previously
+    // newer phones could get the denser desktop field and overwhelm the first
+    // gameplay frames despite the lower render pixel ratio.
+    const isMobile = isMobileDevice() || isLowPowerDevice();
     // Smaller spatial chunks keep the high-poly source clumps close to Wukong
     // instead of rendering an entire 40 m tile at full detail.
     const sectorSize = 20;
@@ -4360,7 +4366,7 @@ export class LevelToyStory {
     // Place the model origin at the sampled terrain height; GekkoNPC aligns the GLB soles to that root.
     const gekkoY = this.getTerrainHeight(-2.8, -10);
     this.gekkoNPC = new GekkoNPC(new THREE.Vector3(-2.8, gekkoY, -10), -Math.PI * 0.25);
-    this.gekkoNPC.loadModels();
+    this.gekkoModelsReady = this.gekkoNPC.loadModels();
     this.sceneManager.scene.add(this.gekkoNPC.mesh);
 
     // Gekko's physical collider (prevents Wukong from passing through Gekko)
@@ -4735,9 +4741,23 @@ export class LevelToyStory {
     if (this.isCinematicPlaying) return;
     this.isCinematicPlaying = true;
 
+    // The NPC GLB loads asynchronously during level setup. Do not start the
+    // camera/dialogue beat until the actual character (or its explicit visual
+    // fallback) is attached, otherwise the conversation can show an empty spot.
+    await this.gekkoModelsReady;
+
     const cinematicCamera = (window as any).gameInstance?.cinematicCamera;
     const cameraController = (window as any).gameInstance?.cameraController;
     const hud = (window as any).gameInstance?.hud;
+
+    if (!cinematicCamera || !hud) {
+      this.isCinematicPlaying = false;
+      return;
+    }
+
+    // These developer-only sky controls occupy the same corner as Gekko in
+    // this two-shot. Temporarily hide them so the NPC remains visible.
+    this.setSkyDebugPanelVisible(false);
 
     if (cinematicCamera && hud) {
       // Pause enemy AI!
@@ -4813,6 +4833,7 @@ export class LevelToyStory {
 
         await hud.fadeScreenIn(300);
         hud.showGameplayHUD();
+        this.setSkyDebugPanelVisible(true);
       };
 
       const skipHandler = (e: KeyboardEvent) => {
@@ -4971,6 +4992,13 @@ export class LevelToyStory {
     const cinematicCamera = (window as any).gameInstance?.cinematicCamera;
     const hud = (window as any).gameInstance?.hud;
 
+    if (!cinematicCamera || !hud) {
+      this.isCinematicPlaying = false;
+      return;
+    }
+
+    this.setSkyDebugPanelVisible(false);
+
     if (cinematicCamera && hud) {
       // Pause enemy AI!
       this.enemies.forEach(e => e.isPaused = true);
@@ -5032,6 +5060,7 @@ export class LevelToyStory {
 
         await hud.fadeScreenIn(300);
         hud.showGameplayHUD();
+        this.setSkyDebugPanelVisible(true);
 
         // ── FASE 2-5: KeyPickupSequence for Gekko Orange Key (key1_gekko) ──
         console.log('[GEKKO] Orange Key given');
@@ -5441,9 +5470,14 @@ export class LevelToyStory {
     const gekkoDistanceForAction = gekkoPosForAction
       ? Math.hypot(playerPos.x - gekkoPosForAction.x, playerPos.z - gekkoPosForAction.z)
       : Infinity;
+    // Keep the whole proximity/control gate around every mission state. The
+    // previous ungrouped `||` terms made active/rewarded Gekko consume E from
+    // anywhere on the map, which could steal chest/interact presses.
     const gekkoNeedsAction = gekkoDistanceForAction < 5.5 && !this.isCinematicPlaying &&
       !this.player.isControlsLocked && !this.player.isMovementLocked &&
-      this.gekkoMissionState === 'NOT_STARTED' || this.gekkoMissionState === 'MISSION_ACTIVE' || this.gekkoMissionState === 'REWARD_GIVEN';
+      (this.gekkoMissionState === 'NOT_STARTED' ||
+        this.gekkoMissionState === 'MISSION_ACTIVE' ||
+        this.gekkoMissionState === 'REWARD_GIVEN');
     const interactWithGekko = gekkoNeedsAction && this.inputManager.consumeInteractPress();
 
     const activeGame = (window as any).gameInstance;
@@ -6032,6 +6066,10 @@ export class LevelToyStory {
     this.player.isMovementLocked = true;
     this.player.isAttacking = false;
     this.player.forceIdle();
+    // Reuse the exact Step_Backward reaction that plays for the tree-snake
+    // ambush, without its surprise icon; it gives Wukong the requested ready
+    // stance as the boss encounter begins, without adding a new animation.
+    this.player.animationController.playSnakeSurprise();
     this.enemies.forEach(enemy => { enemy.isPaused = true; });
     this.bossEnemy.isPaused = true;
     this.bossEnemy.mesh.position.copy(this.bossEnemy.arenaCenter!);
@@ -6114,6 +6152,11 @@ export class LevelToyStory {
       console.warn('[Boss Cinematic] Camera move ended early:', error);
       finishCinematic();
     }
+  }
+
+  private setSkyDebugPanelVisible(visible: boolean): void {
+    const panel = this.skyDebugPanel?.parentElement;
+    if (panel) panel.style.display = visible ? '' : 'none';
   }
 
   private createSkyDebugPanel(): void {

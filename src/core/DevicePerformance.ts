@@ -20,11 +20,14 @@ export function isMobileDevice(): boolean {
 }
 
 export function renderPixelRatio(quality = 1): number {
-  // Cap low-capability hardware at 1x. Faster Retina devices can start at
-  // 1.5x and the frame-time controller steps down only if actual gameplay
-  // misses its budget. Desktop retains its existing 1.5x cap.
+  // Keep mobile at native CSS-pixel resolution at startup. A 1.5x Retina
+  // backing store costs 2.25x as many fragments and can exhaust tile-based
+  // mobile GPUs when the full level first appears. HUD remains DOM-rendered;
+  // the runtime frametime controller can lower this further on slower phones.
+  // Desktop retains its existing 1.5x cap.
+  const mobile = isMobileDevice();
   const lowPower = isLowPowerDevice();
-  const cap = lowPower ? 1 : 1.5;
+  const cap = mobile || lowPower ? 1 : 1.5;
   const deviceRatio = Math.min(window.devicePixelRatio || 1, cap);
   return Math.max(0.5, deviceRatio * quality);
 }

@@ -50,6 +50,7 @@ export class Game {
   private gameplayPrepared = false;
   private gameplayPreparation: Promise<void> | null = null;
   private gameplayWarmupScheduled = false;
+  private optionalPlayerAnimationsScheduled = false;
   private frameTimeAverageMs = 16.67;
   private renderScale = 1;
   private performanceSampleElapsed = 0;
@@ -631,23 +632,49 @@ export class Game {
     this.isPaused = false;
     document.getElementById('pause-screen')?.classList.add('hidden');
     this.hud.showGameplayHUD();
-    // Grass is downloaded and instanced after the first playable frame, in
-    // small sector batches, so it cannot hold the menu or transition hostage.
-    void this.level01.loadGrassInBackground();
-    // These optional, larger FBX clips are parsed and retargeted one at a time
-    // after play starts, so they don't delay mobile startup or the first frame.
-    void this.assetManager.loadContinueAnimation(this.player.mesh)
-      .then((continueClip) => {
-        if (continueClip?.tracks.length) this.animationController.addClips([continueClip]);
-        if (this.gameOverActive && this.animationController.hasClip('Continue')) {
-          this.animationController.playOneShot('Continue', () => {}, 1);
+    // Keep the first few seconds of gameplay responsive on phones and weaker
+    // GPUs. The authored grass remains intact, but its download/instancing now
+    // begins only when the browser has an idle window (or after a short delay).
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    };
+    window.setTimeout(() => {
+      if (idleWindow.requestIdleCallback) {
+        idleWindow.requestIdleCallback(() => { void this.level01.loadGrassInBackground(); }, { timeout: 12000 });
+      } else {
+        void this.level01.loadGrassInBackground();
+      }
+    }, 9000);
+    // Continue/decorative traversal clips are not needed for the first playable
+    // frame. Downloading, parsing and retargeting FBX on the main thread right
+    // after Continue used to produce a long hitch on phones. Start that work
+    // only after the player has had time to move, in an idle window, and keep
+    // its existing one-at-a-time parse behavior.
+    if (!this.optionalPlayerAnimationsScheduled) {
+      this.optionalPlayerAnimationsScheduled = true;
+      window.setTimeout(() => {
+        const loadOptionalAnimations = async () => {
+          try {
+            const continueClip = await this.assetManager.loadContinueAnimation(this.player.mesh);
+            if (continueClip?.tracks.length) this.animationController.addClips([continueClip]);
+            if (this.gameOverActive && this.animationController.hasClip('Continue')) {
+              this.animationController.playOneShot('Continue', () => {}, 1);
+            }
+            const clips = await this.assetManager.loadSupplementalPlayerClips(this.player.mesh);
+            this.animationController.addClips(clips);
+            const lateClips = await this.assetManager.loadLatePlayerClips(this.player.mesh);
+            this.animationController.addClips(lateClips);
+          } catch (error) {
+            console.warn('[Game] Some optional Wukong animations could not be prepared:', error);
+          }
+        };
+        if (idleWindow.requestIdleCallback) {
+          idleWindow.requestIdleCallback(() => { void loadOptionalAnimations(); }, { timeout: 15000 });
+        } else {
+          void loadOptionalAnimations();
         }
-      })
-      .then(() => this.assetManager.loadSupplementalPlayerClips(this.player.mesh))
-      .then((clips) => {
-        this.animationController.addClips(clips);
-      })
-      .catch((error) => console.warn('[Game] Some optional Wukong animations could not be prepared:', error));
+      }, 20000);
+    }
   }
 
   private performAirAttack(): void {

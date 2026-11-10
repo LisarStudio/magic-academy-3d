@@ -411,7 +411,6 @@ export class AssetManager {
       const [
         idleUnarmed,
         runUnarmed,
-        narutoRun,
         jumpUnarmed,
         wukongDoubleJump,
         wukongFall,
@@ -419,9 +418,7 @@ export class AssetManager {
         wukongKick,
         idleArmed,
         castSpellData,
-        deathFromRight,
         hitReaction,
-        stepBackward,
         staffModel
       ] = await Promise.all([
         // iddle_2.fbx is the calm second idle supplied for the gameplay loop.
@@ -429,7 +426,6 @@ export class AssetManager {
         // separate wukong_kick.fbx remains exclusively the player attack.
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle_2.fbx?v=20261025-idle2', 'Idle_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Running.fbx', 'Run_Unarmed', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_naruto_run.fbx', 'Wukong_Naruto_Run', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Jumping.fbx', 'Jump_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong_no_wood_double_jumpFront Flip.fbx?v=7', 'Wukong_NoWood_DoubleJump', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_falling_air.fbx', 'Fall_Unarmed', playerModel, translationScaleFactor),
@@ -438,9 +434,7 @@ export class AssetManager {
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle.fbx', 'Idle_Armed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_atack_baculo.fbx', 'atack_wood', playerModel, translationScaleFactor)
           .then(async (clip) => clip || (await this.loadAndRetargetGltfClip(import.meta.env.BASE_URL + 'assets/characters/atack_wood.glb', 'atack_wood', playerModel!))?.clip || null),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Death From Right.fbx?v=20261029-death', 'Death_From_Right', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Reaction.fbx?v=20261029-reaction', 'Reaction', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Step Backward.fbx?v=20261029-step-backward', 'Step_Backward', playerModel, translationScaleFactor),
         staffModelPromise
       ]);
 
@@ -455,7 +449,6 @@ export class AssetManager {
       const clips: THREE.AnimationClip[] = [];
       if (idleUnarmed) clips.push(idleUnarmed);
       if (runUnarmed) clips.push(runUnarmed);
-      if (narutoRun) clips.push(narutoRun);
       if (jumpUnarmed) clips.push(jumpUnarmed);
       if (wukongDoubleJump) clips.push(wukongDoubleJump);
       if (wukongFall) {
@@ -477,9 +470,7 @@ export class AssetManager {
         aliasClip.name = 'CastSpell';
         clips.push(aliasClip);
       }
-      if (deathFromRight?.tracks.length) clips.push(deathFromRight);
       if (hitReaction?.tracks.length) clips.push(hitReaction);
-      if (stepBackward?.tracks.length) clips.push(stepBackward);
 
       console.log(`[AssetManager] 🎬 Total clips loaded: ${clips.length} → [${clips.map((c) => c.name).join(', ')}]`);
 
@@ -531,6 +522,31 @@ export class AssetManager {
   public async loadContinueAnimation(targetRoot: THREE.Object3D): Promise<THREE.AnimationClip | null> {
     const url = `${import.meta.env.BASE_URL}assets/characters/wukong/continue.fbx?v=20261027-gameover`;
     return this.loadAndRetargetClip(url, 'Continue', targetRoot, this.playerTranslationScale);
+  }
+
+  /** Load nonessential animation variants after the initial playable encounter. */
+  public async loadLatePlayerClips(targetRoot: THREE.Object3D): Promise<THREE.AnimationClip[]> {
+    const specs: Array<[string, string, string]> = [
+      ['assets/characters/wukong/wukong_naruto_run.fbx', 'Wukong_Naruto_Run', '20261025-naruto-run'],
+      ['assets/characters/wukong/Death From Right.fbx', 'Death_From_Right', '20261029-death'],
+      ['assets/characters/wukong/Step Backward.fbx', 'Step_Backward', '20261029-step-backward']
+    ];
+    const clips: THREE.AnimationClip[] = [];
+    for (const [path, name, version] of specs) {
+      await new Promise<void>((resolve) => {
+        const ric = (window as any).requestIdleCallback as ((cb: () => void, options?: { timeout: number }) => number) | undefined;
+        if (ric) ric(resolve, { timeout: 4000 });
+        else window.setTimeout(resolve, 500);
+      });
+      const clip = await this.loadAndRetargetClip(
+        `${import.meta.env.BASE_URL}${path}?v=${version}`,
+        name,
+        targetRoot,
+        this.playerTranslationScale
+      );
+      if (clip?.tracks.length) clips.push(clip);
+    }
+    return clips;
   }
 
   /** Load the larger optional traversal/combat clips after the first playable frame. */

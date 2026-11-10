@@ -100,11 +100,6 @@ export class GekkoNPC {
         this.waveAction.play();
       }
 
-      // Load talks animation
-      const talksGltf = await loader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/gekko_talks.glb');
-      if (talksGltf.animations && talksGltf.animations.length > 0) {
-        this.talkAction = this.mixer.clipAction(talksGltf.animations[0]);
-      }
     } catch (error) {
       console.warn('Failed to load Gekko models (gekko_wave.glb / gekko_talks.glb). Please ensure files exist in public/assets/characters/.', error);
       
@@ -114,7 +109,37 @@ export class GekkoNPC {
       const fallbackMesh = new THREE.Mesh(fallbackGeo, fallbackMat);
       fallbackMesh.position.y = 1.0;
       this.mesh.add(fallbackMesh);
+      return;
     }
+
+    // The wave GLB is the visible NPC and must finish before starting his
+    // cinematic. The separate talk clip is optional: downloading/parsing it in
+    // the same promise left Gekko's first conversation waiting behind a second
+    // 1.5 MB asset even though his model was already on screen.
+    void loader.loadAsync(import.meta.env.BASE_URL + 'assets/characters/gekko_talks.glb')
+      .then((talksGltf) => {
+        if (!talksGltf.animations?.length || !this.mixer) return;
+        // The talk GLB contains two takes. The first was authored against a
+        // differently offset armature: its Hips position travels several
+        // world units during the clip, which moves the whole character away
+        // from the NPC root and makes Gekko disappear during dialogue. Keep
+        // the facial/body performance, but pin the hips in place as a talk
+        // animation must not translate the NPC out of the shot.
+        const talkClip = talksGltf.animations[0].clone();
+        // GLTFLoader sanitizes ':' out of node names (mixamorig:Hips becomes
+        // mixamorigHips), so match the bone suffix instead of relying on ':'
+        // in a Three.js track path.
+        talkClip.tracks = talkClip.tracks.filter((track) =>
+          !/Hips\.(?:position|scale)$/i.test(track.name)
+        );
+        if (talkClip.tracks.length === 0) return;
+        this.talkAction = this.mixer.clipAction(talkClip);
+        if (this.isTalking) {
+          if (this.waveAction) this.waveAction.crossFadeTo(this.talkAction, 0.2, true);
+          this.talkAction.reset().play();
+        }
+      })
+      .catch((error) => console.warn('[GekkoNPC] Talk animation unavailable; keeping the loaded character and wave animation.', error));
   }
 
   public setTalking(talking: boolean): void {
@@ -125,12 +150,6 @@ export class GekkoNPC {
       if (talking && this.talkAction) {
         if (this.waveAction) this.waveAction.crossFadeTo(this.talkAction, 0.5, true);
         this.talkAction.reset().play();
-        
-        // The talks animation natively rotates the character sideways.
-        // We counter-rotate the internal model so he keeps facing the player.
-        // We use -Math.PI / 2 because in the screenshot he was facing right instead of forward.
-        const model = this.mesh.children[0];
-        if (model) model.rotation.y = -Math.PI / 2;
 
       } else if (!talking && this.waveAction) {
         if (this.talkAction) this.talkAction.crossFadeTo(this.waveAction, 0.5, true);
