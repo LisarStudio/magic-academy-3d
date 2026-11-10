@@ -124,9 +124,10 @@ export class LevelToyStory {
   private optionalArchitectureLoading = false;
   private optionalHouseFloorCollider: THREE.Mesh | null = null;
   private readonly highHouseCenter = new THREE.Vector3(38, 0, -92);
-  // The original GLB's walkable first-storey deck sits at Y=6.0 relative to
-  // its base. Keep its gameplay floor aligned to that authored surface.
-  private readonly abandonedHouseDeckHeight = 6.04;
+  // The original GLB's first-storey deck top is at local Y=6.10; its lowest
+  // authored vertex is Y=-0.0364. Keep gameplay support on that measured
+  // surface after aligning the model base with the sampled terrain.
+  private readonly abandonedHouseDeckHeight = 6.1364;
   private centralTempleFloorTopY: number | null = null;
   private centralTempleFloorWidth = 0;
   private centralTempleFloorDepth = 0;
@@ -138,6 +139,13 @@ export class LevelToyStory {
   private dragonRun: VolcanicDragonRun | null = null;
   private powerOrbSystem: PowerOrbSystem | null = null;
   private curiosityChest!: TreasureChest;
+  private cryptDust: THREE.Points | null = null;
+  private cryptDustBasePositions: Float32Array | null = null;
+  private cryptDustPhases: Float32Array | null = null;
+  private cryptDustTime = 0;
+  private cryptWalkableSurfaces: THREE.Mesh[] = [];
+  private cryptGuardians: EnemyController[] = [];
+  private cryptGuardiansCleared = false;
   private lifePickupSource: THREE.Object3D | null = null;
   private lifePickups: Array<{
     id: string; root: THREE.Group; item: THREE.Object3D;
@@ -169,6 +177,13 @@ export class LevelToyStory {
   private canopyChest: TreasureChest | null = null;
   private canopyChestOpen = false;
   private canopyRewardHint: THREE.Object3D | null = null;
+  private canopyTrialActivated = false;
+  private canopyTrialCompleted = false;
+  private canopyActivationProgress = 0;
+  private canopyPlatformsMaterial: THREE.MeshStandardMaterial | null = null;
+  private canopyRouteVisuals: THREE.Object3D[] = [];
+  private canopyPlatformColliders: THREE.Mesh[] = [];
+  private canopyFireflies: Array<{ mesh: THREE.Mesh; phase: number; radius: number }> = [];
   private canopyTraversal: 'climb' | 'top' | 'swing' | null = null;
   private canopyTraversalCurve: THREE.QuadraticBezierCurve3 | null = null;
   private canopyTraversalElapsed = 0;
@@ -210,6 +225,11 @@ export class LevelToyStory {
   /** Explicit fallback floor for the enclosed chamber when a ray misses its thin floor collider. */
   public getCuriosityCryptFloorY(): number {
     return this.curiosityCryptFloorY;
+  }
+
+  /** Only the three low altar surfaces need extra ground sampling underground. */
+  public getCuriosityCryptWalkableSurfaces(): THREE.Mesh[] {
+    return this.cryptWalkableSurfaces;
   }
 
   private isVegetationNearPath(x: number, z: number, clearance = 1.8): boolean {
@@ -1048,9 +1068,11 @@ export class LevelToyStory {
       console.warn('[LevelToyStory] Could not load the Chinese red lamp asset.', lampResult.reason);
     }
 
-    // Existing lantern fill, tuned up to reveal the interior timber and floor
-    // at night without adding shadow-casting lights or a global color filter.
-    const warmFill = new THREE.PointLight(0xffc98c, 5.6, 34, 2);
+    // Keep the entrance glow local to the temple so it does not wash the lawn.
+    // The two authored-lantern pairs at the stair sides provide the additional
+    // warm edge light without adding one light per lantern.
+    const warmFill = new THREE.PointLight(0xffbd76, 3.8, 20, 2);
+    warmFill.name = 'central_temple_entrance_warm_fill_no_shadows';
     const templeFront = this.centralTempleObject
       ? this.centralTempleObject.localToWorld(new THREE.Vector3(0, 0, -4.4))
       : new THREE.Vector3(24, 0, -35.6);
@@ -1062,6 +1084,21 @@ export class LevelToyStory {
     warmFill.castShadow = false;
     scene.add(warmFill);
     this.dayNightCycle?.registerNightLight(warmFill);
+
+    // A single shared, non-shadowing fill reveals the upper timber and windows.
+    // Its anchor is temple-local, so the light follows the original GLB if its
+    // authored transform changes; no geometry, materials, or lamp transforms
+    // are modified here.
+    if (this.centralTempleObject) {
+      const upperEaveFill = new THREE.PointLight(0xffaa60, 2.7, 15, 2);
+      upperEaveFill.name = 'central_temple_upper_eave_warm_fill_no_shadows';
+      upperEaveFill.position.copy(this.centralTempleObject.localToWorld(
+        new THREE.Vector3(0, 11.8, -6.3)
+      ));
+      upperEaveFill.castShadow = false;
+      scene.add(upperEaveFill);
+      this.dayNightCycle?.registerNightLight(upperEaveFill);
+    }
     this.player.setColliders(this.levelColliders);
     this.cameraController.setCollisionObjects(this.levelColliders);
     this.cameraController.setTerrainHeightProvider((x, z) => this.getTerrainHeight(x, z));
@@ -3350,7 +3387,12 @@ export class LevelToyStory {
       this.levelColliders.push(step);
     }
 
-    const caveWallMat = new THREE.MeshStandardMaterial({ color: 0x49413b, roughness: 0.94, metalness: 0.02, flatShading: true });
+    // Reuse the level's authored stone texture maps, lightly cool-tinted for
+    // the underground chamber rather than replacing them with flat black stone.
+    const caveWallMat = stoneMat.clone() as THREE.MeshStandardMaterial;
+    caveWallMat.color.multiply(new THREE.Color(0.72, 0.78, 0.92));
+    caveWallMat.roughness = 0.94;
+    caveWallMat.metalness = 0.02;
     const caveCeilingMat = new THREE.MeshStandardMaterial({ color: 0x292a31, roughness: 0.98, flatShading: true, side: THREE.DoubleSide });
     const floor = new THREE.Mesh(new THREE.BoxGeometry(29.5, 0.4, 27.5), stoneMat);
     floor.name = 'curiosity_chamber_floor';
@@ -3432,32 +3474,153 @@ export class LevelToyStory {
       scene.add(light);
     });
 
-    const plinth = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.3, 6.0), stoneMat);
-    plinth.name = 'curiosity_chest_plinth';
-    plinth.position.set(-33.4, -5.75, castleCenterZ);
-    plinth.receiveShadow = true;
-    scene.add(plinth);
-    this.levelColliders.push(plinth);
+    // Replace the temporary rectangular block with a low octagonal altar. Its
+    // top remains at the old platform height, while shallow approach steps
+    // keep the chest reachable without forcing a jump.
+    const altarStone = caveWallMat.clone();
+    altarStone.color.multiply(new THREE.Color(1.08, 1.04, 0.96));
+    const altarBase = new THREE.Mesh(new THREE.CylinderGeometry(3.1, 3.35, 0.3, 8), altarStone);
+    altarBase.name = 'curiosity_ancestral_altar_base';
+    altarBase.userData.walkableSupport = true;
+    altarBase.userData.cryptWalkableSupport = true;
+    altarBase.position.set(-33.4, -5.75, castleCenterZ);
+    altarBase.receiveShadow = true;
+    altarBase.castShadow = true;
+    scene.add(altarBase);
+    this.levelColliders.push(altarBase);
+    this.cryptWalkableSurfaces = [altarBase];
 
-    this.curiosityChest = new TreasureChest(new THREE.Vector3(-33.4, -5.6, castleCenterZ), Math.PI);
+    const stepMaterial = altarStone.clone();
+    for (let i = 0; i < 2; i++) {
+      const height = 0.09 + i * 0.09;
+      const step = new THREE.Mesh(new THREE.BoxGeometry(0.95, height, 2.45), stepMaterial);
+      step.name = `curiosity_altar_approach_step_${i + 1}`;
+      step.userData.walkableSupport = true;
+      step.userData.cryptWalkableSupport = true;
+      step.position.set(-29.55 - i * 0.8, this.curiosityCryptFloorY + height * 0.5 + 0.01, castleCenterZ);
+      step.receiveShadow = true;
+      scene.add(step);
+      this.levelColliders.push(step);
+      this.cryptWalkableSurfaces.push(step);
+    }
+
+    const goldStone = new THREE.MeshStandardMaterial({
+      color: 0x9c7540, roughness: 0.58, metalness: 0.48,
+      emissive: 0x261706, emissiveIntensity: 0.22,
+    });
+    const pillarGeometry = new THREE.CylinderGeometry(0.18, 0.25, 1.55, 8);
+    const pillarPositions = [
+      [-35.25, castleCenterZ - 2.15], [-35.25, castleCenterZ + 2.15],
+      [-31.65, castleCenterZ - 2.15], [-31.65, castleCenterZ + 2.15],
+    ];
+    pillarPositions.forEach(([x, z], index) => {
+      const pillar = new THREE.Group();
+      pillar.name = `curiosity_altar_ornament_pillar_${index + 1}`;
+      pillar.position.set(x, this.curiosityCryptFloorY + 0.775, z);
+      const shaft = new THREE.Mesh(pillarGeometry, altarStone);
+      shaft.castShadow = true;
+      shaft.receiveShadow = true;
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.29, 0.16, 8), goldStone);
+      cap.position.y = 0.72;
+      const foot = cap.clone();
+      foot.position.y = -0.72;
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.23, 0.035, 6, 16), goldStone);
+      band.position.y = 0.36;
+      const lowerBand = band.clone();
+      lowerBand.position.y = -0.36;
+      pillar.add(shaft, cap, foot, band, lowerBand);
+      scene.add(pillar);
+      // Decorative posts intentionally have no player collider.
+    });
+
+    const altarRune = new THREE.Mesh(
+      new THREE.TorusGeometry(1.85, 0.028, 6, 48),
+      new THREE.MeshStandardMaterial({ color: 0xb88b4d, roughness: 0.7, metalness: 0.35, emissive: 0x172c3b, emissiveIntensity: 0.18 })
+    );
+    altarRune.name = 'curiosity_altar_floor_engraving';
+    altarRune.rotation.x = Math.PI / 2;
+    altarRune.position.set(-33.4, -5.585, castleCenterZ);
+    scene.add(altarRune);
+
+    // A single textured point cloud supplies very low-cost, soft ambient dust.
+    const dustCanvas = document.createElement('canvas');
+    dustCanvas.width = dustCanvas.height = 64;
+    const dustContext = dustCanvas.getContext('2d');
+    if (dustContext) {
+      const gradient = dustContext.createRadialGradient(32, 32, 1, 32, 32, 31);
+      gradient.addColorStop(0, 'rgba(255,255,255,0.95)');
+      gradient.addColorStop(0.28, 'rgba(255,255,255,0.38)');
+      gradient.addColorStop(1, 'rgba(255,255,255,0)');
+      dustContext.fillStyle = gradient;
+      dustContext.fillRect(0, 0, 64, 64);
+    }
+    const dustTexture = new THREE.CanvasTexture(dustCanvas);
+    dustTexture.colorSpace = THREE.SRGBColorSpace;
+    const dustCount = 34;
+    const dustGeometry = new THREE.BufferGeometry();
+    const dustPositions = new Float32Array(dustCount * 3);
+    const dustColors = new Float32Array(dustCount * 3);
+    this.cryptDustBasePositions = new Float32Array(dustCount * 3);
+    this.cryptDustPhases = new Float32Array(dustCount);
+    const blueDust = new THREE.Color(0x8abfe5);
+    const goldDust = new THREE.Color(0xe6bd79);
+    for (let i = 0; i < dustCount; i++) {
+      const t = i / dustCount;
+      const nearAltar = i < 10;
+      const x = nearAltar ? -33.4 + Math.sin(i * 2.4) * 3.3 : -35.0 + t * 25.5;
+      const z = nearAltar ? castleCenterZ + Math.cos(i * 1.7) * 3.1 : castleCenterZ - 11.5 + ((i * 7) % 23);
+      const y = this.curiosityCryptFloorY + 0.75 + ((i * 11) % 32) / 10;
+      const offset = i * 3;
+      dustPositions[offset] = this.cryptDustBasePositions[offset] = x;
+      dustPositions[offset + 1] = this.cryptDustBasePositions[offset + 1] = y;
+      dustPositions[offset + 2] = this.cryptDustBasePositions[offset + 2] = z;
+      this.cryptDustPhases[i] = i * 1.618;
+      const tint = blueDust.clone().lerp(goldDust, (i % 5) === 0 ? 0.5 : 0.08);
+      dustColors[offset] = tint.r;
+      dustColors[offset + 1] = tint.g;
+      dustColors[offset + 2] = tint.b;
+    }
+    dustGeometry.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
+    dustGeometry.setAttribute('color', new THREE.BufferAttribute(dustColors, 3));
+    const dust = new THREE.Points(dustGeometry, new THREE.PointsMaterial({
+      map: dustTexture, size: 0.22, sizeAttenuation: true, vertexColors: true,
+      transparent: true, opacity: 0.3, depthWrite: false, alphaTest: 0.015,
+      blending: THREE.AdditiveBlending,
+    }));
+    dust.name = 'curiosity_crypt_ambient_dust';
+    dust.frustumCulled = false;
+    dust.visible = false;
+    this.cryptDust = dust;
+    scene.add(dust);
+
+    this.curiosityChest = new TreasureChest(new THREE.Vector3(-33.4, -5.6, castleCenterZ), Math.PI / 2);
     this.curiosityChest.mesh.name = 'curiosity_key_chest';
     scene.add(this.curiosityChest.mesh);
     this.chests.push(this.curiosityChest);
     this.levelColliders.push(this.curiosityChest.mesh);
   }
 
-  /** Optional canopy route in the western field, well away from the central temple. */
+  /** A small natural sanctuary and its original climb/swing key route, away from the pavilions. */
   private buildCanopyTrial(): void {
     const scene = this.sceneManager.scene;
-    const base = new THREE.Vector3(-72, this.getTerrainHeight(-72, -88), -88);
-    const top = new THREE.Vector3(-70.8, base.y + 4.18, -87.2);
-    const middle = new THREE.Vector3(-66.4, this.getTerrainHeight(-66.4, -84.5) + 0.62, -84.5);
-    const landing = new THREE.Vector3(-57.6, this.getTerrainHeight(-57.6, -76.8) + 0.38, -76.8);
+    // This western hill is over 65m from the nearest pavilion and well clear of
+    // the crypt hatch. Keep every route point derived from this single anchor.
+    const base = new THREE.Vector3(-125, this.getTerrainHeight(-125, -80), -80);
+    // Place the first landing outside the trunk collider. The previous endpoint
+    // was at the trunk's center, so the radial wall ray trapped Wukong there.
+    const top = new THREE.Vector3(base.x + 1.55, base.y + 4.18, base.z + 0.55);
+    const middle = new THREE.Vector3(-119.8, this.getTerrainHeight(-119.8, -76.5) + 0.62, -76.5);
+    const landing = new THREE.Vector3(-111.4, this.getTerrainHeight(-111.4, -68.8) + 0.38, -68.8);
     const bark = new THREE.MeshStandardMaterial({ color: 0x52331f, roughness: 0.94 });
     const leaf = new THREE.MeshStandardMaterial({ color: 0x367b48, roughness: 0.9, emissive: 0x10210d, emissiveIntensity: 0.18 });
-    const stone = new THREE.MeshStandardMaterial({ color: 0x626574, roughness: 0.88 });
+    const stone = new THREE.MeshStandardMaterial({
+      color: 0x57534c, roughness: 0.92, metalness: 0.02,
+      emissive: 0x120d06, emissiveIntensity: 0.18, transparent: true, opacity: 0,
+    });
+    this.canopyPlatformsMaterial = stone;
+
     const tree = new THREE.Group();
-    tree.name = 'west_canopy_climbing_tree';
+    tree.name = 'curiosity_tree_sanctuary';
     tree.position.copy(base);
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.9, 5.8, 10), bark);
     trunk.name = 'canopy_tree_trunk';
@@ -3465,6 +3628,16 @@ export class LevelToyStory {
     trunk.castShadow = true;
     trunk.receiveShadow = true;
     tree.add(trunk);
+    // Low, tapered roots visually seat the tree into the hill.
+    for (let i = 0; i < 5; i++) {
+      const angle = i * Math.PI * 2 / 5;
+      const root = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.34, 1.65, 7), bark);
+      root.position.set(Math.cos(angle) * 0.82, 0.42, Math.sin(angle) * 0.82);
+      root.rotation.z = Math.cos(angle) * 0.62;
+      root.rotation.x = -Math.sin(angle) * 0.62;
+      root.castShadow = true;
+      tree.add(root);
+    }
     for (let i = 0; i < 5; i++) {
       const crown = new THREE.Mesh(new THREE.DodecahedronGeometry(1.2 + (i % 2) * 0.22, 1), leaf);
       crown.position.set(Math.sin(i * 1.25) * 1.25, 5.45 + (i % 3) * 0.62, Math.cos(i * 1.25) * 1.0);
@@ -3477,19 +3650,69 @@ export class LevelToyStory {
     tree.add(branch);
     scene.add(tree);
 
-    const trunkCollider = new THREE.Mesh(new THREE.CylinderGeometry(0.83, 1.0, 5.8, 10), new THREE.MeshBasicMaterial({ colorWrite: false }));
+    const trunkCollider = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.74, 0.94, 3.25, 10),
+      new THREE.MeshBasicMaterial({ colorWrite: false })
+    );
     trunkCollider.name = 'canopy_tree_trunk_collision';
-    trunkCollider.position.copy(base).add(new THREE.Vector3(0, 2.9, 0));
+    // Stop below the raised landing so the player can step away from the trunk.
+    trunkCollider.position.copy(base).add(new THREE.Vector3(0, 1.625, 0));
     scene.add(trunkCollider);
     this.levelColliders.push(trunkCollider);
+
+    // Root sigil, small weathered stones and one shared non-shadowing glow make
+    // this location read as its own quiet natural shrine without costly lights.
+    const rootSigil = new THREE.Mesh(
+      new THREE.TorusGeometry(2.15, 0.045, 6, 48),
+      new THREE.MeshBasicMaterial({ color: 0xd7a94d, transparent: true, opacity: 0.7, toneMapped: false })
+    );
+    rootSigil.name = 'curiosity_tree_root_sigil';
+    rootSigil.position.set(base.x, base.y + 0.055, base.z);
+    rootSigil.rotation.x = Math.PI / 2;
+    scene.add(rootSigil);
+    const runeMarks = new THREE.Mesh(new THREE.TorusGeometry(1.55, 0.025, 5, 32), rootSigil.material);
+    runeMarks.name = 'curiosity_tree_inner_rune';
+    runeMarks.position.copy(rootSigil.position).add(new THREE.Vector3(0, 0.012, 0));
+    runeMarks.rotation.x = Math.PI / 2;
+    scene.add(runeMarks);
+    const shrineStone = new THREE.MeshStandardMaterial({ color: 0x4e5155, roughness: 0.96, flatShading: true });
+    for (let i = 0; i < 7; i++) {
+      const angle = i * Math.PI * 2 / 7 + 0.18;
+      const x = base.x + Math.cos(angle) * 3.05;
+      const z = base.z + Math.sin(angle) * 3.05;
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.34 + (i % 3) * 0.07, 0), shrineStone);
+      rock.name = `curiosity_sanctuary_ancient_stone_${i}`;
+      rock.position.set(x, this.getTerrainHeight(x, z) + 0.22, z);
+      rock.scale.set(1.25, 0.78 + (i % 2) * 0.18, 0.9);
+      rock.rotation.y = angle;
+      rock.castShadow = true;
+      scene.add(rock);
+    }
+    const shrineGlow = new THREE.PointLight(0xffc66b, 1.1, 8, 2);
+    shrineGlow.name = 'curiosity_tree_sanctuary_glow';
+    shrineGlow.position.copy(base).add(new THREE.Vector3(0, 1.3, 0));
+    shrineGlow.castShadow = false;
+    scene.add(shrineGlow);
+
+    const fireflyGeometry = new THREE.SphereGeometry(0.055, 6, 5);
+    const fireflyMaterial = new THREE.MeshBasicMaterial({ color: 0xffd977, toneMapped: false });
+    for (let i = 0; i < 7; i++) {
+      const mote = new THREE.Mesh(fireflyGeometry, fireflyMaterial);
+      mote.name = `curiosity_sanctuary_firefly_${i}`;
+      mote.position.copy(base).add(new THREE.Vector3(2.2, 0.65 + (i % 3) * 0.34, 0));
+      scene.add(mote);
+      this.canopyFireflies.push({ mesh: mote, phase: i * Math.PI * 2 / 7, radius: 1.8 + (i % 3) * 0.35 });
+    }
 
     const makeLanding = (position: THREE.Vector3, name: string, width: number, depth: number) => {
       const platform = new THREE.Mesh(new THREE.BoxGeometry(width, 0.55, depth), stone);
       platform.name = name;
       platform.position.set(position.x, position.y - 0.275, position.z);
       platform.castShadow = platform.receiveShadow = true;
+      platform.visible = false;
       scene.add(platform);
-      this.levelColliders.push(platform);
+      this.canopyRouteVisuals.push(platform);
+      this.canopyPlatformColliders.push(platform);
     };
     makeLanding(top, 'canopy_tree_top_landing', 2.8, 2.6);
     makeLanding(middle, 'canopy_middle_landing', 2.8, 2.6);
@@ -3498,10 +3721,15 @@ export class LevelToyStory {
     const makeVine = (from: THREE.Vector3, to: THREE.Vector3, name: string, lift: number) => {
       const control = new THREE.Vector3((from.x + to.x) * 0.5, Math.max(from.y, to.y) + lift, (from.z + to.z) * 0.5);
       const curve = new THREE.QuadraticBezierCurve3(from.clone(), control, to.clone());
-      const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 20, 0.065, 6, false), new THREE.MeshStandardMaterial({ color: 0x467a37, roughness: 0.95 }));
+      const mesh = new THREE.Mesh(
+        new THREE.TubeGeometry(curve, 20, 0.055, 6, false),
+        new THREE.MeshStandardMaterial({ color: 0x665335, roughness: 0.95, emissive: 0x171006, emissiveIntensity: 0.12 })
+      );
       mesh.name = name;
       mesh.castShadow = false;
+      mesh.visible = false;
       scene.add(mesh);
+      this.canopyRouteVisuals.push(mesh);
       return curve;
     };
     makeVine(top.clone().add(new THREE.Vector3(0, 1.35, 0)), middle.clone().add(new THREE.Vector3(0, 2.2, 0)), 'canopy_vine_swing_one', 3.2);
@@ -3516,30 +3744,89 @@ export class LevelToyStory {
       new THREE.Vector3((middle.x + landing.x) * 0.5, Math.max(middle.y, landing.y) + 2.8, (middle.z + landing.z) * 0.5),
       landing.clone()
     );
-    const vineGlowMaterial = new THREE.MeshBasicMaterial({ color: 0xffdc78, toneMapped: false });
+    const vineGlowMaterial = new THREE.MeshBasicMaterial({ color: 0xffd77c, toneMapped: false });
     [top, middle].forEach((point, index) => {
       const marker = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.045, 7, 24), vineGlowMaterial);
       marker.name = 'canopy_vine_grab_marker_' + index;
       marker.position.copy(point).add(new THREE.Vector3(0, 1.15, 0));
       marker.rotation.x = Math.PI / 2;
+      marker.visible = false;
       scene.add(marker);
+      this.canopyRouteVisuals.push(marker);
     });
 
     this.canopyChest = new TreasureChest(landing.clone(), Math.PI);
     this.canopyChest.mesh.name = 'canopy_secret_key_chest';
     scene.add(this.canopyChest.mesh);
-    this.levelColliders.push(this.canopyChest.mesh);
+    // Chests are interactable through proximity and do not need to be physical
+    // colliders; including the whole animated lid in wall rays caused blocking.
     this.chests.push(this.canopyChest);
-    this.canopyRewardHint = new THREE.Mesh(new THREE.OctahedronGeometry(0.3, 0), new THREE.MeshStandardMaterial({ color: 0x6ff5ff, emissive: 0x12cfee, emissiveIntensity: 1.8 }));
+    this.canopyRewardHint = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.3, 0),
+      new THREE.MeshStandardMaterial({ color: 0xf6cf77, emissive: 0xb68021, emissiveIntensity: 0.65 })
+    );
     this.canopyRewardHint.name = 'canopy_route_reward_hint';
     this.canopyRewardHint.position.copy(landing).add(new THREE.Vector3(0, 1.35, 0));
     scene.add(this.canopyRewardHint);
     this.canopyTrial = { base, top, middle, landing, firstPath, secondPath };
   }
 
+  private setCanopyRouteActive(active: boolean): void {
+    if (active === this.canopyTrialActivated || this.canopyTrialCompleted) return;
+    this.canopyTrialActivated = active;
+    for (const visual of this.canopyRouteVisuals) visual.visible = active;
+    if (active) {
+      for (const collider of this.canopyPlatformColliders) {
+        if (!this.levelColliders.includes(collider)) this.levelColliders.push(collider);
+      }
+    } else {
+      this.removeCanopyPlatformColliders();
+    }
+  }
+
+  private removeCanopyPlatformColliders(): void {
+    for (let i = this.levelColliders.length - 1; i >= 0; i--) {
+      if (this.canopyPlatformColliders.includes(this.levelColliders[i] as THREE.Mesh)) this.levelColliders.splice(i, 1);
+    }
+  }
+
+  private completeCanopyTrial(): void {
+    if (this.canopyTrialCompleted) return;
+    this.canopyTrialCompleted = true;
+    this.canopyTrialActivated = false;
+    this.canopyTraversal = null;
+    this.canopyTraversalCurve = null;
+    this.player.velocity.set(0, 0, 0);
+    this.player.isControlsLocked = false;
+    this.player.isMovementLocked = false;
+    this.player.isGrounded = true;
+    this.canopyRouteVisuals.forEach((visual) => { visual.visible = false; });
+    this.removeCanopyPlatformColliders();
+    this.canopyRewardHint?.removeFromParent();
+  }
+
   private updateCanopyTrial(delta: number, playerPos: THREE.Vector3): void {
     const route = this.canopyTrial;
     if (!route) return;
+    const time = performance.now() * 0.001;
+    for (const firefly of this.canopyFireflies) {
+      firefly.mesh.position.set(
+        route.base.x + Math.cos(time * 0.62 + firefly.phase) * firefly.radius,
+        route.base.y + 0.62 + (Math.sin(time * 1.05 + firefly.phase) + 1) * 0.56,
+        route.base.z + Math.sin(time * 0.62 + firefly.phase) * firefly.radius
+      );
+    }
+    if (this.canopyTrialCompleted) return;
+    const horizontal = (point: THREE.Vector3) => Math.hypot(playerPos.x - point.x, playerPos.z - point.z);
+    const distBase = horizontal(route.base);
+    if (!this.canopyTrialActivated && distBase < 18) {
+      this.setCanopyRouteActive(true);
+      this.subtitleSystem.show('Árbol de la Curiosidad', 'Las runas despiertan. Trepa al árbol y cruza las plataformas para alcanzar la llave.');
+    }
+    if (this.canopyPlatformsMaterial && this.canopyTrialActivated && this.canopyActivationProgress < 1) {
+      this.canopyActivationProgress = Math.min(1, this.canopyActivationProgress + delta * 2.8);
+      this.canopyPlatformsMaterial.opacity = this.canopyActivationProgress;
+    }
     if (this.canopyTraversal) {
       this.player.velocity.set(0, 0, 0);
       if (this.canopyTraversal === 'top') {
@@ -3556,8 +3843,6 @@ export class LevelToyStory {
       return;
     }
 
-    const horizontal = (point: THREE.Vector3) => Math.hypot(playerPos.x - point.x, playerPos.z - point.z);
-    const distBase = horizontal(route.base);
     const distTop = horizontal(route.top);
     const distMiddle = horizontal(route.middle);
     if (!this.canopyTutorialShown && distBase < 17) {
@@ -3658,6 +3943,7 @@ export class LevelToyStory {
         } else {
           this.powerOrbSystem?.spawn(this.canopyChest!.mesh.position, 30);
           this.subtitleSystem.show('Cofre secreto', 'El cofre contiene una Esfera de Poder.');
+          this.completeCanopyTrial();
         }
       });
       if (this.canopyRewardHint) this.canopyRewardHint.visible = false;
@@ -4476,8 +4762,17 @@ export class LevelToyStory {
       coinPositions.push(new THREE.Vector3(x, this.getTerrainHeight(x, z) + 0.6, z));
     }
 
-    // 4. Temple-side ground route (the old mezzanine was removed)
-    [[-9.2, -44], [-9.2, -36], [-4, -53], [0, -51], [4, -48], [9.2, -44], [4, -34], [-4, -34]].forEach(([x, z]) => {
+    // 4. Four exterior rear/side approach coins move below ground into the
+    // crypt. They retain coin_38..coin_41, while the temple interior coins and
+    // the separate eight cabin coins keep their original positions and IDs.
+    [
+      [-15.5, -5.3, -49.0], // crypt entry side
+      [-23.0, -5.3, -31.5], // central north lane
+      [-23.0, -5.3, -48.5], // central south lane
+      [-32.0, -5.3, -44.8], // altar approach
+    ].forEach(([x, y, z]) => coinPositions.push(new THREE.Vector3(x, y, z)));
+    // Remaining temple-side exterior route positions.
+    [[4, -48], [9.2, -44], [4, -34], [-4, -34]].forEach(([x, z]) => {
       coinPositions.push(new THREE.Vector3(x, this.getTerrainHeight(x, z) + 0.6, z));
     });
 
@@ -4517,9 +4812,8 @@ export class LevelToyStory {
     }
 
     // Keep the existing 50-coin quest total; redistribute eight route coins
-    // inside the new wooden house rather than creating extra quest currency.
-    // Their vertical position uses the authored first-storey deck height, not
-    // the varying hillside underneath the raised house.
+    // inside the wooden house rather than creating extra quest currency.
+    // Their height follows the measured first-storey deck, not the hillside.
     const houseCoinY = this.getAbandonedHouseFloorTopY() + 0.15;
     const highHouseCoins = [
       [34, -88], [38, -88], [42, -88], [34, -92],
@@ -4557,6 +4851,12 @@ export class LevelToyStory {
           checkedPos.z >= this.centralTempleFloorCenterZ - templeHalfDepth &&
           checkedPos.z <= this.centralTempleFloorCenterZ + templeHalfDepth) {
         checkedPos.y = templeFloorY + 0.6;
+      } else if (checkedPos.x >= -36.5 && checkedPos.x <= -8.0 &&
+                 checkedPos.z >= -53.0 && checkedPos.z <= -27.0 &&
+                 checkedPos.y < -4.0) {
+        // Crypt coins sit at a fixed authored height above the underground
+        // stone floor; never project them back onto the terrain roof.
+        checkedPos.y = this.curiosityCryptFloorY + 0.6;
       } else if (Math.abs(checkedPos.x - this.highHouseCenter.x) < 7.5 &&
                  Math.abs(checkedPos.z - this.highHouseCenter.z) < 8.5) {
         checkedPos.y = this.getAbandonedHouseFloorTopY() + 0.15;
@@ -4756,19 +5056,26 @@ export class LevelToyStory {
       new THREE.Vector3(70.5, -7.45, -106), new THREE.Vector3(73.5, -7.45, -106),
     ]);
 
-    // The crypt is a small underground extension with its own two patrols.
-    // Their height band keeps them independent from the surface encounters.
-    const cryptGuard1 = new EnemyController('crypt_crab_guard_1', new THREE.Vector3(-30, -5.82, -33), [
-      new THREE.Vector3(-33, -5.82, -33), new THREE.Vector3(-27, -5.82, -33),
+    // Four existing crab controllers patrol the crypt in two entry and two
+    // central lanes. All positions share the chamber floor elevation.
+    const cryptGuard1 = new EnemyController('crypt_crab_guard_1', new THREE.Vector3(-14.5, -5.82, -35), [
+      new THREE.Vector3(-16, -5.82, -35), new THREE.Vector3(-12, -5.82, -35),
     ]);
-    const cryptGuard2 = new EnemyController('crypt_crab_guard_2', new THREE.Vector3(-20, -5.82, -47), [
-      new THREE.Vector3(-23, -5.82, -47), new THREE.Vector3(-17, -5.82, -47),
+    const cryptGuard2 = new EnemyController('crypt_crab_guard_2', new THREE.Vector3(-14.5, -5.82, -45), [
+      new THREE.Vector3(-16, -5.82, -45), new THREE.Vector3(-12, -5.82, -45),
     ]);
+    const cryptGuard3 = new EnemyController('crypt_crab_guard_3', new THREE.Vector3(-24, -5.82, -34), [
+      new THREE.Vector3(-27, -5.82, -34), new THREE.Vector3(-21, -5.82, -34),
+    ]);
+    const cryptGuard4 = new EnemyController('crypt_crab_guard_4', new THREE.Vector3(-24, -5.82, -46), [
+      new THREE.Vector3(-27, -5.82, -46), new THREE.Vector3(-21, -5.82, -46),
+    ]);
+    this.cryptGuardians = [cryptGuard1, cryptGuard2, cryptGuard3, cryptGuard4];
 
     // Boss Giant Crab in the Sand Arena (firmly grounded at y = 0.2)
     const bossY = 0.2;
     this.bossEnemy = new EnemyController('crab_boss', new THREE.Vector3(45, bossY, -40));
-    this.enemies.push(patrol1, patrol2, patrol3, patrol4, patrol5, lavaGuard1, lavaGuard2, cryptGuard1, cryptGuard2, this.bossEnemy);
+    this.enemies.push(patrol1, patrol2, patrol3, patrol4, patrol5, lavaGuard1, lavaGuard2, ...this.cryptGuardians, this.bossEnemy);
 
     this.enemies.forEach(e => {
       // The boss loader scales the supplied crab.glb from its measured height
@@ -4953,6 +5260,12 @@ export class LevelToyStory {
     // awardKey owns the idempotency check, persistence and HUD progress update.
     // Remove the world object only after that transaction accepts the pickup.
     if (!this.awardKey(keyId, keyPosition)) return;
+    if (keyId === 'key4_curiosity' && this.canopyTrial &&
+        Math.hypot(keyPosition.x - this.canopyTrial.landing.x, keyPosition.z - this.canopyTrial.landing.z) < 4.2) {
+      // The platforms are temporary challenge aids. Retire their collision on
+      // reward pickup so the landing can never become an invisible enclosure.
+      this.completeCanopyTrial();
+    }
     nearest.userData.collected = true;
     nearest.removeFromParent();
     const index = this.keysMeshes.indexOf(nearest);
@@ -4976,6 +5289,11 @@ export class LevelToyStory {
           this.isLavaVaultOpen = true;
           this.leverTarget = -Math.PI / 4;
           this.hatchTarget = 1;
+          // Start fetching/decoding the authored reward while Wukong travels
+          // to the underground room, not at the moment the chest is opened.
+          void preloadKeyModel('key4_curiosity').catch((error) =>
+            console.warn('[KEY] Curiosity key preload failed.', error)
+          );
           this.audioManager.playHitImpact();
           this.audioManager.playPortalActivate();
           this.subtitleSystem.show('Mecanismo Secreto', '¡El mecanismo del pabellón ha abierto una cámara secreta al otro lado del reino!');
@@ -5750,6 +6068,22 @@ export class LevelToyStory {
       this.starMaterial.uniforms.uPixelRatio.value = this.sceneManager.renderer.getPixelRatio();
     }
     if (this.cryptPortalMaterial) this.cryptPortalMaterial.uniforms.uTime.value = performance.now() / 1000;
+    if (this.cryptDust) {
+      this.cryptDust.visible = this.isInsideCuriosityCrypt;
+      if (this.isInsideCuriosityCrypt && this.cryptDustBasePositions && this.cryptDustPhases) {
+        this.cryptDustTime += delta;
+        const positions = this.cryptDust.geometry.getAttribute('position') as THREE.BufferAttribute;
+        const values = positions.array as Float32Array;
+        for (let i = 0; i < this.cryptDustPhases.length; i++) {
+          const offset = i * 3;
+          const phase = this.cryptDustPhases[i] + this.cryptDustTime * 0.3;
+          values[offset] = this.cryptDustBasePositions[offset] + Math.sin(phase) * 0.07;
+          values[offset + 1] = this.cryptDustBasePositions[offset + 1] + Math.sin(phase * 0.73) * 0.12;
+          values[offset + 2] = this.cryptDustBasePositions[offset + 2] + Math.cos(phase * 0.61) * 0.07;
+        }
+        positions.needsUpdate = true;
+      }
+    }
     this.constellationSystem?.update(delta, skyPhase);
     if (this.skyDebugPanel && this.dayNightCycle) {
       this.skyDebugElapsed -= delta;
@@ -5870,7 +6204,19 @@ export class LevelToyStory {
       this.staffChest.mesh.position.distanceTo(playerPos) < 2.2 &&
       !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying;
     const openStaffChest = chestInRange && this.inputManager.consumeInteractPress();
-    const curiosityChestInRange = this.isLavaVaultOpen && !this.curiosityChestOpen &&
+    const cryptGuardiansDefeated = this.cryptGuardians.length > 0 && this.cryptGuardians.every((enemy) => enemy.state === 'DEAD');
+    if (cryptGuardiansDefeated && !this.cryptGuardiansCleared) {
+      this.cryptGuardiansCleared = true;
+      this.curiosityChest.isUnlocked = true;
+      this.audioManager.playPortalActivate();
+      const hud = (window as any).gameInstance?.hud;
+      hud?.showInfoToast('CRIPTA ANCESTRAL', '¡Los guardianes han caído! El cofre ancestral está desbloqueado', 4200, 3);
+      (window as any).gameInstance?.saveGame(false);
+    }
+    const curiosityChestDistance = this.curiosityChest.mesh.position.distanceTo(playerPos);
+    const curiosityChestNear = this.isInsideCuriosityCrypt && this.isLavaVaultOpen && !this.curiosityChestOpen &&
+      curiosityChestDistance < 2.7 && !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying;
+    const curiosityChestInRange = curiosityChestNear && this.curiosityChest.isUnlocked &&
       this.curiosityChest.mesh.position.distanceTo(playerPos) < 2.7 &&
       !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying;
     const openCuriosityChest = curiosityChestInRange && this.inputManager.consumeInteractPress();
@@ -6070,7 +6416,9 @@ export class LevelToyStory {
     }
 
     // ── Chest Interaction — Staff Pickup ──────────────────────────────────────
-    if (curiosityChestInRange) {
+    if (curiosityChestNear && !this.curiosityChest.isUnlocked) {
+      hud?.showInteractionPrompt('Derrota a los guardianes para abrir el cofre');
+    } else if (curiosityChestInRange) {
       hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Abrir cofre · Acción' : 'Abrir cofre [E]');
     }
     if (openCuriosityChest) {
@@ -6080,7 +6428,6 @@ export class LevelToyStory {
       this.curiosityChest.unlock(this.audioManager, this.collectibleSystem, () => {
         if (this.curiosityKeySpawned || this.collectedKeys.key4_curiosity) return;
         this.curiosityKeySpawned = true;
-        this.powerOrbSystem?.spawn(this.curiosityChest.mesh.position, 60);
         this.spawn3DKey('key4_curiosity', this.curiosityChest.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0)));
         this.subtitleSystem.show('Cofre antiguo', 'Dentro del cofre está la Llave de la Curiosidad.');
       });
@@ -6181,8 +6528,17 @@ export class LevelToyStory {
       // center is around local X=-6.2. Align the proxy opening to that actual
       // doorway (world X ~= center + 6.7); centering it on the house sealed
       // the entrance with the front-wall collision box.
-      const entranceCenterX = this.highHouseCenter.x + 6.7;
-      const doorWidth = Math.min(5.2, houseSize.x * 0.40);
+      const requestedEntranceCenterX = this.highHouseCenter.x + 6.7;
+      const requestedDoorWidth = Math.min(5.2, houseSize.x * 0.40);
+      const houseMinX = this.highHouseCenter.x - halfWidth;
+      const houseMaxX = this.highHouseCenter.x + halfWidth;
+      // The authored opening sits close to the right edge of the facade.
+      // Clip it to the actual GLB bounds before deriving wall segments; the
+      // old unbounded width calculation produced a negative-sized wall box.
+      const doorMinX = THREE.MathUtils.clamp(requestedEntranceCenterX - requestedDoorWidth * 0.5, houseMinX, houseMaxX);
+      const doorMaxX = THREE.MathUtils.clamp(requestedEntranceCenterX + requestedDoorWidth * 0.5, houseMinX, houseMaxX);
+      const doorWidth = doorMaxX - doorMinX;
+      const entranceCenterX = (doorMinX + doorMaxX) * 0.5;
       const doorHeight = Math.min(wallHeight, this.abandonedHouseDeckHeight + 3.0);
       const collisionRoot = new THREE.Group();
       collisionRoot.name = 'abandoned_house_simplified_collision';
@@ -6192,6 +6548,7 @@ export class LevelToyStory {
         side: THREE.DoubleSide
       });
       const addWall = (name: string, width: number, height: number, depth: number, x: number, y: number, z: number) => {
+        if (width <= 0.02 || height <= 0.02 || depth <= 0.02) return;
         const wall = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), collisionMaterial);
         wall.name = name;
         wall.position.set(x, y, z);
@@ -6205,12 +6562,12 @@ export class LevelToyStory {
         this.highHouseCenter.x - halfWidth, wallCenterY, this.highHouseCenter.z);
       addWall('abandoned_house_right_wall', wallThickness, wallHeight, houseSize.z,
         this.highHouseCenter.x + halfWidth, wallCenterY, this.highHouseCenter.z);
-      const leftWidth = entranceCenterX - doorWidth * 0.5 - (this.highHouseCenter.x - halfWidth);
-      const rightWidth = this.highHouseCenter.x + halfWidth - (entranceCenterX + doorWidth * 0.5);
+      const leftWidth = doorMinX - houseMinX;
+      const rightWidth = houseMaxX - doorMaxX;
       addWall('abandoned_house_front_left', leftWidth, wallHeight, wallThickness,
-        this.highHouseCenter.x - halfWidth + leftWidth * 0.5, wallCenterY, this.highHouseCenter.z + halfDepth);
+        houseMinX + leftWidth * 0.5, wallCenterY, this.highHouseCenter.z + halfDepth);
       addWall('abandoned_house_front_right', rightWidth, wallHeight, wallThickness,
-        entranceCenterX + doorWidth * 0.5 + rightWidth * 0.5, wallCenterY, this.highHouseCenter.z + halfDepth);
+        doorMaxX + rightWidth * 0.5, wallCenterY, this.highHouseCenter.z + halfDepth);
       if (wallHeight > doorHeight) {
         addWall('abandoned_house_front_lintel', doorWidth, wallHeight - doorHeight, wallThickness,
           entranceCenterX, wallBottom + doorHeight + (wallHeight - doorHeight) * 0.5,
@@ -6218,13 +6575,11 @@ export class LevelToyStory {
       }
       this.sceneManager.scene.add(collisionRoot);
 
-      // The GLB's first-storey walkable deck is at local Y=6. The previous
-      // support at terrain+2.12 was several metres below the visible floor,
-      // leaving Wukong and the coins underneath the cabin. Keep a cheap,
-      // modest support aligned with that authored deck instead of colliding
-      // against the 330k-triangle visual mesh.
+      // The first-storey deck occupies roughly 15.5 x 19.2 m in the GLB.
+      // Extend its front edge to the authored doorway so there is no gap
+      // between the ramp landing and the interior floor collider.
       this.optionalHouseFloorCollider = new THREE.Mesh(
-        new THREE.BoxGeometry(16.5, 0.16, 18.5),
+        new THREE.BoxGeometry(houseSize.x - wallThickness * 2, 0.16, houseSize.z),
         new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide })
       );
       this.optionalHouseFloorCollider.name = 'abandoned_house_floor_support';
@@ -6237,13 +6592,14 @@ export class LevelToyStory {
       // without a jump while preserving the house's wall boundaries.
       const rampLength = 8.5;
       const rampThickness = 0.16;
+      // Overlap the walkable deck by 0.9 m to prevent a fall at the threshold.
       const rampInnerZ = this.highHouseCenter.z + halfDepth - 0.9;
       const rampOuterZ = rampInnerZ + rampLength;
       const rampApproachY = this.getTerrainHeight(entranceCenterX, rampOuterZ);
       const rampRise = houseFloorTopY - rampApproachY - rampThickness * 0.5;
       const rampAngle = Math.atan2(rampRise, rampLength);
       const ramp = new THREE.Mesh(
-        new THREE.BoxGeometry(doorWidth + 0.6, rampThickness, rampLength),
+        new THREE.BoxGeometry(Math.max(3.2, doorWidth - 0.3), rampThickness, rampLength),
         new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide })
       );
       ramp.name = 'abandoned_house_entry_ramp_support';
@@ -6265,7 +6621,7 @@ export class LevelToyStory {
       const triangleCount = houseMesh?.geometry.index?.count
         ? houseMesh.geometry.index.count / 3
         : (houseMesh?.geometry.getAttribute('position')?.count ?? 0) / 3;
-      console.info(`[LevelToyStory] Loaded high-house visual (${Math.round(triangleCount).toLocaleString()} tris) in ${Math.round(performance.now() - loadStartedAt)}ms; gameplay collision uses 6 simplified wall proxies, deck support and entry ramp.`);
+      console.info(`[LevelToyStory] Loaded high-house visual (${Math.round(triangleCount).toLocaleString()} tris) in ${Math.round(performance.now() - loadStartedAt)}ms; gameplay collision uses simplified wall segments, first-storey deck support and an overlapping entry ramp.`);
     }, undefined, (error) => {
       this.optionalArchitectureLoading = false;
       console.warn('[LevelToyStory] Optional high-house annex could not load.', error);
@@ -6345,6 +6701,7 @@ export class LevelToyStory {
     if (this.dragonLeverStick) this.dragonLeverStick.rotation.x = this.leverTarget;
     this.curiosityChestOpen = chestOpen;
     if (chestOpen) {
+      this.cryptGuardiansCleared = true;
       this.curiosityChest.restoreOpen();
       if (!this.collectedKeys.key4_curiosity) {
         this.curiosityKeySpawned = true;

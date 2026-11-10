@@ -954,6 +954,7 @@ export class Game {
       staffEquipped: this.player.staffEquipped,
       ...this.level01.getStaffProgressionSaveData(),
       coinsCount: this.collectibleSystem.coinCount,
+      collectedCoinIds: this.collectibleSystem.getCollectedCoinIds(),
       gekkoMissionState: this.level01.gekkoMissionState,
       checkpointId: this.checkpointManager.getCurrentCheckpointId(),
       collectedKeys: this.level01.collectedKeys,
@@ -1013,6 +1014,7 @@ export class Game {
         this.collectibleSystem.coinCount = data.coinsCount;
         this.hud.setCoinCount(this.collectibleSystem.coinCount);
       }
+      this.collectibleSystem.restoreCollectedCoinIds(data.collectedCoinIds);
       if (data.gekkoMissionState) {
         this.level01.gekkoMissionState = data.gekkoMissionState;
       }

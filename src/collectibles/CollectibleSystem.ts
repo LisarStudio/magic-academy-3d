@@ -160,6 +160,7 @@ export class CollectibleSystem {
   public collectibles: Collectible[] = [];
   public collectedCount = 0;
   public coinCount = 0;
+  private collectedCoinIds = new Set<string>();
   public totalCards = 3;
   private audioManager: AudioManager;
   private scene: THREE.Scene;
@@ -211,6 +212,22 @@ export class CollectibleSystem {
       }
     }
     this.collectibles = [];
+  }
+
+  public getCollectedCoinIds(): string[] {
+    return [...this.collectedCoinIds];
+  }
+
+  public restoreCollectedCoinIds(ids: unknown): void {
+    if (Array.isArray(ids)) {
+      this.collectedCoinIds = new Set(ids.filter((id): id is string => typeof id === 'string' && id.startsWith('coin_')));
+      for (const item of this.collectibles) {
+        if (item.type !== 'COIN') continue;
+        item.isCollected = this.collectedCoinIds.has(item.id);
+        if (item.isCollected) this.scene.remove(item.mesh);
+        else if (!item.mesh.parent) this.scene.add(item.mesh);
+      }
+    }
   }
 
   public spawnCard(id: string, position: THREE.Vector3): void {
@@ -344,6 +361,7 @@ export class CollectibleSystem {
           onCollectCard(this.collectedCount);
         } else if (nearestItem.type === 'COIN') {
           this.coinCount++;
+          this.collectedCoinIds.add(nearestItem.id);
           this.audioManager.playBeanPickup();
           this.spawnSparks(nearestItem.mesh.position);
           onCollectCoin?.(this.coinCount);

@@ -644,6 +644,7 @@ export class PlayerController {
     this.groundRaycaster.set(PlayerController.TEMP_GROUND_ORIGIN, PlayerController.DOWN_DIR);
     this.groundRaycaster.far = 4.8;
     const rawGroundHits = this.groundRaycaster.intersectObjects(this.colliders, true);
+    const isInCrypt = level?.isPlayerInsideCuriosityCrypt?.() === true;
 
     let validGroundHit: THREE.Intersection | null = null;
     for (const hit of rawGroundHits) {
@@ -658,7 +659,9 @@ export class PlayerController {
       // if a landing frame was missed at the doorway, Wukong can settle onto
       // the deck instead of remaining embedded below it. The snap itself still
       // only happens while descending, never during an upward jump.
+      const isCryptWalkableSupport = isInCrypt && hit.object.userData.cryptWalkableSupport === true;
       const maxSupportAboveRoot = isAuthoredRecoverySurface ? 2.25 : 0.45;
+      if (isInCrypt && !isCryptWalkableSupport && !isAuthoredRecoverySurface) continue;
       if (PlayerController.TEMP_NORM.y >= 0.40 && hit.point.y <= this.mesh.position.y + maxSupportAboveRoot && hit.point.y >= this.mesh.position.y - 2.4) {
         validGroundHit = hit;
         break;
@@ -673,16 +676,21 @@ export class PlayerController {
     // fast diagonal movement a nearby decorative/platform collider could
     // otherwise win the ray and pull Wukong underneath a hillside. The lower
     // crypt keeps its explicit collision floor without snapping back outdoors.
-    const isInCrypt = level?.isPlayerInsideCuriosityCrypt?.() === true;
     // Use the same sampled ground and walkable surface regardless of the
     // character's current height. Previously a fall below -1.5 m switched to
     // collider-only resolution, which could leave Wukong embedded underground.
     const cryptFloorY = level?.getCuriosityCryptFloorY?.();
+    const cryptAltarSupportY = isInCrypt && validGroundHit?.object.userData.cryptWalkableSupport === true
+      ? validGroundHit.point.y
+      : null;
     const floorY = isInCrypt
       // The cave's enclosing roof/terrain colliders can produce a misleading
       // ray hit at the surface. Its authored chamber floor is authoritative;
       // use it before any ray result so underground entry cannot snap outdoors.
-      ? (cryptFloorY ?? validGroundHit?.point.y ?? terrainY)
+      ? (cryptAltarSupportY !== null && cryptAltarSupportY >= (cryptFloorY ?? -Infinity) - 0.05 &&
+         cryptAltarSupportY <= (cryptFloorY ?? Infinity) + 0.45
+        ? cryptAltarSupportY
+        : (cryptFloorY ?? terrainY))
       : Math.max(terrainY, validGroundHit?.point.y ?? -Infinity);
 
     if (this.mesh.position.y <= floorY + 0.45 && this.velocity.y <= 0) {
@@ -983,7 +991,23 @@ export class PlayerController {
         : (levelAfterMove?.getTerrainHeight
           ? levelAfterMove.getTerrainHeight(this.mesh.position.x, this.mesh.position.z)
           : 0);
-      if (!isInsideCrypt && this.colliders.length > 0) {
+      if (isInsideCrypt) {
+        const cryptSupports = levelAfterMove?.getCuriosityCryptWalkableSurfaces?.() ?? [];
+        if (cryptSupports.length > 0) {
+          PlayerController.TEMP_GROUND_ORIGIN.copy(this.mesh.position).add(PlayerController.RAY_OFFSET);
+          this.groundRaycaster.set(PlayerController.TEMP_GROUND_ORIGIN, PlayerController.DOWN_DIR);
+          this.groundRaycaster.far = 4.8;
+          const supportHits = this.groundRaycaster.intersectObjects(cryptSupports, false);
+          for (const hit of supportHits) {
+            if (!hit.face) continue;
+            const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+            if (normal.y >= 0.4 && hit.point.y >= supportY - 0.05 && hit.point.y <= supportY + 0.45) {
+              supportY = hit.point.y;
+              break;
+            }
+          }
+        }
+      } else if (this.colliders.length > 0) {
         PlayerController.TEMP_GROUND_ORIGIN.copy(this.mesh.position).add(PlayerController.RAY_OFFSET);
         this.groundRaycaster.set(PlayerController.TEMP_GROUND_ORIGIN, PlayerController.DOWN_DIR);
         this.groundRaycaster.far = 4.8;
