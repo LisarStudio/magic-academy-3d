@@ -65,7 +65,7 @@ export class LevelToyStory {
   public collectedKeys = {
     key1_gekko: false, // 50 coins quest
     key2_boss: false,  // boss arena
-    key3_platform: false, // high tower
+    key3_platform: false, // legacy ID for the original Nature key
     key4_curiosity: false,
     key5_pots: false,
     key6_gargoyles: false
@@ -154,9 +154,11 @@ export class LevelToyStory {
   // Set the crypt away from the paved route so its reveal never obstructs the
   // approach to the temple or its stair landing.
   private readonly curiosityCryptSurface = new THREE.Vector3(-75, 0, -110);
+  private readonly curiosityCryptFloorY = -5.9;
   private readonly npcGazePoint = new THREE.Vector3();
   private readonly gekkoLookTarget = new THREE.Vector3();
-  private readonly curiosityCryptRoomEntry = new THREE.Vector3(-9.8, -5.82, -40);
+  private readonly curiosityCryptRoomEntry = new THREE.Vector3(-22.25, -5.9, -40);
+  private readonly curiosityCryptReturnPoint = new THREE.Vector3(-10.0, -5.9, -40);
   private isInsideCuriosityCrypt = false;
   private curiosityCryptTransitioning = false;
   private canopyTrial: { base: THREE.Vector3; top: THREE.Vector3; middle: THREE.Vector3; landing: THREE.Vector3; firstPath: THREE.QuadraticBezierCurve3; secondPath: THREE.QuadraticBezierCurve3 } | null = null;
@@ -205,6 +207,11 @@ export class LevelToyStory {
     return this.isInsideCuriosityCrypt || this.curiosityCryptTransitioning;
   }
 
+  /** Explicit fallback floor for the enclosed chamber when a ray misses its thin floor collider. */
+  public getCuriosityCryptFloorY(): number {
+    return this.curiosityCryptFloorY;
+  }
+
   private isVegetationNearPath(x: number, z: number, clearance = 1.8): boolean {
     for (const path of this.vegetationPathMasks) {
       for (let i = 0; i < path.points.length - 1; i++) {
@@ -237,7 +244,7 @@ export class LevelToyStory {
   public keyDefinitions: Record<string, KeyData> = {
     key1_gekko: { id: 'key1_gekko', name: 'Llave de la Riqueza (Gekko)', color: 0xffc94e, emissiveColor: 0xffb51b, obtained: false, modelUrl: getKeyAsset('key1_gekko')?.modelUrl },
     key2_boss: { id: 'key2_boss', name: 'Llave de la Valentía (Jefe Cangrejo)', color: 0x62dfff, emissiveColor: 0x248ccc, obtained: false, modelUrl: getKeyAsset('key2_boss')?.modelUrl },
-    key3_platform: { id: 'key3_platform', name: 'Llave de Plataformas (Tejado)', color: 0x79e6a3, emissiveColor: 0x20a967, obtained: false, modelUrl: getKeyAsset('key3_platform')?.modelUrl },
+    key3_platform: { id: 'key3_platform', name: 'Llave de la Naturaleza', color: 0x79e6a3, emissiveColor: 0x20a967, obtained: false, modelUrl: getKeyAsset('key3_platform')?.modelUrl },
     key4_curiosity: { id: 'key4_curiosity', name: 'Llave de la Curiosidad', color: 0xc49aff, emissiveColor: 0x7748bd, obtained: false, modelUrl: getKeyAsset('key4_curiosity')?.modelUrl },
     key6_gargoyles: { id: 'key6_gargoyles', name: 'Llave del Secreto (Gargolas)', color: 0xffbd70, emissiveColor: 0xbf6b2b, obtained: false, modelUrl: getKeyAsset('key6_gargoyles')?.modelUrl },
     key5_pots: { id: 'key5_pots', name: 'Llave de Destrucción (Gemas)', color: 0xffd700, emissiveColor: 0xffaa00, obtained: false },
@@ -787,8 +794,22 @@ export class LevelToyStory {
       const stairWidth = Math.max(7.2, Math.min(9.6, 6.1 * (temple?.scale.x ?? 1.4)));
       const guardians = placeAsset(lionResult.value.scene, 'chinese_porcelain_guardian_pair', 7.0, stairCenter.x, stairCenter.z, Math.PI);
       guardians.updateMatrixWorld(true);
-      const lionNodes = ['Chinese Porcelain Lion.001', 'Chinese Porcelain Lion.002']
-        .map((name) => guardians.getObjectByName(name)).filter((node): node is THREE.Object3D => !!node);
+      // GLTFLoader keeps Blender's object names verbatim. The shipped asset
+      // names these meshes `Chinese_Porcelain_Lion001/002` (underscores and no
+      // dot), so the former spaced names returned an empty array and left both
+      // statues at the center of the stair flight.
+      const normalizeNodeName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const lionNodes: THREE.Object3D[] = [];
+      guardians.traverse((node) => {
+        const normalized = normalizeNodeName(node.name);
+        if (/chineseporcelainlion0?01$/.test(normalized) || /chineseporcelainlion0?02$/.test(normalized)) {
+          lionNodes.push(node);
+        }
+      });
+      lionNodes.sort((a, b) => normalizeNodeName(a.name).localeCompare(normalizeNodeName(b.name)));
+      if (lionNodes.length !== 2) {
+        console.warn(`[LevelToyStory] Expected two named porcelain lions; found ${lionNodes.length}. Keeping source placement rather than applying guessed offsets.`);
+      }
       // Measure each statue's actual projected width along the stair's side
       // axis. A world-AABB X width was too small for the rotated temple/lion
       // meshes, so the plinths could overlap the outer treads.
@@ -1090,7 +1111,6 @@ export class LevelToyStory {
     const size = bounds.getSize(new THREE.Vector3());
     const center = bounds.getCenter(new THREE.Vector3());
     const terrainY = this.getTerrainHeight(center.x, center.z);
-    const ray = new THREE.Raycaster();
     const root = new THREE.Group();
     root.name = 'pavilion_low_cost_collision';
     const invisible = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide });
@@ -1102,46 +1122,155 @@ export class LevelToyStory {
     // no per-frame vegetation/geometry generation.
     const patchStep = 0.28;
     const patchHalf = patchStep * 0.56;
-    const supportVertices: number[] = [];
-    const supportNormals: number[] = [];
+    const floorVertices: number[] = [];
+    const stairVertices: number[] = [];
+    const chestPlatformVertices: number[] = [];
+    const chestPlatformBounds = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity, topY: -Infinity };
     const supportX0 = Math.floor((bounds.min.x + patchStep * 0.5) / patchStep) * patchStep;
     const supportZ0 = Math.floor((bounds.min.z + patchStep * 0.5) / patchStep) * patchStep;
     const supportYMin = terrainY - 0.12;
     const supportYMax = terrainY + 2.35;
-    const rayStartY = bounds.max.y + 0.35;
-    const rayFar = Math.max(1, rayStartY - supportYMin + 0.5);
-    const sampleNormal = new THREE.Vector3();
-    for (let x = supportX0; x <= bounds.max.x; x += patchStep) {
-      for (let z = supportZ0; z <= bounds.max.z; z += patchStep) {
-        ray.set(new THREE.Vector3(x, rayStartY, z), new THREE.Vector3(0, -1, 0));
-        ray.far = rayFar;
-        const hit = ray.intersectObject(asset, true).find((candidate) => {
-          if (!candidate.face || candidate.point.y < supportYMin || candidate.point.y > supportYMax) return false;
-          sampleNormal.copy(candidate.face.normal).transformDirection(candidate.object.matrixWorld);
-          return sampleNormal.y > 0.82;
-        });
-        if (!hit) continue;
-        const y = hit.point.y + 0.012;
-        const left = x - patchHalf, right = x + patchHalf;
-        const near = z - patchHalf, far = z + patchHalf;
-        // Two upward-facing triangles. Deliberately no sides: the player can
-        // stand on treads/decks but the support does not create invisible walls.
-        supportVertices.push(
-          left, y, near, right, y, far, right, y, near,
-          left, y, near, left, y, far, right, y, far
+    const columns = Math.floor((bounds.max.x - supportX0) / patchStep) + 1;
+    const rows = Math.floor((bounds.max.z - supportZ0) / patchStep) + 1;
+    const heights = new Float32Array(columns * rows);
+    const lowerHeights = new Float32Array(columns * rows);
+    heights.fill(-Infinity);
+    lowerHeights.fill(-Infinity);
+    // Rasterize upward-facing source triangles into the height grid in one
+    // linear pass. Calling Raycaster.intersectObject for every grid point made
+    // this 100k-triangle GLB cost ~5 s per pavilion on the main thread.
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    asset.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.geometry?.attributes.position) return;
+      const geometry = mesh.geometry;
+      const positions = geometry.attributes.position;
+      const indices = geometry.index;
+      mesh.updateWorldMatrix(true, false);
+      const e = mesh.matrixWorld.elements;
+      const transformVertex = (index: number, target: THREE.Vector3): THREE.Vector3 => {
+        const px = positions.getX(index), py = positions.getY(index), pz = positions.getZ(index);
+        return target.set(
+          e[0] * px + e[4] * py + e[8] * pz + e[12],
+          e[1] * px + e[5] * py + e[9] * pz + e[13],
+          e[2] * px + e[6] * py + e[10] * pz + e[14]
         );
-        for (let i = 0; i < 6; i++) supportNormals.push(0, 1, 0);
+      };
+      const triangleCount = indices ? Math.floor(indices.count / 3) : Math.floor(positions.count / 3);
+      const ab = new THREE.Vector3(), ac = new THREE.Vector3();
+      for (let triangle = 0; triangle < triangleCount; triangle++) {
+        const offset = triangle * 3;
+        const ia = indices ? indices.getX(offset) : offset;
+        const ib = indices ? indices.getX(offset + 1) : offset + 1;
+        const ic = indices ? indices.getX(offset + 2) : offset + 2;
+        transformVertex(ia, a); transformVertex(ib, b); transformVertex(ic, c);
+        ab.subVectors(b, a); ac.subVectors(c, a);
+        const normalY = ab.z * ac.x - ab.x * ac.z;
+        const normalX = ab.y * ac.z - ab.z * ac.y;
+        const normalZ = ab.x * ac.y - ab.y * ac.x;
+        const normalLength = Math.hypot(normalX, normalY, normalZ);
+        if (normalLength < 1e-8 || normalY / normalLength <= 0.82) continue;
+        const triMinY = Math.min(a.y, b.y, c.y), triMaxY = Math.max(a.y, b.y, c.y);
+        if (triMaxY < supportYMin || triMinY > supportYMax) continue;
+        const minX = Math.min(a.x, b.x, c.x), maxX = Math.max(a.x, b.x, c.x);
+        const minZ = Math.min(a.z, b.z, c.z), maxZ = Math.max(a.z, b.z, c.z);
+        const colMin = Math.max(0, Math.ceil((minX - supportX0) / patchStep));
+        const colMax = Math.min(columns - 1, Math.floor((maxX - supportX0) / patchStep));
+        const rowMin = Math.max(0, Math.ceil((minZ - supportZ0) / patchStep));
+        const rowMax = Math.min(rows - 1, Math.floor((maxZ - supportZ0) / patchStep));
+        const denominator = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+        if (Math.abs(denominator) < 1e-8) continue;
+        for (let row = rowMin; row <= rowMax; row++) {
+          const z = supportZ0 + row * patchStep;
+          for (let col = colMin; col <= colMax; col++) {
+            const x = supportX0 + col * patchStep;
+            const wa = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / denominator;
+            const wb = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / denominator;
+            const wc = 1 - wa - wb;
+            if (wa < -1e-5 || wb < -1e-5 || wc < -1e-5) continue;
+            const y = wa * a.y + wb * b.y + wc * c.y;
+            const cell = row * columns + col;
+            if (y < supportYMin || y > supportYMax) continue;
+            const currentTop = heights[cell];
+            if (y > currentTop) {
+              if (Number.isFinite(currentTop) && y - currentTop >= 0.08) {
+                lowerHeights[cell] = Math.max(lowerHeights[cell], currentTop);
+              }
+              heights[cell] = y;
+            } else if (currentTop - y >= 0.08 && y > lowerHeights[cell]) {
+              // Preserve the lower deck beneath a high table/chest top. The
+              // top platform must never mask the floor support underneath it.
+              lowerHeights[cell] = y;
+            }
+          }
+        }
+      }
+    });
+    // The broad flat height cluster is the pavilion deck. Lower surfaces in
+    // the front approach zone are stair treads; the small high island under
+    // the chest is retained as its own platform collider.
+    const heightBands = new Map<number, number>();
+    for (let row = 0; row < rows; row++) {
+      const z = supportZ0 + row * patchStep;
+      for (let col = 0; col < columns; col++) {
+        const y = heights[row * columns + col];
+        if (!Number.isFinite(y) || Math.hypot(supportX0 + col * patchStep - center.x, z - center.z) < 1.35) continue;
+        const band = Math.round(y * 20);
+        heightBands.set(band, (heightBands.get(band) ?? 0) + 1);
       }
     }
-    if (supportVertices.length) {
+    let deckBand = Math.round((terrainY + 0.58) * 20), deckBandCount = -1;
+    for (const [band, count] of heightBands) {
+      if (count > deckBandCount) { deckBand = band; deckBandCount = count; }
+    }
+    const deckY = deckBand / 20;
+    const addCellSupport = (x: number, z: number, y: number): void => {
+      if (!Number.isFinite(y)) return;
+      const top = y + 0.012;
+      const left = x - patchHalf, right = x + patchHalf;
+      const near = z - patchHalf, far = z + patchHalf;
+      const target = Math.hypot(x - center.x, z - center.z) < 1.35 && y > terrainY + 0.9
+        ? chestPlatformVertices
+        : (z > center.z + 0.9 && y < deckY - 0.06 ? stairVertices : floorVertices);
+      target.push(
+        left, top, near, right, top, far, right, top, near,
+        left, top, near, left, top, far, right, top, far
+      );
+      if (target === chestPlatformVertices) {
+        chestPlatformBounds.minX = Math.min(chestPlatformBounds.minX, left);
+        chestPlatformBounds.maxX = Math.max(chestPlatformBounds.maxX, right);
+        chestPlatformBounds.minZ = Math.min(chestPlatformBounds.minZ, near);
+        chestPlatformBounds.maxZ = Math.max(chestPlatformBounds.maxZ, far);
+        chestPlatformBounds.topY = Math.max(chestPlatformBounds.topY, top);
+      }
+    };
+    for (let row = 0; row < rows; row++) {
+      const z = supportZ0 + row * patchStep;
+      for (let col = 0; col < columns; col++) {
+        const y = heights[row * columns + col];
+        const x = supportX0 + col * patchStep;
+        addCellSupport(x, z, y);
+        addCellSupport(x, z, lowerHeights[row * columns + col]);
+      }
+    }
+    const addSupport = (name: string, vertices: number[], recoverySurface: boolean): void => {
+      if (!vertices.length) return;
       const supportGeometry = new THREE.BufferGeometry();
-      supportGeometry.setAttribute('position', new THREE.Float32BufferAttribute(supportVertices, 3));
-      supportGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(supportNormals, 3));
+      supportGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
       supportGeometry.computeBoundingSphere();
       const support = new THREE.Mesh(supportGeometry, invisible);
-      support.name = 'pavilion_stairs_and_platform_walkable_support';
+      support.name = name;
+      // Deck and stair surfaces can recover a missed landing. The tabletop is
+      // a separate collider and deliberately uses the normal, small step-up.
+      if (recoverySurface) support.userData.walkableSupport = true;
+      support.userData.pavilionWalkableSurface = true;
       support.frustumCulled = false;
       root.add(support);
+    };
+    if (floorVertices.length || stairVertices.length || chestPlatformVertices.length) {
+      addSupport('pavilion_main_floor_walkable_support', floorVertices, true);
+      addSupport('pavilion_stair_treads_walkable_support', stairVertices, true);
+      addSupport('pavilion_chest_table_platform', chestPlatformVertices, false);
     } else {
       // Keep a diagnostic warning instead of creating a guessed invisible slab
       // at the bounds center: that slab caused hovering on some pavilion files.
@@ -1149,10 +1278,48 @@ export class LevelToyStory {
     }
     const footprintX = Math.min(size.x * 0.68, 7.4);
     const footprintZ = Math.min(size.z * 0.68, 7.4);
+    if (Number.isFinite(chestPlatformBounds.topY)) {
+      const platformSpan = Math.max(
+        chestPlatformBounds.maxX - chestPlatformBounds.minX,
+        chestPlatformBounds.maxZ - chestPlatformBounds.minZ
+      );
+      const tableRadius = THREE.MathUtils.clamp(platformSpan * 0.42, 0.62, 1.0);
+      const tableHeight = Math.max(0.25, chestPlatformBounds.topY - deckY);
+      const tableBlocker = new THREE.Mesh(new THREE.CylinderGeometry(tableRadius, tableRadius, tableHeight, 12), invisible);
+      tableBlocker.name = 'pavilion_chest_table_side_collision';
+      tableBlocker.userData.solidPlayerBlocker = true;
+      tableBlocker.position.set(
+        (chestPlatformBounds.minX + chestPlatformBounds.maxX) * 0.5,
+        deckY + tableHeight * 0.5,
+        (chestPlatformBounds.minZ + chestPlatformBounds.maxZ) * 0.5
+      );
+      root.add(tableBlocker);
+    }
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
       const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, Math.min(5.2, size.y * 0.74), 6), invisible);
+      pillar.name = `pavilion_column_collision_${sx > 0 ? 'east' : 'west'}_${sz > 0 ? 'front' : 'rear'}`;
+      pillar.userData.solidPlayerBlocker = true;
       pillar.position.set(center.x + sx * footprintX * 0.42, terrainY + Math.min(5.2, size.y * 0.74) * 0.5, center.z + sz * footprintZ * 0.42);
       root.add(pillar);
+    }
+    const railSideX = center.x + (size.x * 0.68 * 0.42);
+    const railBackZ = center.z - (size.z * 0.68 * 0.42);
+    const railFrontZ = center.z + (size.z * 0.68 * 0.42);
+    const deckRailY = deckY + 0.52;
+    const railHeight = 1.04;
+    const railThickness = 0.16;
+    const addRail = (name: string, width: number, depth: number, x: number, z: number): void => {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(width, railHeight, depth), invisible);
+      rail.name = name;
+      rail.userData.solidPlayerBlocker = true;
+      rail.position.set(x, deckRailY, z);
+      root.add(rail);
+    };
+    addRail('pavilion_rear_railing_collision', railSideX * 2, railThickness, center.x, railBackZ);
+    for (const side of [-1, 1]) {
+      addRail(`pavilion_side_railing_collision_${side < 0 ? 'west' : 'east'}`, railThickness, railFrontZ - railBackZ, center.x + side * railSideX, center.z);
+      // Preserve the central opening aligned with the authored front stairs.
+      addRail(`pavilion_front_railing_collision_${side < 0 ? 'west' : 'east'}`, railSideX - 1.15, railThickness, center.x + side * ((railSideX + 1.15) * 0.5), railFrontZ);
     }
     this.sceneManager.scene.add(root);
     this.structureColliderCandidates.push({
@@ -1505,6 +1672,8 @@ export class LevelToyStory {
     let floorCenterZ = -40;
     let localFrontZ = -5.4;
     let localCenterX = 0;
+    let localCenterZ = 0;
+    let mainStairHalfWidth = 4.8;
     if (temple) {
       temple.updateMatrixWorld(true);
       const footprint = temple.userData.templeLocalFootprint;
@@ -1513,6 +1682,7 @@ export class LevelToyStory {
       floorCenterX = worldCenter.x;
       floorCenterZ = worldCenter.z;
       localCenterX = footprint?.centerX ?? 0;
+      localCenterZ = footprint?.centerZ ?? 0;
       localFrontZ = footprint?.minZ ?? -5.4;
       const frontWorld = temple.localToWorld(new THREE.Vector3(localCenterX, 0, localFrontZ));
       const rearWorld = temple.localToWorld(new THREE.Vector3(localCenterX, 0, footprint?.maxZ ?? 5.4));
@@ -1577,9 +1747,7 @@ export class LevelToyStory {
     // support plane alone made the outdoor grass show through and Wukong look
     // half buried. Render one lightweight tiled stone surface over the exact
     // same walkable plane so appearance and grounding share a single height.
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(floorWidth, floorDepth),
-      new THREE.MeshStandardMaterial({
+    const floorMaterial = new THREE.MeshStandardMaterial({
         map: this.createTempleFloorTexture(),
         color: 0xc3c5ca,
         roughness: 0.72,
@@ -1587,8 +1755,8 @@ export class LevelToyStory {
         emissive: 0x101923,
         emissiveIntensity: 0.14,
         side: THREE.DoubleSide
-      })
-    );
+      });
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(floorWidth, floorDepth), floorMaterial);
     floor.name = 'central_temple_walkable_floor_surface';
     floor.userData.walkableSupport = true;
     floor.rotation.x = -Math.PI / 2;
@@ -1615,6 +1783,7 @@ export class LevelToyStory {
     // the invisible ramp overshoot the visible steps and create a bad landing.
     if (temple) {
       const stairWidth = Math.max(7.2, Math.min(9.6, 6.1 * temple.scale.x));
+      mainStairHalfWidth = stairWidth * 0.5;
       const stairTop = temple.localToWorld(new THREE.Vector3(localCenterX, 0, localFrontZ));
       const stairFoot = temple.localToWorld(new THREE.Vector3(localCenterX, 0, localFrontZ - 2.15));
       const footY = this.getTerrainHeight(stairFoot.x, stairFoot.z) + 0.015;
@@ -1624,6 +1793,7 @@ export class LevelToyStory {
       const stairYaw = Math.atan2(stairDirection.x, stairDirection.z);
       const treadCount = 4;
       const treadDepth = stairLength / treadCount + 0.09;
+      let firstTreadTopY = topY;
       const stairDown = new THREE.Vector3(0, -1, 0);
       const stairMat = new THREE.MeshBasicMaterial({
         colorWrite: false, depthWrite: false, side: THREE.DoubleSide
@@ -1642,6 +1812,7 @@ export class LevelToyStory {
           return hit.face.normal.clone().transformDirection(hit.object.matrixWorld).y > 0.72;
         });
         const treadY = treadHit?.point.y ?? THREE.MathUtils.lerp(topY, footY, t);
+        if (i === 0) firstTreadTopY = treadY;
         const tread = new THREE.Mesh(new THREE.BoxGeometry(stairWidth, 0.14, treadDepth), stairMat);
         tread.name = `central_temple_stair_tread_support_${i + 1}`;
         tread.userData.walkableSupport = true;
@@ -1650,6 +1821,60 @@ export class LevelToyStory {
         tread.frustumCulled = false;
         this.sceneManager.scene.add(tread);
         this.levelColliders.push(tread);
+      }
+
+      // The measured deck edge is at local z -5.02, while the inner lip of
+      // the first authored tread begins around local z -5.37. That left a
+      // roughly 0.53 m opening between the visible floor and stair support.
+      // Rebuild only that strip as visible matching stone and use the same
+      // triangles for grounding, so there is no invisible platform over a gap.
+      const deckEdgeLocalZ = localCenterZ - floorDepth / (2 * Math.abs(temple.scale.z));
+      const firstTreadCenter = stairTop.clone().addScaledVector(stairRun, 0.5 / treadCount);
+      const firstTreadInnerEdge = firstTreadCenter.clone().addScaledVector(stairDirection, -treadDepth * 0.5);
+      const firstTreadInnerLocal = temple.worldToLocal(firstTreadInnerEdge.clone());
+      const bridgeRunLocal = deckEdgeLocalZ - firstTreadInnerLocal.z;
+      const entranceWidth = Math.min(stairWidth, 2 * 2.35 * Math.abs(temple.scale.x) - 0.08);
+      if (bridgeRunLocal > 0.04 && bridgeRunLocal < 1.25 && entranceWidth > 1) {
+        const halfEntranceWidthLocal = entranceWidth / (2 * Math.abs(temple.scale.x));
+        const toWorld = (x: number, z: number, y: number) => {
+          const point = temple.localToWorld(new THREE.Vector3(localCenterX + x, 0, z));
+          point.y = y;
+          return point;
+        };
+        const backLeft = toWorld(-halfEntranceWidthLocal, deckEdgeLocalZ, topY + 0.006);
+        const backRight = toWorld(halfEntranceWidthLocal, deckEdgeLocalZ, topY + 0.006);
+        const frontLeft = toWorld(-halfEntranceWidthLocal, firstTreadInnerLocal.z, firstTreadTopY + 0.004);
+        const frontRight = toWorld(halfEntranceWidthLocal, firstTreadInnerLocal.z, firstTreadTopY + 0.004);
+        const bridgeGeometry = new THREE.BufferGeometry();
+        bridgeGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+          ...backLeft.toArray(), ...frontRight.toArray(), ...frontLeft.toArray(),
+          ...backLeft.toArray(), ...backRight.toArray(), ...frontRight.toArray()
+        ], 3));
+        const backV = 1;
+        const frontV = 1 + (bridgeRunLocal * Math.abs(temple.scale.z)) / floorDepth;
+        bridgeGeometry.setAttribute('uv', new THREE.Float32BufferAttribute([
+          0, backV, entranceWidth / floorWidth, frontV, 0, frontV,
+          0, backV, entranceWidth / floorWidth, backV, entranceWidth / floorWidth, frontV
+        ], 2));
+        bridgeGeometry.computeVertexNormals();
+        bridgeGeometry.computeBoundingSphere();
+        const bridge = new THREE.Mesh(bridgeGeometry, floorMaterial);
+        bridge.name = 'central_temple_entrance_stone_transition';
+        bridge.receiveShadow = true;
+        bridge.renderOrder = 1;
+        this.sceneManager.scene.add(bridge);
+
+        const bridgeSupport = new THREE.Mesh(bridgeGeometry.clone(), new THREE.MeshBasicMaterial({
+          colorWrite: false, depthWrite: false, side: THREE.DoubleSide
+        }));
+        bridgeSupport.name = 'central_temple_entrance_stone_transition_support';
+        bridgeSupport.userData.walkableSupport = true;
+        bridgeSupport.frustumCulled = false;
+        this.sceneManager.scene.add(bridgeSupport);
+        this.levelColliders.push(bridgeSupport);
+        console.info(`[LevelToyStory] Reconstructed visible stone landing between deck and first stair tread (${(bridgeRunLocal * Math.abs(temple.scale.z)).toFixed(2)} m).`);
+      } else {
+        console.info('[LevelToyStory] Temple deck already meets the first stair tread; no transition strip was necessary.');
       }
       this.addTempleSecondaryStairSupports(temple, topY, groundY);
     }
@@ -1665,7 +1890,7 @@ export class LevelToyStory {
       if (pos.x >= floorCenterX - floorWidth * 0.5 && pos.x <= floorCenterX + floorWidth * 0.5 &&
           pos.z >= floorCenterZ - floorDepth * 0.5 && pos.z <= floorCenterZ + floorDepth * 0.5) {
         pos.y = topY + 0.6;
-      } else if (temple && Math.abs(pos.x - floorCenterX) <= 11 && pos.z >= frontZ - 1 && pos.z <= frontZ + 10) {
+      } else if (temple && Math.abs(pos.x - floorCenterX) <= mainStairHalfWidth + 0.25 && pos.z >= frontZ - 1 && pos.z <= frontZ + 10) {
         stairOrigin.set(pos.x, groundY + 8, pos.z);
         stairRay.set(stairOrigin, down);
         stairRay.far = 10;
@@ -3122,7 +3347,7 @@ export class LevelToyStory {
     const caveCeilingMat = new THREE.MeshStandardMaterial({ color: 0x292a31, roughness: 0.98, flatShading: true, side: THREE.DoubleSide });
     const floor = new THREE.Mesh(new THREE.BoxGeometry(29.5, 0.4, 27.5), stoneMat);
     floor.name = 'curiosity_chamber_floor';
-    floor.position.set(-22.25, -6.1, castleCenterZ);
+    floor.position.set(-22.25, this.curiosityCryptFloorY - 0.2, castleCenterZ);
     floor.receiveShadow = true;
     scene.add(floor);
     this.levelColliders.push(floor);
@@ -4239,13 +4464,13 @@ export class LevelToyStory {
 
     // 3. Grand East Staircase ascending to Mezzanine (6 coins)
     for (let i = 0; i < 6; i++) {
-      const x = 8.5;
+      const x = 9.2;
       const z = -29.0 - i * 2.6;
       coinPositions.push(new THREE.Vector3(x, this.getTerrainHeight(x, z) + 0.6, z));
     }
 
     // 4. Temple-side ground route (the old mezzanine was removed)
-    [[-8, -44], [-8, -36], [-4, -48], [0, -51], [4, -48], [8, -44], [4, -34], [-4, -34]].forEach(([x, z]) => {
+    [[-9.2, -44], [-9.2, -36], [-4, -53], [0, -51], [4, -48], [9.2, -44], [4, -34], [-4, -34]].forEach(([x, z]) => {
       coinPositions.push(new THREE.Vector3(x, this.getTerrainHeight(x, z) + 0.6, z));
     });
 
@@ -4296,10 +4521,15 @@ export class LevelToyStory {
     rawCoins.splice(rawCoins.length - highHouseCoins.length, highHouseCoins.length, ...highHouseCoins);
 
     // ── AUTOMATED COIN POSITION VALIDATION & COLLISION CHECKER ──
-    const coinColliderBounds = this.levelColliders.map((root) => {
+    const coinColliderBounds: Array<{ root: THREE.Object3D; bounds: THREE.Box3 }> = [];
+    for (const root of this.levelColliders) {
       root.updateWorldMatrix(true, true);
-      return { root, bounds: new THREE.Box3().setFromObject(root) };
-    });
+      root.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        if (!mesh.isMesh || mesh.userData.solidPlayerBlocker !== true) return;
+        coinColliderBounds.push({ root: mesh, bounds: new THREE.Box3().setFromObject(mesh) });
+      });
+    }
     const coinRaycaster = new THREE.Raycaster();
     const coinDirections = [
       new THREE.Vector3(1, 0, 0),
@@ -4354,7 +4584,13 @@ export class LevelToyStory {
 
       // A remaining solid AABB intersection is a review case, never silently
       // accepted as a successful automatic correction.
-      const pendingReview = coinColliderBounds.some(({ bounds }) => bounds.containsPoint(checkedPos));
+      const coinRadius = 0.18;
+      const coinHalfHeight = 0.18;
+      const pendingReview = coinColliderBounds.some(({ bounds }) =>
+        checkedPos.x + coinRadius > bounds.min.x && checkedPos.x - coinRadius < bounds.max.x &&
+        checkedPos.y + coinHalfHeight > bounds.min.y && checkedPos.y - coinHalfHeight < bounds.max.y &&
+        checkedPos.z + coinRadius > bounds.min.z && checkedPos.z - coinRadius < bounds.max.z
+      );
       return { position: checkedPos, corrected, pendingReview };
     };
 
@@ -4377,7 +4613,7 @@ export class LevelToyStory {
           root.updateWorldMatrix(true, true);
           root.traverse((child) => {
             const mesh = child as THREE.Mesh;
-            if (!mesh.isMesh || !mesh.geometry) return;
+            if (!mesh.isMesh || !mesh.geometry || mesh.userData.solidPlayerBlocker !== true) return;
             if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
             obstacles.push({ name: mesh.name || root.name || 'unnamed-collider', bounds: new THREE.Box3().setFromObject(mesh) });
           });
@@ -4392,7 +4628,13 @@ export class LevelToyStory {
             Math.abs(position.y - (this.centralTempleFloorTopY + 0.6)) < 0.35;
           const expectedGround = this.getTerrainHeight(position.x, position.z) + 0.6;
           const unexpectedElevation = !inHouseInterior && !inTempleInterior && Math.abs(position.y - expectedGround) > 0.85;
-          const overlaps = obstacles.filter(({ bounds }) => bounds.containsPoint(position)).map(({ name }) => name);
+          const coinRadius = 0.18;
+          const coinHalfHeight = 0.18;
+          const overlaps = obstacles.filter(({ bounds }) =>
+            position.x + coinRadius > bounds.min.x && position.x - coinRadius < bounds.max.x &&
+            position.y + coinHalfHeight > bounds.min.y && position.y - coinHalfHeight < bounds.max.y &&
+            position.z + coinRadius > bounds.min.z && position.z - coinRadius < bounds.max.z
+          ).map(({ name }) => name);
           return {
             id: item.id,
             position: { x: +position.x.toFixed(2), y: +position.y.toFixed(2), z: +position.z.toFixed(2) },
@@ -4636,6 +4878,7 @@ export class LevelToyStory {
       console.warn(`[KEY] No approved 3D asset is assigned to '${id}'; no substitute model will be spawned.`);
       return;
     }
+    if (this.collectedKeys[id as keyof typeof this.collectedKeys] || this.keysMeshes.some((key) => key.name === id)) return;
     const scene = this.sceneManager.scene;
     const keyGroup = new THREE.Group();
     keyGroup.position.copy(pos);
@@ -4673,9 +4916,107 @@ export class LevelToyStory {
     });
   }
 
+  /** Handle exactly the closest uncollected authored key; prompt and target cannot diverge. */
+  private updateKeyInteraction(playerPos: THREE.Vector3): void {
+    const game = (window as any).gameInstance;
+    if (game?.menuState !== 'Playing' || game?.isPaused || this.player.isControlsLocked ||
+        this.player.isMovementLocked || this.isCinematicPlaying) return;
+
+    let nearest: THREE.Group | null = null;
+    let nearestDistance = 2.0;
+    for (const key of this.keysMeshes) {
+      if (!key.userData.assetReady || this.collectedKeys[key.name as keyof typeof this.collectedKeys]) continue;
+      const verticalDistance = Math.abs(key.position.y - playerPos.y);
+      if (verticalDistance > 2.4) continue;
+      const distance = Math.hypot(key.position.x - playerPos.x, key.position.z - playerPos.z);
+      if (distance < nearestDistance) {
+        nearest = key;
+        nearestDistance = distance;
+      }
+    }
+
+    if (!nearest) return;
+    const keyId = nearest.name as keyof typeof this.collectedKeys;
+    const keyData = this.keyDefinitions[keyId];
+    const keyPosition = nearest.position.clone();
+    const hud = game?.hud;
+    hud?.showInteractionPrompt(`Presiona [E] para tomar ${keyData?.name ?? getKeyAsset(keyId)?.name ?? 'Llave Mágica'}`);
+    if (!this.inputManager.consumeInteractPress()) return;
+
+    // awardKey owns the idempotency check, persistence and HUD progress update.
+    // Remove the world object only after that transaction accepts the pickup.
+    if (!this.awardKey(keyId, keyPosition)) return;
+    nearest.userData.collected = true;
+    nearest.removeFromParent();
+    const index = this.keysMeshes.indexOf(nearest);
+    if (index >= 0) this.keysMeshes.splice(index, 1);
+    hud?.hideInteractionPrompt();
+  }
+
+  /** Resolve crypt interactions before the shared E press reaches nearby loot. */
+  private updateCryptInteractions(playerPos: THREE.Vector3): void {
+    const game = (window as any).gameInstance;
+    if (game?.menuState !== 'Playing' || game?.isPaused || this.player.isControlsLocked ||
+        this.player.isMovementLocked || this.isCinematicPlaying || this.curiosityCryptTransitioning) return;
+    const hud = game?.hud;
+
+    if (this.dragonSwitchMesh && !this.isLavaVaultOpen) {
+      const switchPos = this.dragonSwitchMesh.position;
+      const switchDistance = Math.hypot(playerPos.x - switchPos.x, playerPos.z - switchPos.z);
+      if (switchDistance < 2.8 && Math.abs(playerPos.y - switchPos.y) < 3.0) {
+        hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Activar Palanca · Acción' : 'Activar Palanca [E]');
+        if (this.inputManager.consumeInteractPress()) {
+          this.isLavaVaultOpen = true;
+          this.leverTarget = -Math.PI / 4;
+          this.hatchTarget = 1;
+          this.audioManager.playHitImpact();
+          this.audioManager.playPortalActivate();
+          this.subtitleSystem.show('Mecanismo Secreto', '¡El mecanismo del pabellón ha abierto una cámara secreta al otro lado del reino!');
+        }
+      }
+    }
+
+    if (!this.isLavaVaultOpen) return;
+    if (!this.isInsideCuriosityCrypt) {
+      const distance = Math.hypot(playerPos.x - this.curiosityCryptSurface.x, playerPos.z - this.curiosityCryptSurface.z);
+      if (distance >= 3.2) return;
+      if (this.hatchOpenProgress > 0.92) {
+        hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Entrar a la cripta · Acción' : 'Entrar a la cripta [E]');
+        if (this.inputManager.consumeInteractPress()) void this.transitionCuriosityCrypt(true);
+      } else {
+        hud?.showInteractionPrompt('La entrada se está abriendo…');
+      }
+      return;
+    }
+
+    const exitDistance = Math.hypot(playerPos.x - this.curiosityCryptReturnPoint.x, playerPos.z - this.curiosityCryptReturnPoint.z);
+    if (exitDistance < 3.0) {
+      hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Volver al exterior · Acción' : 'Volver al exterior [E]');
+      if (this.inputManager.consumeInteractPress()) void this.transitionCuriosityCrypt(false);
+    }
+  }
+
+  /** Reconcile world keys after loading a save made before/after a pickup. */
+  public restoreCollectedKeys(savedKeys: unknown): void {
+    if (savedKeys && typeof savedKeys === 'object') {
+      for (const id of Object.keys(this.collectedKeys) as Array<keyof typeof this.collectedKeys>) {
+        const value = (savedKeys as Record<string, unknown>)[id];
+        if (typeof value === 'boolean') this.collectedKeys[id] = value;
+      }
+    }
+    this.totalKeysCount = Object.values(this.collectedKeys).filter(Boolean).length;
+    for (let i = this.keysMeshes.length - 1; i >= 0; i--) {
+      const key = this.keysMeshes[i];
+      if (!this.collectedKeys[key.name as keyof typeof this.collectedKeys]) continue;
+      key.removeFromParent();
+      this.keysMeshes.splice(i, 1);
+    }
+    (window as any).gameInstance?.hud?.setCollectedKeys(this.getCollectedKeyIds(), false);
+  }
+
   // Spawns the sparkles and unlocks the key
-  public awardKey(keyId: keyof typeof this.collectedKeys, spawnPos?: THREE.Vector3): void {
-    if (this.collectedKeys[keyId]) return;
+  public awardKey(keyId: keyof typeof this.collectedKeys, spawnPos?: THREE.Vector3): boolean {
+    if (!this.collectedKeys.hasOwnProperty(keyId) || this.collectedKeys[keyId]) return false;
     this.collectedKeys[keyId] = true;
 
     // Key milestones (apart from Gekko's 50-coin reward) also feed the staff
@@ -4697,7 +5038,7 @@ export class LevelToyStory {
     let keyName = '';
     if (keyId === 'key1_gekko') keyName = 'Llave de la Riqueza (Gekko 50 Monedas)';
     if (keyId === 'key2_boss') keyName = 'Llave de la Valentía (Jefe Cangrejo)';
-    if (keyId === 'key3_platform') keyName = 'Llave de Plataformas (Tejado)';
+    if (keyId === 'key3_platform') keyName = getKeyAsset(keyId)?.name ?? 'Llave de la Naturaleza';
     if (keyId === 'key4_curiosity') keyName = 'Llave de la Curiosidad';
     if (keyId === 'key6_gargoyles') keyName = 'Llave del Secreto (Gárgolas)';
     if (keyId === 'key5_pots') keyName = 'Llave de Destrucción (Gemas)';
@@ -4709,6 +5050,7 @@ export class LevelToyStory {
       this.exitDoor.open();
       this.subtitleSystem.show('LISAR', '¡PORTÓN ABIERTO! Has reunido las 4 llaves místicas. El portal de salida en el castillo está desbloqueado.');
     }
+    return true;
   }
 
   public getCollectedKeyIds(): string[] {
@@ -5367,6 +5709,11 @@ export class LevelToyStory {
       playerPos,
       (window as any).gameInstance?.menuState === 'Playing' && this.player.health > 0
     );
+    // Resolve the nearest authored key before mechanisms and chests. The old
+    // order let the distant-priority crypt lever consume E while the HUD was
+    // explicitly showing a nearby key, making the key appear uncollectable.
+    this.updateKeyInteraction(playerPos);
+    this.updateCryptInteractions(playerPos);
     this.updateCanopyTrial(delta, playerPos);
     this.updateTreeReactions(delta, realElapsed);
     for (let i = this.treeSnakes.length - 1; i >= 0; i--) {
@@ -5510,7 +5857,8 @@ export class LevelToyStory {
       this.audioManager.playPlayerHurt();
     }
 
-    // Claim high-priority contextual presses before nearby coins or keys can consume them.
+    // Chests run after the key and crypt checks so the visible key prompt owns
+    // its single E press when a key and chest overlap in interaction range.
     const chestInRange = !this.stateFlags.staffFound && !this.staffChest.isUnlocked &&
       this.staffChest.mesh.position.distanceTo(playerPos) < 2.2 &&
       !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying;
@@ -5574,38 +5922,11 @@ export class LevelToyStory {
     }
 
     // Spin 3D floating keys in the world & check for collection with TakingItem animation
-    // Spin 3D floating keys in the world & check for collection with manual E key
-    for (let idx = this.keysMeshes.length - 1; idx >= 0; idx--) {
-      const kMesh = this.keysMeshes[idx];
-      if (!kMesh.userData.assetReady) continue;
-      kMesh.rotation.y += delta * 2.0;
-      kMesh.position.y += Math.sin(Date.now() * 0.003) * 0.001;
-
-      // Check distance for collection (requires E key press)
-      const distToKey = kMesh.position.distanceTo(playerPos);
-      if (distToKey < 2.0 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
-        const keyId = kMesh.name;
-        const keyPos = kMesh.position.clone();
-        const keyData = this.keyDefinitions[keyId] || {
-          id: keyId,
-          name: 'Llave Mágica',
-          color: 0xffd700,
-          emissiveColor: 0xffaa00,
-          obtained: false,
-        };
-
-        const hud = (window as any).gameInstance?.hud;
-        hud?.showInteractionPrompt(`Presiona [E] para tomar ${keyData.name}`);
-
-        if (this.inputManager.consumeInteractPress()) {
-          hud?.hideInteractionPrompt();
-          this.sceneManager.scene.remove(kMesh);
-          this.keysMeshes.splice(idx, 1);
-          // Exploration keys keep their original E interaction and do not
-          // take over movement or camera for a reward cinematic.
-          this.awardKey(keyId as any, keyPos);
-        }
-      }
+    // Key visuals keep spinning after the one-frame interaction was resolved.
+    for (const key of this.keysMeshes) {
+      if (!key.userData.assetReady) continue;
+      key.rotation.y += delta * 2.0;
+      key.position.y += Math.sin(Date.now() * 0.003) * 0.001;
     }
 
     // Update enemies (including DYING state for death VFX execution and memory cleanup)
@@ -5664,10 +5985,10 @@ export class LevelToyStory {
           }
         } else {
           const hud = (window as any).gameInstance?.hud;
-          hud?.showInteractionPrompt(`Hablar con Gekko (${currentCoins}/50 Monedas) [E]`);
           if (interactWithGekko) {
-            this.subtitleSystem.show('Gekko', `Aún no tienes las 50 monedas Lisar (tienes ${currentCoins}/50). ¡Búscalas por todo el reino!`);
-          }
+            hud?.hideInteractionPrompt();
+            hud?.showInfoToast('GEKKO', 'Aún te faltan monedas. ¡Sigue explorando el reino!', 3600, 2);
+          } else hud?.showInteractionPrompt(`Hablar con Gekko (${currentCoins}/50 Monedas) [E]`);
         }
       } else if (this.gekkoMissionState === 'REWARD_GIVEN') {
         const hud = (window as any).gameInstance?.hud;
@@ -5688,53 +6009,9 @@ export class LevelToyStory {
     }
 
     // ── Dragon Switch Interaction (Mezzanine Floor Balcony) ──
-    if (this.dragonSwitchMesh) {
-      const distToSwitch = this.dragonSwitchMesh.position.distanceTo(playerPos);
-      if (distToSwitch < 2.8 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
-        const hud = (window as any).gameInstance?.hud;
-        if (!this.isLavaVaultOpen) {
-          hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Activar Palanca · Acción' : 'Activar Palanca [E]');
-          if (this.inputManager.consumeInteractPress()) {
-            this.isLavaVaultOpen = true;
-            this.leverTarget = -Math.PI / 4;
-            this.hatchTarget = 1;
-            this.audioManager.playHitImpact();
-            this.audioManager.playPortalActivate();
-            this.subtitleSystem.show('Mecanismo Secreto', '¡El mecanismo del pabellón ha abierto una cámara secreta al otro lado del reino!');
-          }
-        } else {
-          hud?.showInteractionPrompt('La cripta está abierta; busca la entrada al oeste.');
-        }
-      }
-    }
+    // Crypt switch/entry/exit interactions are resolved earlier, before E can be
+    // consumed by a nearby key, NPC, chest, or walk-over collectible.
 
-    // The west-field hatch is the usable entrance to the existing crypt.
-    // Use the shared E / Acción input path so neither desktop nor mobile has
-    // to rely on walking through a decorative lid or an underground terrain slab.
-    if (this.isLavaVaultOpen && !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying) {
-      const hud = (window as any).gameInstance?.hud;
-      if (!this.isInsideCuriosityCrypt) {
-        const dx = playerPos.x - this.curiosityCryptSurface.x;
-        const dz = playerPos.z - this.curiosityCryptSurface.z;
-        if (Math.hypot(dx, dz) < 3.2) {
-          if (this.hatchOpenProgress > 0.92) {
-            hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Entrar a la cripta · Acción' : 'Entrar a la cripta [E]');
-            if (this.inputManager.consumeInteractPress()) void this.transitionCuriosityCrypt(true);
-          } else {
-            hud?.showInteractionPrompt('La entrada se está abriendo…');
-          }
-        }
-      } else {
-        const dx = playerPos.x - this.curiosityCryptRoomEntry.x;
-        const dz = playerPos.z - this.curiosityCryptRoomEntry.z;
-        if (Math.hypot(dx, dz) < 3.0) {
-          hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Volver al exterior · Acción' : 'Volver al exterior [E]');
-          if (this.inputManager.consumeInteractPress()) void this.transitionCuriosityCrypt(false);
-        }
-      }
-    }
-
-    // ── Subterranean Lava Fall Check ──
     if (playerPos.y < -7.2 && playerPos.x <= -6 && playerPos.x >= -38 && playerPos.z >= -54 && playerPos.z <= -26) {
       this.player.takeDamage(15);
       this.player.mesh.position.copy(this.curiosityCryptRoomEntry);
@@ -5834,13 +6111,15 @@ export class LevelToyStory {
           },
         });
 
-        cinematic.run().catch(err => {
+        cinematic.run().then(() => {
+          // Commit chest ownership and inventory together for reloads.
+          (window as any).gameInstance?.saveGame?.(false);
+        }).catch(err => {
           console.error('[LevelToyStory] ChestCinematic error:', err);
           this.isCinematicPlaying = false;
           this.player.isMovementLocked = false;
-          this.player.hasStaff = true;
-          this.player.setStaffVisibility(true);
-          this.player.attachStaffToBack();
+          this.player.obtainWeapon('STAFF');
+          (window as any).gameInstance?.saveGame?.(false);
           this.enemies.forEach(e => e.isPaused = false);
         });
       }
@@ -5989,6 +6268,7 @@ export class LevelToyStory {
   private async transitionCuriosityCrypt(entering: boolean): Promise<void> {
     if (this.curiosityCryptTransitioning || !this.isLavaVaultOpen) return;
     this.curiosityCryptTransitioning = true;
+    this.isTeleportingToCrypt = entering;
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
     this.player.velocity.set(0, 0, 0);
@@ -6002,11 +6282,22 @@ export class LevelToyStory {
         screenIsFadedOut = true;
       }
       if (entering) {
-        this.player.mesh.position.copy(this.curiosityCryptRoomEntry);
+        // Switch the ground resolver before moving under the terrain. Otherwise
+        // the next physics frame can snap Wukong back to the temple surface.
         this.isInsideCuriosityCrypt = true;
+        // Land on the authored underground floor immediately. Mark the player
+        // grounded as part of the teleport so the outdoor terrain resolver
+        // cannot interpret the first frame as a fall through to the temple.
+        this.player.mesh.position.copy(this.curiosityCryptRoomEntry);
+        this.player.mesh.position.y = this.curiosityCryptFloorY;
+        this.player.isGrounded = true;
+        this.player.jumpCount = 0;
+        this.player.mesh.updateMatrixWorld(true);
       } else {
         this.player.mesh.position.set(this.curiosityCryptSurface.x, this.curiosityCryptSurface.y + 0.08, this.curiosityCryptSurface.z + 3.0);
         this.isInsideCuriosityCrypt = false;
+        this.player.isGrounded = false;
+        this.player.mesh.updateMatrixWorld(true);
       }
       this.player.mesh.rotation.y = entering ? Math.PI / 2 : Math.PI;
       this.player.velocity.set(0, 0, 0);
@@ -6026,6 +6317,7 @@ export class LevelToyStory {
       this.player.isControlsLocked = false;
       this.player.isMovementLocked = false;
       this.player.velocity.set(0, 0, 0);
+      this.isTeleportingToCrypt = false;
       this.curiosityCryptTransitioning = false;
     }
   }

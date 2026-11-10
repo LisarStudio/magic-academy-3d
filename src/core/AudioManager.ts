@@ -27,13 +27,14 @@ export class AudioManager {
   public sfxVolume = 0.8;
   public voiceVolume = 0.95;
 
-  private isAudioUnlocked = false;
+  private gesturePlaybackPending = false;
   private readonly footstepBuffers = new Map<'grass' | 'walk', AudioBuffer[]>();
   private readonly footstepPreparation = new Map<'grass' | 'walk', Promise<AudioBuffer[]>>();
   private readonly lastFootstepIndex = new Map<'grass' | 'walk', number>();
 
   constructor() {
     this.bgmAudio.preload = 'auto';
+    this.bgmAudio.setAttribute('playsinline', '');
     this.bgmAudio.volume = this.musicVolume * this.masterVolume;
     this.bgmAudio.addEventListener('ended', () => this.playNextGameplayTrack());
     this.setupMobileTouchUnlock();
@@ -48,13 +49,10 @@ export class AudioManager {
    */
   private setupMobileTouchUnlock(): void {
     const unlock = () => {
-      if (this.isAudioUnlocked) return;
-      this.isAudioUnlocked = true;
-
       try {
         const ctx = this.initCtx();
         if (ctx.state === 'suspended') {
-          ctx.resume();
+          void ctx.resume().catch((error) => console.debug('[AudioManager] WebAudio gesture resume deferred.', error));
         }
 
         if (this.musicMode && this.bgmAudio.paused) {
@@ -67,10 +65,17 @@ export class AudioManager {
       }
     };
 
-    window.addEventListener('touchstart', unlock, { once: true });
-    window.addEventListener('touchend', unlock, { once: true });
-    window.addEventListener('pointerdown', unlock, { once: true });
-    window.addEventListener('click', unlock, { once: true });
+    window.addEventListener('touchstart', unlock, { passive: true });
+    window.addEventListener('pointerdown', unlock, { passive: true });
+    window.addEventListener('click', unlock);
+  }
+
+  private resumeActiveMusicFromGesture(): void {
+    if (!this.musicMode || !this.bgmAudio.paused || this.gesturePlaybackPending) return;
+    this.gesturePlaybackPending = true;
+    void this.bgmAudio.play()
+      .catch((error) => console.info('[AudioManager] Music will retry on the next touch.', error))
+      .finally(() => { this.gesturePlaybackPending = false; });
   }
 
   public resume(): void {
@@ -79,6 +84,7 @@ export class AudioManager {
     } catch (e) {
       console.warn('[AudioManager] Failed to resume AudioContext:', e);
     }
+    this.resumeActiveMusicFromGesture();
   }
 
   private initCtx(): AudioContext {
@@ -141,7 +147,6 @@ export class AudioManager {
   }
 
   public startGameplayMusic(): void {
-    if (!this.musicPrepared) return;
     void this.prepareGameplayMusicAsset().catch((error: unknown) => {
       console.warn('[AudioManager] Gameplay playlist track preparation failed.', error);
     });

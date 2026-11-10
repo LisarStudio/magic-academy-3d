@@ -37,6 +37,9 @@ export class EnemyController {
   private bossEyeWindup = 0;
   private bossEyeGlow: THREE.Mesh | null = null;
   private bossEyeLight: THREE.PointLight | null = null;
+  private bossGeneratedGeometry: THREE.BufferGeometry[] = [];
+  private bossLegPivots: Array<{ pivot: THREE.Group; phase: number; restX: number }> = [];
+  private bossArmPivots: Array<{ pivot: THREE.Group; phase: number; restX: number }> = [];
 
   // Death VFX state
   private dyingTimer = 0;
@@ -104,6 +107,7 @@ export class EnemyController {
   private static readonly BOSS_PROJECTILE_TO_PLAYER = new THREE.Vector3();
   private static readonly BOSS_PROJECTILE_CLOSEST = new THREE.Vector3();
   private static readonly HIT_FLASH_EMISSION = new THREE.Color(0xff2200);
+  private static readonly BOSS_LEG_MESH_NAMES = ['Cube.005', 'Cube.006', 'Cube.007', 'Cube.008', 'Cube.009'];
 
   // Cached materials for zero-traverse hit flash
   private meshMaterials: THREE.MeshStandardMaterial[] = [];
@@ -374,28 +378,12 @@ export class EnemyController {
       this.bossClawRestRotations.clear();
       const bossMaterialCopies = new Map<THREE.Material, THREE.Material>();
       const seenMaterials = new Set<THREE.MeshStandardMaterial>();
-      const eyeCandidates: Array<{ material: THREE.MeshStandardMaterial; position: THREE.Vector3 }> = [];
       model.traverse((child) => {
         const n = child.name.toLowerCase();
         if (this.id === 'crab_boss') {
-          if (child.parent === model) {
-            const cleanName = n.replace(/\./g, '');
-            if (
-              cleanName.startsWith('cube005') || cleanName.startsWith('cube006') ||
-              cleanName.startsWith('cube007') || cleanName.startsWith('cube008') ||
-              cleanName.startsWith('cube009') || cleanName.startsWith('cube011') ||
-              cleanName.includes('leg')
-            ) {
-              this.legs.push(child);
-            }
-            if (
-              cleanName.startsWith('cube001') || cleanName.startsWith('cube003') ||
-              cleanName.startsWith('sphere') || cleanName.includes('claw')
-            ) {
-              this.bossClaws.push(child);
-              this.bossClawRestRotations.set(child, child.rotation.clone());
-            }
-          }
+          // The GLB is a set of named hard-surface parts, not a skeleton.
+          // Don't rotate the face/eye meshes as limbs; the appendage rig is
+          // built from the actual leg and arm meshes below.
         } else {
           if (n.includes('leg') || n.includes('arm') || n.includes('claw') || n.includes('limb')) {
             this.legs.push(child);
@@ -433,38 +421,31 @@ export class EnemyController {
               color: standard.emissive.clone(),
               intensity: standard.emissiveIntensity,
             });
-            if (this.id === 'crab_boss' && standard.emissive.r > 0.75 && standard.emissive.g < 0.08 && standard.emissive.b < 0.08 && standard.emissiveIntensity > 0) {
-              const bounds = mesh.geometry.boundingBox ?? (mesh.geometry.computeBoundingBox(), mesh.geometry.boundingBox);
-              if (bounds) {
-                const eyePosition = bounds.getCenter(new THREE.Vector3());
-                mesh.localToWorld(eyePosition);
-                model.worldToLocal(eyePosition);
-                eyeCandidates.push({ material: standard, position: eyePosition });
-              }
-            }
           }
         }
       });
 
-      if (this.id === 'crab_boss' && eyeCandidates.length > 0) {
-        // The highest red emissive detail in the crab GLB is its central eye.
-        // Drive only that original material, then add one no-shadow light for
-        // a subtle crimson spill on the adjacent face during dangerous windups.
-        eyeCandidates.sort((a, b) => b.position.y - a.position.y);
-        const eye = eyeCandidates[0];
-        this.bossRedEmissionMaterials.push({ material: eye.material, baseIntensity: eye.material.emissiveIntensity });
+      if (this.id === 'crab_boss') {
+        this.bossGeneratedGeometry = [];
+        this.installBossAppendageRig(model);
+        const movedEye = this.moveBossThirdEye(model);
+        if (movedEye) {
+        // Use the original emissive eye material, but find its centre from
+        // the eye's triangle group instead of the bounds of the whole face.
+        this.bossRedEmissionMaterials.push({ material: movedEye.mesh.material as THREE.MeshStandardMaterial, baseIntensity: (movedEye.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity });
         const glow = new THREE.Mesh(
           new THREE.SphereGeometry(0.15, 12, 8),
           new THREE.MeshBasicMaterial({ color: 0xff2440, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
         );
-        glow.position.copy(eye.position);
+        glow.position.copy(movedEye.position);
         glow.renderOrder = 3;
         model.add(glow);
         this.bossEyeGlow = glow;
         const light = new THREE.PointLight(0xff263f, 0, 2.4, 2);
-        light.position.copy(eye.position);
+        light.position.copy(movedEye.position);
         model.add(light);
         this.bossEyeLight = light;
+        }
       }
 
       this.initCombatSwordIcon();
@@ -472,6 +453,202 @@ export class EnemyController {
     } catch (err) {
       console.warn(`[EnemyController] Could not instantiate crab model for '${this.id}'`, err);
     }
+  }
+
+  /** Split mirrored hard-surface parts so each side can pivot independently. */
+  private splitMeshByBossSide(source: THREE.Mesh, model: THREE.Object3D, centerX: number): [THREE.BufferGeometry | null, THREE.BufferGeometry | null] {
+    const sourceGeometry = source.geometry;
+    const position = sourceGeometry.getAttribute('position');
+    if (!position) return [null, null];
+    source.updateWorldMatrix(true, false);
+    model.updateWorldMatrix(true, true);
+    const worldToModel = model.matrixWorld.clone().invert();
+    const index = sourceGeometry.index;
+    const ranges = sourceGeometry.groups.length
+      ? sourceGeometry.groups
+      : [{ start: 0, count: index?.count ?? position.count, materialIndex: 0 }];
+    const sideValues: Array<Map<string, number[]>> = [new Map(), new Map()];
+    const sideGroupCounts: Array<Map<number, number>> = [new Map(), new Map()];
+    const localA = new THREE.Vector3();
+    const localB = new THREE.Vector3();
+    const localC = new THREE.Vector3();
+    const modelA = new THREE.Vector3();
+    const modelB = new THREE.Vector3();
+    const modelC = new THREE.Vector3();
+
+    for (const range of ranges) {
+      for (let start = range.start; start + 2 < range.start + range.count; start += 3) {
+        const materialIndex = range.materialIndex ?? 0;
+        const ia = index ? index.getX(start) : start;
+        const ib = index ? index.getX(start + 1) : start + 1;
+        const ic = index ? index.getX(start + 2) : start + 2;
+        localA.fromBufferAttribute(position, ia);
+        localB.fromBufferAttribute(position, ib);
+        localC.fromBufferAttribute(position, ic);
+        modelA.copy(localA).applyMatrix4(source.matrixWorld).applyMatrix4(worldToModel);
+        modelB.copy(localB).applyMatrix4(source.matrixWorld).applyMatrix4(worldToModel);
+        modelC.copy(localC).applyMatrix4(source.matrixWorld).applyMatrix4(worldToModel);
+        const side = (modelA.x + modelB.x + modelC.x) / 3 < centerX ? 0 : 1;
+        for (const vertexIndex of [ia, ib, ic]) {
+          for (const [name, attribute] of Object.entries(sourceGeometry.attributes)) {
+            let attributeValues = sideValues[side].get(`${materialIndex}:${name}`);
+            if (!attributeValues) {
+              attributeValues = [];
+              sideValues[side].set(`${materialIndex}:${name}`, attributeValues);
+            }
+            const array = attribute.array as ArrayLike<number>;
+            for (let component = 0; component < attribute.itemSize; component++) {
+              attributeValues.push(array[vertexIndex * attribute.itemSize + component]);
+            }
+          }
+        }
+        sideGroupCounts[side].set(materialIndex, (sideGroupCounts[side].get(materialIndex) ?? 0) + 3);
+      }
+    }
+
+    const geometries: Array<THREE.BufferGeometry | null> = [null, null];
+    for (let side = 0; side < 2; side++) {
+      const materialIndices = [...sideGroupCounts[side].keys()].sort((a, b) => a - b);
+      if (!materialIndices.length) continue;
+      const result = new THREE.BufferGeometry();
+      for (const [name, attribute] of Object.entries(sourceGeometry.attributes)) {
+        const combined: number[] = [];
+        for (const materialIndex of materialIndices) combined.push(...(sideValues[side].get(`${materialIndex}:${name}`) ?? []));
+        const ArrayType = attribute.array.constructor as new (values: number[]) => typeof attribute.array;
+        const copied = new THREE.BufferAttribute(new ArrayType(combined), attribute.itemSize, attribute.normalized);
+        result.setAttribute(name, copied);
+      }
+      let groupStart = 0;
+      for (const materialIndex of materialIndices) {
+        const count = sideGroupCounts[side].get(materialIndex) ?? 0;
+        if (count > 0) result.addGroup(groupStart, count, materialIndex);
+        groupStart += count;
+      }
+      result.computeBoundingBox();
+      result.computeBoundingSphere();
+      geometries[side] = result;
+      this.bossGeneratedGeometry.push(result);
+    }
+    return geometries as [THREE.BufferGeometry | null, THREE.BufferGeometry | null];
+  }
+
+  private installBossAppendageRig(model: THREE.Object3D): void {
+    this.bossLegPivots = [];
+    this.bossArmPivots = [];
+    this.legs = [];
+    this.bossClaws = [];
+    this.bossClawRestRotations.clear();
+
+    const sides = [-1, 1] as const;
+    const legPivots = sides.map((side, index) => {
+      const pivot = new THREE.Group();
+      pivot.name = `nezha_x_leg_pivot_${side < 0 ? 'left' : 'right'}`;
+      pivot.position.set(side * 0.52, 2.55, 0.02);
+      model.add(pivot);
+      const entry = { pivot, phase: index * Math.PI, restX: pivot.rotation.x };
+      this.bossLegPivots.push(entry);
+      return entry;
+    });
+    const modelCenterX = 0;
+    for (const name of EnemyController.BOSS_LEG_MESH_NAMES) {
+      const source = model.getObjectByName(name) as THREE.Mesh | null;
+      if (!source?.isMesh || source.parent !== model) continue;
+      const split = this.splitMeshByBossSide(source, model, modelCenterX);
+      for (let side = 0; side < 2; side++) {
+        const geometry = split[side];
+        if (!geometry) continue;
+        const pivot = legPivots[side]?.pivot;
+        if (!pivot) continue;
+        const part = new THREE.Mesh(geometry, source.material);
+        part.name = `${name}_${side === 0 ? 'left' : 'right'}_gait_part`;
+        part.position.copy(source.position).sub(pivot.position);
+        part.quaternion.copy(source.quaternion);
+        part.scale.copy(source.scale);
+        part.castShadow = source.castShadow;
+        part.receiveShadow = source.receiveShadow;
+        pivot.add(part);
+      }
+      model.remove(source);
+    }
+
+    const armSource = model.getObjectByName('Sphere') as THREE.Mesh | null;
+    if (armSource?.isMesh && armSource.parent === model) {
+      const split = this.splitMeshByBossSide(armSource, model, modelCenterX);
+      for (let side = 0; side < 2; side++) {
+        const geometry = split[side];
+        if (!geometry) continue;
+        const sign = sides[side] ?? 1;
+        const pivot = new THREE.Group();
+        pivot.name = `nezha_x_arm_pivot_${sign < 0 ? 'left' : 'right'}`;
+        pivot.position.set(sign * 1.02, 4.25, 0.38);
+        model.add(pivot);
+        const part = new THREE.Mesh(geometry, armSource.material);
+        part.name = `nezha_x_arm_${sign < 0 ? 'left' : 'right'}`;
+        part.position.copy(armSource.position).sub(pivot.position);
+        part.quaternion.copy(armSource.quaternion);
+        part.scale.copy(armSource.scale);
+        part.castShadow = armSource.castShadow;
+        part.receiveShadow = armSource.receiveShadow;
+        pivot.add(part);
+        const entry = { pivot, phase: side * Math.PI, restX: pivot.rotation.x };
+        this.bossArmPivots.push(entry);
+        this.bossClaws.push(pivot);
+        this.bossClawRestRotations.set(pivot, pivot.rotation.clone());
+      }
+      model.remove(armSource);
+    }
+  }
+
+  private moveBossThirdEye(model: THREE.Object3D): { mesh: THREE.Mesh; position: THREE.Vector3 } | null {
+    const face = model.getObjectByName('Cube.001') as THREE.Mesh | null;
+    if (!face?.isMesh || !Array.isArray(face.material) || !face.geometry.groups.length) return null;
+    const faceMaterials = face.material as THREE.Material[];
+    const eyeGroup = face.geometry.groups.find((group) => {
+      const material = faceMaterials[group.materialIndex ?? 0] as THREE.MeshStandardMaterial | undefined;
+      return !!material?.isMeshStandardMaterial && material.emissive.r > 0.75 && material.emissive.g < 0.08 && material.emissive.b < 0.08 && material.emissiveIntensity > 0;
+    });
+    if (!eyeGroup) return null;
+    const eyeMaterialIndex = eyeGroup.materialIndex ?? 0;
+    const eyeMaterial = faceMaterials[eyeMaterialIndex] as THREE.MeshStandardMaterial;
+    const darkMaterial = faceMaterials.find((material, index) => index !== eyeMaterialIndex && (material as THREE.MeshStandardMaterial).isMeshStandardMaterial) as THREE.Material | undefined;
+    if (!darkMaterial) return null;
+    const eyeGeometry = face.geometry.clone();
+    eyeGeometry.clearGroups();
+    eyeGeometry.addGroup(eyeGroup.start, eyeGroup.count, 0);
+    this.bossGeneratedGeometry.push(eyeGeometry);
+
+    const vertex = face.geometry.getAttribute('position');
+    const index = face.geometry.index;
+    const center = new THREE.Vector3();
+    let count = 0;
+    for (let i = eyeGroup.start; i < eyeGroup.start + eyeGroup.count; i++) {
+      const vertexIndex = index ? index.getX(i) : i;
+      center.add(new THREE.Vector3().fromBufferAttribute(vertex, vertexIndex));
+      count++;
+    }
+    if (count) center.multiplyScalar(1 / count);
+
+    const oldMaterials = faceMaterials.slice();
+    oldMaterials[eyeMaterialIndex] = darkMaterial;
+    face.material = oldMaterials;
+    const eye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    eye.name = 'nezha_x_third_eye_at_marked_position';
+    eye.position.copy(face.position);
+    eye.quaternion.copy(face.quaternion);
+    eye.scale.copy(face.scale);
+    // The red square marks the centre of the dark face plate, well below the
+    // original forehead socket. In the source GLB's local units this shift
+    // maps to about 1.8 m after the boss normalization scale.
+    eye.position.y -= 1.7;
+    eye.renderOrder = 3;
+    eye.castShadow = false;
+    eye.receiveShadow = false;
+    model.add(eye);
+    model.updateMatrixWorld(true);
+    const eyePosition = center.clone();
+    eye.localToWorld(eyePosition);
+    model.worldToLocal(eyePosition);
+    return { mesh: eye, position: eyePosition };
   }
 
   private combatSprite: THREE.Sprite | null = null;
@@ -1355,11 +1532,33 @@ export class EnemyController {
   private animateBossTell(): void {
     if (!this.crabModel || this.state === 'DYING' || this.state === 'DEAD') return;
     const lift = this.bossAttackPhase === 'TELEGRAPH' && this.bossPattern === 'CLAW' ? 0.18 : 0;
-    this.crabModel.position.y = this.bossModelBaseY + lift;
+    const pursuing = this.state === 'CHASE' || this.state === 'PATROL';
+    const gaitBob = pursuing ? Math.abs(Math.sin(this.proceduralTime * 1.35)) * 0.035 : 0;
+    this.crabModel.position.y = this.bossModelBaseY + lift + gaitBob;
   }
 
-  private animateLegs(_delta: number): void {
+  private animateLegs(delta: number): void {
     if (this.state === 'FLIPPED' || this.state === 'DYING' || this.state === 'DEAD') return;
+    if (this.id === 'crab_boss') {
+      const pursuing = this.state === 'CHASE' || this.state === 'PATROL';
+      const gaitPhase = this.proceduralTime * 1.6;
+      for (const leg of this.bossLegPivots) {
+        const target = leg.restX + (pursuing ? Math.sin(gaitPhase + leg.phase) * 0.34 : Math.sin(this.proceduralTime * 0.55 + leg.phase) * 0.025);
+        leg.pivot.rotation.x = THREE.MathUtils.damp(leg.pivot.rotation.x, target, pursuing ? 13 : 5, delta);
+      }
+      // The original GLB combines each hand and arm into one mesh. We split
+      // its mirrored sides at load and pivot them at the shoulders so the
+      // pursuit reads as a playful, reaching robot rather than a rigid sign.
+      const canGesture = this.bossAttackPhase === 'READY' && this.state !== 'ATTACK' && this.state !== 'STUNNED';
+      for (const arm of this.bossArmPivots) {
+        if (!canGesture) continue; // Windup/recovery poses own the arm pivots.
+        const amplitude = pursuing ? 0.18 : 0.045;
+        const target = arm.restX + Math.sin(this.proceduralTime * (pursuing ? 1.15 : 0.55) + arm.phase) * amplitude;
+        arm.pivot.rotation.x = THREE.MathUtils.damp(arm.pivot.rotation.x, target, 7, delta);
+        arm.pivot.rotation.z = Math.sin(this.proceduralTime * 0.7 + arm.phase) * (pursuing ? 0.035 : 0.012);
+      }
+      return;
+    }
     const isMoving = this.state === 'CHASE' || this.state === 'PATROL' || this.state === 'ATTACK';
     const legSpeed = this.state === 'CHASE' ? 12 : 6;
     for (let i = 0; i < this.legs.length; i++) {
@@ -1426,6 +1625,10 @@ export class EnemyController {
     this.bossOwnedMaterials.clear();
     this.bossEyeGlow?.geometry.dispose();
     (this.bossEyeGlow?.material as THREE.Material | undefined)?.dispose();
+    for (const geometry of this.bossGeneratedGeometry) geometry.dispose();
+    this.bossGeneratedGeometry.length = 0;
+    this.bossLegPivots.length = 0;
+    this.bossArmPivots.length = 0;
     this.bossEyeGlow = null;
     this.bossEyeLight = null;
     this.bossRedEmissionMaterials.length = 0;

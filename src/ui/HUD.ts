@@ -82,6 +82,14 @@ export class HUD {
   private objectiveMiniIconEl: HTMLElement | null = null;
   private lastObjectiveText: string = '';
   private interactionPromptRequested = false;
+  private infoToastEl: HTMLElement;
+  private infoToastSpeakerEl: HTMLElement;
+  private infoToastTextEl: HTMLElement;
+  private infoToastTimer: number | null = null;
+  private infoToastHideTimer: number | null = null;
+  private infoToastPriority = 0;
+  private infoToastVisible = false;
+  private queuedInfoToast: { speaker: string; text: string; durationMs: number; priority: number } | null = null;
 
   public isDebugMode = false;
 
@@ -142,6 +150,18 @@ export class HUD {
     this.letterChallengeProgressEl = document.getElementById('letter-challenge-progress')!;
     this.letterChallengeNextEl = document.getElementById('letter-challenge-next')!;
     this.letterChallengeSlotsEl = document.getElementById('letter-challenge-slots')!;
+    this.infoToastEl = document.createElement('aside');
+    this.infoToastEl.id = 'hud-info-toast';
+    this.infoToastEl.className = 'hud-info-toast hidden';
+    this.infoToastEl.setAttribute('role', 'status');
+    this.infoToastEl.setAttribute('aria-live', 'polite');
+    this.infoToastEl.setAttribute('aria-hidden', 'true');
+    this.infoToastSpeakerEl = document.createElement('strong');
+    this.infoToastSpeakerEl.className = 'hud-info-toast-speaker';
+    this.infoToastTextEl = document.createElement('span');
+    this.infoToastTextEl.className = 'hud-info-toast-text';
+    this.infoToastEl.append(this.infoToastSpeakerEl, this.infoToastTextEl);
+    document.getElementById('ui-overlay')?.appendChild(this.infoToastEl);
     this.createLetterChallengeSlots();
     if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('hudDebug')) {
       this.hudTopLeftEl.dataset.hudComponent = 'HUD.ts#hud-top-left';
@@ -751,6 +771,10 @@ export class HUD {
   }
 
   public showInteractionPrompt(label: string): void {
+    if (this.infoToastVisible) {
+      this.hideInteractionPrompt();
+      return;
+    }
     this.interactionPromptRequested = true;
     if (this.isTouchDevice()) {
       const isActionPrompt = /\[E\]/i.test(label) || /^(Abrir|Hablar|Recoger|Tomar|Activar)\b/i.test(label);
@@ -778,6 +802,90 @@ export class HUD {
 
   public endInteractionFrame(): void {
     if (!this.interactionPromptRequested) this.hideInteractionPrompt();
+  }
+
+  /** Show a compact, non-interactive side message without using narrative subtitles. */
+  public showInfoToast(speaker: string, text: string, durationMs = 3600, priority = 1): void {
+    const message = { speaker, text, durationMs, priority };
+    if (this.infoToastVisible && priority < this.infoToastPriority) {
+      if (!this.queuedInfoToast || priority >= this.queuedInfoToast.priority) this.queuedInfoToast = message;
+      return;
+    }
+    this.displayInfoToast(message);
+  }
+
+  private displayInfoToast(message: { speaker: string; text: string; durationMs: number; priority: number }): void {
+    if (this.infoToastTimer !== null) window.clearTimeout(this.infoToastTimer);
+    if (this.infoToastHideTimer !== null) window.clearTimeout(this.infoToastHideTimer);
+    this.infoToastTimer = null;
+    this.infoToastHideTimer = null;
+    this.infoToastPriority = message.priority;
+    this.infoToastVisible = true;
+    this.infoToastSpeakerEl.textContent = message.speaker;
+    this.infoToastTextEl.textContent = message.text;
+    this.infoToastEl.classList.remove('hidden', 'is-visible', 'is-right');
+    this.infoToastEl.setAttribute('aria-hidden', 'false');
+    const leftOverlaps = this.infoToastOverlapsVisibleUI('left');
+    const rightOverlaps = this.infoToastOverlapsVisibleUI('right');
+    this.infoToastEl.classList.toggle('is-right', leftOverlaps && !rightOverlaps);
+    if (leftOverlaps && rightOverlaps) {
+      // Choose the clearer side if both are occupied, while keeping the toast
+      // out of touch controls and existing HUD/dialogue regions.
+      this.infoToastEl.classList.toggle('is-right', this.infoToastOverlapScore('right') < this.infoToastOverlapScore('left'));
+    }
+    // Commit the hidden-state layout before enabling the transition; unlike a
+    // deferred RAF this still animates correctly in paused/background tabs.
+    this.infoToastEl.getBoundingClientRect();
+    this.infoToastEl.classList.add('is-visible');
+    this.hideInteractionPrompt();
+    this.infoToastTimer = window.setTimeout(() => {
+      this.infoToastEl.classList.remove('is-visible');
+      this.infoToastHideTimer = window.setTimeout(() => {
+        this.infoToastEl.classList.add('hidden');
+        this.infoToastEl.setAttribute('aria-hidden', 'true');
+        this.infoToastVisible = false;
+        this.infoToastPriority = 0;
+        this.infoToastTimer = null;
+        this.infoToastHideTimer = null;
+        const queued = this.queuedInfoToast;
+        this.queuedInfoToast = null;
+        if (queued) this.displayInfoToast(queued);
+      }, 190);
+    }, Math.max(1000, message.durationMs));
+  }
+
+  private infoToastOverlapsVisibleUI(side: 'left' | 'right'): boolean {
+    this.infoToastEl.classList.toggle('is-right', side === 'right');
+    const toastRect = this.infoToastEl.getBoundingClientRect();
+    return this.infoToastGetObstacles().some((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && toastRect.left < rect.right && toastRect.right > rect.left &&
+        toastRect.top < rect.bottom && toastRect.bottom > rect.top;
+    });
+  }
+
+  private infoToastOverlapScore(side: 'left' | 'right'): number {
+    this.infoToastEl.classList.toggle('is-right', side === 'right');
+    const toastRect = this.infoToastEl.getBoundingClientRect();
+    return this.infoToastGetObstacles().reduce((score, element) => {
+      const rect = element.getBoundingClientRect();
+      const width = Math.max(0, Math.min(toastRect.right, rect.right) - Math.max(toastRect.left, rect.left));
+      const height = Math.max(0, Math.min(toastRect.bottom, rect.bottom) - Math.max(toastRect.top, rect.top));
+      return score + width * height;
+    }, 0);
+  }
+
+  private infoToastGetObstacles(): HTMLElement[] {
+    const selectors = [
+      '#hud-top-left:not(.hidden)', '#hud-top-right:not(.hidden)', '#objective-container:not(.hidden)',
+      '#objective-mini-icon.visible', '#touch-joystick-zone', '#touch-action-zone',
+      '#interaction-prompt:not(.hidden)', '#letter-challenge-hud:not(.hidden)',
+      '#boss-health-panel:not(.hidden)', '#dialogue-bubble:not(.hidden)', '#subtitle-box:not(.hidden)'
+    ].join(',');
+    return Array.from(document.querySelectorAll<HTMLElement>(selectors)).filter((element) => {
+      const style = window.getComputedStyle(element);
+      return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0;
+    });
   }
 
   public toggleDebug(): void {

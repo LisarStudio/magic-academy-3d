@@ -39,9 +39,12 @@ export const WEAPON_DEFINITIONS: Record<WeaponType, WeaponDefinition> = {
     backAttachment: {
       boneNameSubstrings: ['spine2', 'chest', 'upperchest'],
       fallbackBoneNames: ['spine1', 'spine'],
-      // Last calibrated upper-back socket, in metres local to the torso bone.
-      position: new THREE.Vector3(0.15, -0.10, 0.18),
-      rotation: new THREE.Euler(0.04, -0.04, 0.62, 'XYZ')
+      // Calibrated against mixamorigSpine2 in metres; negative local Z keeps
+      // the staff just behind the back rather than in front of the chest.
+      position: new THREE.Vector3(0.04, -0.08, -0.18),
+      // baculo.glb carries its own ~27 degree axis rotation, so this socket
+      // roll produces the intended shoulder-to-opposite-hip diagonal.
+      rotation: new THREE.Euler(0.04, -0.04, 1.26, 'XYZ')
     },
     handAttachment: {
       boneNameSubstrings: ['righthand'],

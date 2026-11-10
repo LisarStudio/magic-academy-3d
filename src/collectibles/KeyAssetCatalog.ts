@@ -38,7 +38,8 @@ export const KEY_ASSETS: Partial<Record<ProgressKeyId, KeyAssetDefinition>> = {
     magicColor: 0x62dfff,
   },
   key3_platform: {
-    name: 'Llave de Plataformas',
+    // Legacy save/progression ID: this original asset is the Nature key.
+    name: 'Llave de la Naturaleza',
     slotIndex: 4,
     modelUrl: `${root}/models/llave_de_la_naturaleza.glb`,
     iconUrl: `${root}/icons/llave_naturaleza.png`,

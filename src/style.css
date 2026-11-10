@@ -390,6 +390,55 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 .subtitle-skip-hint { font-size: 11px; color: #887; margin-top: 8px; letter-spacing: 1px; animation: pulseOpacity 1.5s infinite ease-in-out; }
 @keyframes pulseOpacity { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
 
+/* Brief gameplay messages live on a screen edge; narrative subtitles and
+   cinematic dialogue retain their existing centered presentation. */
+.hud-info-toast {
+  position: absolute;
+  z-index: 110;
+  top: 43%;
+  left: max(16px, env(safe-area-inset-left, 0px) + 14px);
+  width: clamp(220px, 18vw, 280px);
+  max-height: 116px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 13px 11px;
+  border: 1px solid rgba(245, 200, 66, .34);
+  border-radius: 9px;
+  background: rgba(7, 9, 18, .78);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, .2), inset 0 1px rgba(255, 255, 255, .035);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-16px, -50%);
+  transition: opacity .2s ease, transform .2s ease, visibility .2s ease;
+  pointer-events: none;
+}
+.hud-info-toast.is-right {
+  right: max(16px, env(safe-area-inset-right, 0px) + 14px);
+  left: auto;
+  transform: translate(16px, -50%);
+}
+.hud-info-toast.is-visible { opacity: 1; visibility: visible; transform: translate(0, -50%); }
+.hud-info-toast-speaker {
+  color: #edc66e;
+  font: 700 11px/1.2 var(--font-title);
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.hud-info-toast-text {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #f4efe6;
+  font: 600 13px/1.38 var(--font-ui);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow-wrap: anywhere;
+}
+
 /* Cinematic Dialogue Bubble */
 .dialogue-bubble-container {
   position: absolute;
@@ -2242,6 +2291,19 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 
 /* Mobile HUD remaster: safe-area aware, compact and thumb-clear. */
 @media (pointer: coarse) {
+  .hud-info-toast {
+    top: 38%;
+    left: max(8px, env(safe-area-inset-left, 0px) + 8px);
+    width: min(220px, calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 24px));
+    max-height: 100px;
+    padding: 8px 10px;
+    background: rgba(7, 9, 18, .84);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .hud-info-toast.is-right { right: max(8px, env(safe-area-inset-right, 0px) + 8px); left: auto; }
+  .hud-info-toast-speaker { font-size: 10px; }
+  .hud-info-toast-text { font-size: 12px; line-height: 1.34; }
   #ui-overlay { width: 100vw; height: 100dvh; overflow: hidden; }
   #hud-top-left.imperial-hud {
     width: clamp(150px, 50vw, 196px);
@@ -2325,6 +2387,7 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 }
 
 @media (pointer: coarse) and (max-height: 500px) and (orientation: landscape) {
+  .hud-info-toast { top: 40%; width: min(220px, 28vw); }
   #hud-top-left.imperial-hud { width: clamp(168px, 25vw, 220px); }
   #hud-top-right { width: min(34vw, 200px); grid-template-columns: minmax(0, 1fr) 44px; }
   #objective-container, #objective-mini-icon { top: calc(env(safe-area-inset-top, 0px) + 88px); }

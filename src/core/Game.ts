@@ -194,7 +194,11 @@ export class Game {
     this.player.onLivesChange = (lives) => this.hud.setLives(lives);
     this.player.onGameOver = () => this.enterGameOver();
     this.inputManager.onPlayerCommand = () => this.player?.interruptHitReactionForCommand(this.inputManager);
-    this.inputManager.canInteract = () => this.canUseGameplayActions();
+    // Interactions are valid during an attack animation. The HUD prompt and
+    // world triggers remain gated by locks/pause, while combat's separate
+    // canAttack gate continues to reject attacks during one-shots.
+    this.inputManager.canInteract = () => this.menuState === 'Playing' && !this.isPaused && !!this.player &&
+      !this.player.isControlsLocked && !this.player.isMovementLocked;
     this.inputManager.canAttack = () => this.canUseGameplayActions();
 
     // Register the defeat spotlight before scene shader preparation. Adding a
@@ -1016,9 +1020,7 @@ export class Game {
         const migratedKeys = { ...data.collectedKeys };
         if (migratedKeys.key4_gargoyles === true) migratedKeys.key6_gargoyles = true;
         delete migratedKeys.key4_gargoyles;
-        Object.assign(this.level01.collectedKeys, migratedKeys);
-        this.level01.totalKeysCount = Number(data.totalKeysCount) || 0;
-        this.hud.setCollectedKeys(this.level01.getCollectedKeyIds(), false);
+        this.level01.restoreCollectedKeys(migratedKeys);
       }
       if (data.stateFlags && typeof data.stateFlags === 'object') {
         Object.assign(this.level01.stateFlags, data.stateFlags);

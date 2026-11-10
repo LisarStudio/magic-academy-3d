@@ -283,7 +283,10 @@ export class PlayerController {
 
     // 3. Use a local socket on the spine. Inverse parent scale preserves the
     // authored metre offsets and the normalized GLB size without frame updates.
-    const backStaff = this.createStaffVisual('staff_on_back', 0.38);
+    // baculo.glb is normalized to 1.22 m at import. A 0.38 multiplier left
+    // only a 0.46 m fragment at Wukong's shoulder; retain its full length so
+    // the back mount spans the shoulders and lower back.
+    const backStaff = this.createStaffVisual('staff_on_back', 0.82);
     backStaff.visible = false;
     this.staffBackMesh = backStaff;
 
@@ -305,15 +308,12 @@ export class PlayerController {
       Math.max(Math.abs(fallbackScale.y), 0.00001),
       Math.max(Math.abs(fallbackScale.z), 0.00001)
     );
-    if (backBone) {
-      backSocket.position.copy(def.backAttachment.position).divide(safeParentScale);
-      backSocket.rotation.copy(def.backAttachment.rotation);
-    } else {
-      // Keep a separate model-root fallback for alternate rigs that have no
-      // torso bone; bone-local offsets must not be reused in root coordinates.
-      backSocket.position.set(0, 0.89, -0.45).divide(safeParentScale);
-      backSocket.rotation.set(-Math.PI * 0.5, 0, -0.32);
-    }
+    // The selected Mixamo bone is scaled to 0.004 with the imported rig. Keep
+    // the authored offset and diagonal rotation in that bone's local frame;
+    // converting a metre-space point through the scaled model root placed the
+    // socket near the feet even though the bone itself was at the shoulders.
+    backSocket.position.copy(def.backAttachment.position).divide(safeParentScale);
+    backSocket.rotation.copy(def.backAttachment.rotation);
     backSocket.scale.set(1 / safeParentScale.x, 1 / safeParentScale.y, 1 / safeParentScale.z);
     backParent.add(backSocket);
 
@@ -677,8 +677,12 @@ export class PlayerController {
     // Use the same sampled ground and walkable surface regardless of the
     // character's current height. Previously a fall below -1.5 m switched to
     // collider-only resolution, which could leave Wukong embedded underground.
+    const cryptFloorY = level?.getCuriosityCryptFloorY?.();
     const floorY = isInCrypt
-      ? (validGroundHit?.point.y ?? terrainY)
+      // The cave's enclosing roof/terrain colliders can produce a misleading
+      // ray hit at the surface. Its authored chamber floor is authoritative;
+      // use it before any ray result so underground entry cannot snap outdoors.
+      ? (cryptFloorY ?? validGroundHit?.point.y ?? terrainY)
       : Math.max(terrainY, validGroundHit?.point.y ?? -Infinity);
 
     if (this.mesh.position.y <= floorY + 0.45 && this.velocity.y <= 0) {
@@ -969,10 +973,17 @@ export class PlayerController {
     // seams, especially where the approach meets the temple apron.
     if (this.isGrounded && this.velocity.y === 0) {
       const levelAfterMove = (window as any).gameInstance?.level01;
-      let supportY = levelAfterMove?.getTerrainHeight
-        ? levelAfterMove.getTerrainHeight(this.mesh.position.x, this.mesh.position.z)
-        : 0;
-      if (this.colliders.length > 0) {
+      const isInsideCrypt = levelAfterMove?.isPlayerInsideCuriosityCrypt?.() === true;
+      // Keep the post-movement support sample on the same authored floor as
+      // the initial ground resolver. Sampling outdoor terrain here used to
+      // overwrite the crypt landing with y=0 every grounded frame, visibly
+      // placing Wukong back above the central temple.
+      let supportY = isInsideCrypt
+        ? (levelAfterMove?.getCuriosityCryptFloorY?.() ?? this.mesh.position.y)
+        : (levelAfterMove?.getTerrainHeight
+          ? levelAfterMove.getTerrainHeight(this.mesh.position.x, this.mesh.position.z)
+          : 0);
+      if (!isInsideCrypt && this.colliders.length > 0) {
         PlayerController.TEMP_GROUND_ORIGIN.copy(this.mesh.position).add(PlayerController.RAY_OFFSET);
         this.groundRaycaster.set(PlayerController.TEMP_GROUND_ORIGIN, PlayerController.DOWN_DIR);
         this.groundRaycaster.far = 4.8;
@@ -980,7 +991,9 @@ export class PlayerController {
         for (const hit of rawSnapHits) {
           if (isPlayerChild(hit.object) || !hit.face) continue;
           const norm = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
-          if (norm.y >= 0.4 && hit.point.y <= this.mesh.position.y + 0.55 && hit.point.y >= this.mesh.position.y - 2.4) {
+          const isWalkableSupport = hit.object.userData.walkableSupport === true;
+          const maxSupportAboveRoot = isWalkableSupport ? 2.25 : 0.55;
+          if (norm.y >= 0.4 && hit.point.y <= this.mesh.position.y + maxSupportAboveRoot && hit.point.y >= this.mesh.position.y - 2.4) {
             supportY = Math.max(supportY, hit.point.y);
             break;
           }
