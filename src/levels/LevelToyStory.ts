@@ -885,91 +885,144 @@ export class LevelToyStory {
     }
 
     if (lampResult.status === 'fulfilled') {
-      // Keep the authored pair spacing and the suspension offset from the
-      // original pavilion placement. Each lamp gets its own roof anchor below.
+      // Reuse the original two-lantern GLB as three symmetric pairs: the main
+      // entrance, the broad lower eave, and the upper roof corners. Each body
+      // is positioned from a downward ray against the actual temple mesh, so a
+      // missing roof hit skips that lantern instead of leaving it floating.
       const templeFootprint = this.centralTempleObject?.userData.templeLocalFootprint;
-      const lampLocalZ = -5.35;
-      const lampLocalOffset = (templeFootprint?.halfW ?? 5.4) * 0.62;
-      const lampWorldAnchors = [-1, 1].map((side) => this.centralTempleObject
-        ? this.centralTempleObject.localToWorld(new THREE.Vector3(side * lampLocalOffset, 0, lampLocalZ))
-        : new THREE.Vector3(side * Math.min(4.65, this.centralTempleFloorWidth * 0.29), 0,
-          this.centralTempleFloorCenterZ + this.centralTempleFloorDepth * 0.5 - 0.55));
-      const lampZ = (lampWorldAnchors[0].z + lampWorldAnchors[1].z) * 0.5;
-      const lampGround = this.getTerrainHeight(0, lampZ);
-      const lamps = placeAsset(lampResult.value.scene, 'chinese_red_lamp_entry_pair', 3.8, 0, lampZ);
-      lamps.position.y += 4.8;
-      lamps.updateMatrixWorld(true);
-      const anchors: THREE.Vector3[] = [];
-      const lampNodes = ['lantern', 'lantern.001'].map((name) => lamps.getObjectByName(name)).filter((node): node is THREE.Object3D => !!node);
-      lampNodes.forEach((node, index) => {
-        const bounds = new THREE.Box3().setFromObject(node);
-        const current = bounds.getCenter(new THREE.Vector3());
-        const anchor = lampWorldAnchors[index] ?? lampWorldAnchors[0];
-        const target = new THREE.Vector3(anchor.x, current.y, anchor.z);
-        if (node.parent) node.position.add(node.parent.worldToLocal(target.clone()).sub(node.parent.worldToLocal(current.clone())));
-      });
-      lamps.updateMatrixWorld(true);
+      const halfW = templeFootprint?.halfW ?? 5.4;
+      const lampLayouts = [
+        { name: 'entry', anchors: [[-halfW * 0.62, -5.35], [halfW * 0.62, -5.35]] as const },
+        { name: 'second-eave', anchors: [[-halfW * 0.92, -6.35], [halfW * 0.92, -6.35]] as const },
+        { name: 'upper-roof', anchors: [[-halfW * 0.48, -3.15], [halfW * 0.48, -3.15]] as const },
+        { name: 'left-side-eave', anchors: [[-halfW * 1.03, -halfW * 0.38], [-halfW * 1.03, halfW * 0.38]] as const },
+        { name: 'right-side-eave', anchors: [[halfW * 1.03, -halfW * 0.38], [halfW * 1.03, halfW * 0.38]] as const },
+      ];
+      const templeBounds = this.centralTempleObject
+        ? new THREE.Box3().setFromObject(this.centralTempleObject)
+        : null;
+      const cordGeometry = new THREE.CylinderGeometry(0.026, 0.026, 1, 8);
+      const brassGeometry = new THREE.SphereGeometry(0.075, 8, 6);
       const cordMaterial = new THREE.MeshStandardMaterial({ color: 0x68432d, roughness: 0.88, metalness: 0.08 });
       const anchorMaterial = new THREE.MeshStandardMaterial({ color: 0xb7833c, roughness: 0.38, metalness: 0.64, emissive: 0x4a2605, emissiveIntensity: 0.16 });
-      const roofHeights = lampNodes.map((node) => {
-        const bounds = new THREE.Box3().setFromObject(node);
-        const center = bounds.getCenter(new THREE.Vector3());
-        const ray = new THREE.Raycaster(new THREE.Vector3(center.x, lampGround + 32, center.z), new THREE.Vector3(0, -1, 0), 0, 32);
-        const roofHit = this.centralTempleObject
-          ? ray.intersectObject(this.centralTempleObject, true).find(hit => hit.point.y > bounds.max.y && hit.point.y < lampGround + 16)
-          : undefined;
-        return roofHit?.point.y ?? lampGround + 8.5;
-      });
-      // Both lanterns are a designed pair: keep their bodies on the same
-      // horizontal line, while each cord still terminates at its own roof point.
-      // The previous per-lamp height adjustment made one lantern jump to a
-      // higher roof tier and visibly broke the pair in gameplay.
-      const sharedLampTop = Math.min(...roofHeights) - 0.92;
-      lampNodes.forEach((node, index) => {
-        let bounds = new THREE.Box3().setFromObject(node);
-        let center = bounds.getCenter(new THREE.Vector3());
-        const roofY = roofHeights[index] ?? lampGround + 8.5;
-        const lift = sharedLampTop - bounds.max.y;
-        if (Math.abs(lift) > 0.001 && node.parent) {
-          const from = node.parent.worldToLocal(center.clone());
-          const to = node.parent.worldToLocal(center.clone().add(new THREE.Vector3(0, lift, 0)));
-          node.position.add(to.sub(from));
-          node.updateWorldMatrix(true, true);
-          bounds = new THREE.Box3().setFromObject(node);
-          center = bounds.getCenter(new THREE.Vector3());
-        }
-        anchors.push(center.clone());
-        const cordStart = new THREE.Vector3(center.x, bounds.max.y + 0.015, center.z);
-        const cordEnd = new THREE.Vector3(center.x, roofY - 0.025, center.z);
-        const cordVector = cordEnd.clone().sub(cordStart);
-        const cordLength = cordVector.length();
-        const cord = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.026, 0.026, 1, 8),
-          cordMaterial
+      const mothAnchors: THREE.Vector3[] = [];
+      const down = new THREE.Vector3(0, -1, 0);
+      const pairLights: THREE.Vector3[] = [];
+      let placedLanterns = 0;
+      lampLayouts.forEach((layout, layoutIndex) => {
+        if (!this.centralTempleObject || !templeBounds) return;
+        const anchors = layout.anchors.map(([x, z]) => this.centralTempleObject!.localToWorld(
+          new THREE.Vector3(x, 0, z)
+        ));
+        const pairCenter = anchors[0].clone().add(anchors[1]).multiplyScalar(0.5);
+        const pairRoot = placeAsset(
+          lampResult.value.scene,
+          `chinese_red_lamp_${layout.name}_pair`,
+          layoutIndex === 2 ? 2.8 : 3.8,
+          pairCenter.x,
+          pairCenter.z,
         );
-        cord.name = 'lantern_roof_hanging_cord';
-        cord.position.copy(cordStart).addScaledVector(cordVector, 0.5);
-        cord.scale.y = cordLength;
-        cord.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cordVector.normalize());
-        cord.castShadow = false;
-        scene.add(cord);
-        // A small brass ceiling eye makes the suspension visibly terminate
-        // at the roof instead of reading as a floating disconnected thread.
-        const ceilingEye = new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 6), anchorMaterial);
-        ceilingEye.name = 'lantern_ceiling_brass_anchor';
-        ceilingEye.position.copy(cordEnd);
-        ceilingEye.castShadow = false;
-        scene.add(ceilingEye);
+        pairRoot.rotation.y = this.centralTempleObject.rotation.y;
+        pairRoot.updateMatrixWorld(true);
+        pairRoot.traverse((object) => {
+          const mesh = object as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          materials.forEach((material) => {
+            if (material instanceof THREE.MeshStandardMaterial && material.emissiveIntensity > 0) {
+              this.dayNightCycle?.registerNightEmissiveMaterial(material);
+            }
+          });
+        });
+        const namedLampNodes = ['lantern', 'lantern.001']
+          .map((name) => pairRoot.getObjectByName(name))
+          .filter((node): node is THREE.Object3D => !!node);
+        // GLTFLoader may expose the authored scene wrapper as an extra Group;
+        // in that case the two lamp objects are the wrapper's direct children.
+        const authoredPairRoot = pairRoot.children.length === 1 && pairRoot.children[0].children.length === 2
+          ? pairRoot.children[0]
+          : pairRoot;
+        const lampNodes = namedLampNodes.length === 2
+          ? namedLampNodes
+          : authoredPairRoot.children.slice(0, 2);
+        if (lampNodes.length !== 2) {
+          pairRoot.removeFromParent();
+          console.warn(`[LevelToyStory] Original lamp asset is missing a lantern node for ${layout.name}.`);
+          return;
+        }
+        const pairPositions: THREE.Vector3[] = [];
+        lampNodes.forEach((node, index) => {
+          let bounds = new THREE.Box3().setFromObject(node);
+          const target = anchors[index];
+          const current = bounds.getCenter(new THREE.Vector3());
+          if (node.parent) {
+            const from = node.parent.worldToLocal(current.clone());
+            const to = node.parent.worldToLocal(new THREE.Vector3(target.x, current.y, target.z));
+            node.position.add(to.sub(from));
+            node.updateWorldMatrix(true, true);
+            bounds = new THREE.Box3().setFromObject(node);
+          }
+          const ray = new THREE.Raycaster(
+            new THREE.Vector3(target.x, templeBounds.max.y + 3, target.z), down, 0, templeBounds.max.y - templeBounds.min.y + 6
+          );
+          const roofHit = ray.intersectObject(this.centralTempleObject!, true)
+            .find((hit) => hit.point.y > this.getTerrainHeight(target.x, target.z) + 3);
+          if (!roofHit) {
+            node.visible = false;
+            console.warn(`[LevelToyStory] No temple roof surface under original lamp anchor ${layout.name}:${index}; skipped.`);
+            return;
+          }
+          const desiredTop = roofHit.point.y - 0.42;
+          const lift = desiredTop - bounds.max.y;
+          if (node.parent) {
+            const currentCenter = bounds.getCenter(new THREE.Vector3());
+            const bodyCenter = new THREE.Vector3(target.x, currentCenter.y, target.z);
+            const from = node.parent.worldToLocal(bodyCenter.clone());
+            const to = node.parent.worldToLocal(bodyCenter.clone().add(new THREE.Vector3(0, lift, 0)));
+            node.position.add(to.sub(from));
+          }
+          node.updateWorldMatrix(true, true);
+          const placedBounds = new THREE.Box3().setFromObject(node);
+          const body = placedBounds.getCenter(new THREE.Vector3());
+          const cordStart = new THREE.Vector3(body.x, placedBounds.max.y + 0.015, body.z);
+          const cordEnd = new THREE.Vector3(target.x, roofHit.point.y - 0.025, target.z);
+          const cordVector = cordEnd.clone().sub(cordStart);
+          if (cordVector.y <= 0.08) {
+            node.visible = false;
+            console.warn(`[LevelToyStory] Original lamp would intersect the roof at ${layout.name}:${index}; skipped.`);
+            return;
+          }
+          const cord = new THREE.Mesh(cordGeometry, cordMaterial);
+          cord.name = `lantern_roof_hanging_cord_${layout.name}_${index}`;
+          cord.position.copy(cordStart).addScaledVector(cordVector, 0.5);
+          cord.scale.y = cordVector.length();
+          cord.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cordVector.normalize());
+          cord.castShadow = false;
+          scene.add(cord);
+          const ceilingEye = new THREE.Mesh(brassGeometry, anchorMaterial);
+          ceilingEye.name = `lantern_ceiling_brass_anchor_${layout.name}_${index}`;
+          ceilingEye.position.copy(cordEnd);
+          ceilingEye.castShadow = false;
+          scene.add(ceilingEye);
+          pairPositions.push(body.clone());
+          if (layoutIndex === 0) mothAnchors.push(body.clone());
+          placedLanterns++;
+        });
+        if (pairPositions.length === 2) pairLights.push(pairPositions[0].clone().add(pairPositions[1]).multiplyScalar(0.5));
+        else if (!pairPositions.length) pairRoot.removeFromParent();
       });
-      anchors.forEach((position) => {
-        const light = new THREE.PointLight(0xffb85f, 1.45, 9, 2);
+      // Five non-shadowing shared fills illuminate ten lanterns; the clock
+      // smoothly dims them with the existing day/night cycle.
+      pairLights.forEach((position) => {
+        const light = new THREE.PointLight(0xffb85f, 1.65, 10, 2);
         light.position.copy(position);
         light.castShadow = false;
         scene.add(light);
         this.dayNightCycle?.registerNightLight(light);
       });
       const mobile = navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches;
-      this.lampMoths = new LampMothSystem(scene, anchors, mobile);
+      if (mothAnchors.length) this.lampMoths = new LampMothSystem(scene, mothAnchors, mobile);
+      console.info(`[LevelToyStory] Placed ${placedLanterns} original red lanterns at raycast-verified temple roof anchors.`);
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese red lamp asset.', lampResult.reason);
     }

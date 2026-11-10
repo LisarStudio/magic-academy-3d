@@ -33,6 +33,7 @@ export class DayNightCycle {
   public readonly sunLight: THREE.PointLight;
 
   private readonly nightLights = new Map<THREE.PointLight, number>();
+  private readonly nightEmissiveMaterials = new Map<THREE.MeshStandardMaterial, number>();
   private readonly nightSky = new THREE.Color(0x0b1530);
   private readonly dawnSky = new THREE.Color(0xf3a982);
   private readonly daySky = new THREE.Color(0x6ea9e9);
@@ -82,6 +83,11 @@ export class DayNightCycle {
 
   public registerNightLight(light: THREE.PointLight): void {
     this.nightLights.set(light, light.intensity);
+  }
+
+  /** Fade authored emissive materials with the same clock as nearby lantern fills. */
+  public registerNightEmissiveMaterial(material: THREE.MeshStandardMaterial): void {
+    if (!this.nightEmissiveMaterials.has(material)) this.nightEmissiveMaterials.set(material, material.emissiveIntensity);
   }
 
   public setHour(hour: number): void {
@@ -159,6 +165,7 @@ export class DayNightCycle {
 
     if (this.renderer) this.renderer.toneMappingExposure = THREE.MathUtils.lerp(1.12, 1.2, this.daylight);
     for (const [light, baseIntensity] of this.nightLights) light.intensity = baseIntensity * this.lanternIntensity;
+    for (const [material, baseIntensity] of this.nightEmissiveMaterials) material.emissiveIntensity = baseIntensity * this.lanternIntensity;
     this.sunMesh.position.copy(cameraPosition).addScaledVector(this.sunDirection, 160);
   }
 
