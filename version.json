@@ -1,8 +1,8 @@
 {
-  "version": "0.0.39",
-  "cacheVersion": "0.0.39+ba635e7",
-  "commit": "ba635e77d45443f50c3bc8eb16720acd129a6477",
-  "buildId": "42765452216.1",
-  "builtAtUTC": "2026-11-10T05:59:07.453Z",
+  "version": "0.0.40",
+  "cacheVersion": "0.0.40+ad76d84",
+  "commit": "ad76d849b81a824f0b680dacee77cf1be5508c49",
+  "buildId": "42768779183.1",
+  "builtAtUTC": "2026-11-10T06:29:08.483Z",
   "dirtyWorkingTree": false
 }
