@@ -252,23 +252,24 @@ export class Game {
     // Focus camera on target AFTER the level is initialized and player is spawned at Checkpoint 0!
     this.cameraController.setTarget(this.player.mesh);
 
-    // Compile only the already-loaded 3D staff shaders on mobile. This avoids
-    // paying the first-use GPU compilation cost at the chest/first attack
-    // without forcing a synchronous compile of the full level on constrained GPUs.
-    if (isLowPowerDevice()) {
-      let staffWarmup: THREE.Group | null = null;
-      try {
-        const warmScene = new THREE.Scene();
-        staffWarmup = this.player.cloneStaffProp('staff_shader_warmup');
-        if (staffWarmup) {
-          warmScene.add(staffWarmup);
-          await this.sceneManager.renderer.compileAsync(warmScene, this.sceneManager.camera, this.sceneManager.scene);
-        }
-      } catch (error) {
-        console.warn('[Game] Staff shader warmup failed; the model remains loaded and usable.', error);
-      } finally {
-        staffWarmup?.removeFromParent();
+    // The chest pickup mesh is intentionally detached/hidden until the reward
+    // cinematic. Compiling only the live scene therefore misses its material
+    // variants and could make the first chest opening pay GPU shader setup.
+    // Compile this tiny prebuilt prop asynchronously on every device before
+    // gameplay becomes interactive; this does not construct assets or touch
+    // the back/hand attachment transforms.
+    let staffWarmup: THREE.Group | null = null;
+    try {
+      const warmScene = new THREE.Scene();
+      staffWarmup = this.player.cloneStaffProp('staff_shader_warmup');
+      if (staffWarmup) {
+        warmScene.add(staffWarmup);
+        await this.sceneManager.renderer.compileAsync(warmScene, this.sceneManager.camera, this.sceneManager.scene);
       }
+    } catch (error) {
+      console.warn('[Game] Staff shader warmup failed; the model remains loaded and usable.', error);
+    } finally {
+      staffWarmup?.removeFromParent();
     }
 
     // Full-scene and crypt shaders are compiled asynchronously during browser

@@ -52,9 +52,10 @@ export class ChestCinematic {
             if (!completed) console.warn('[ChestCinematic] TakeItem did not reach its mixer finished event; recovering the interaction.');
             resolve();
           },
-          // The authored TakeItem clip is 4.7 seconds. A cinematic-only 2x
-          // rate keeps the chest handoff responsive while preserving its pose.
-          2
+          // The authored clip is 4.7 seconds. A moderate cinematic-only speed
+          // keeps the complete align + handoff + pickup sequence near 2.4 s.
+          // This changes playback only; the equipped back socket is untouched.
+          2.4
         );
       });
 
@@ -101,7 +102,7 @@ export class ChestCinematic {
     const targetYaw = Math.atan2(-radial.x, -radial.y);
     const yawDelta = THREE.MathUtils.euclideanModulo(targetYaw - startYaw + Math.PI, Math.PI * 2) - Math.PI;
     const startTime = performance.now();
-    const durationMs = 360;
+    const durationMs = 260;
 
     await new Promise<void>((resolve) => {
       const step = (now: number) => {
@@ -167,7 +168,7 @@ export class ChestCinematic {
     const fromQuaternion = staff.quaternion.clone();
     const fromScale = staff.scale.clone();
     const started = performance.now();
-    const duration = 320;
+    const duration = 220;
 
     return new Promise<void>((resolve) => {
       const animate = (now: number) => {

@@ -1302,9 +1302,14 @@ export class LevelToyStory {
       pillar.position.set(center.x + sx * footprintX * 0.42, terrainY + Math.min(5.2, size.y * 0.74) * 0.5, center.z + sz * footprintZ * 0.42);
       root.add(pillar);
     }
-    const railSideX = center.x + (size.x * 0.68 * 0.42);
-    const railBackZ = center.z - (size.z * 0.68 * 0.42);
-    const railFrontZ = center.z + (size.z * 0.68 * 0.42);
+    // Keep these as local half-extents. Adding `center.x` to the half-width
+    // made the subsequent rail widths/positions use world coordinates as
+    // dimensions (for the eastern pavilion this created a ~45 m invisible
+    // rear rail and displaced both side rails far outside the building).
+    const railHalfWidth = footprintX * 0.42;
+    const railHalfDepth = footprintZ * 0.42;
+    const railBackZ = center.z - railHalfDepth;
+    const railFrontZ = center.z + railHalfDepth;
     const deckRailY = deckY + 0.52;
     const railHeight = 1.04;
     const railThickness = 0.16;
@@ -1315,11 +1320,13 @@ export class LevelToyStory {
       rail.position.set(x, deckRailY, z);
       root.add(rail);
     };
-    addRail('pavilion_rear_railing_collision', railSideX * 2, railThickness, center.x, railBackZ);
+    addRail('pavilion_rear_railing_collision', railHalfWidth * 2, railThickness, center.x, railBackZ);
     for (const side of [-1, 1]) {
-      addRail(`pavilion_side_railing_collision_${side < 0 ? 'west' : 'east'}`, railThickness, railFrontZ - railBackZ, center.x + side * railSideX, center.z);
+      addRail(`pavilion_side_railing_collision_${side < 0 ? 'west' : 'east'}`, railThickness, railFrontZ - railBackZ, center.x + side * railHalfWidth, center.z);
       // Preserve the central opening aligned with the authored front stairs.
-      addRail(`pavilion_front_railing_collision_${side < 0 ? 'west' : 'east'}`, railSideX - 1.15, railThickness, center.x + side * ((railSideX + 1.15) * 0.5), railFrontZ);
+      const frontSegmentWidth = Math.max(0, railHalfWidth - 1.15);
+      addRail(`pavilion_front_railing_collision_${side < 0 ? 'west' : 'east'}`, frontSegmentWidth, railThickness,
+        center.x + side * (1.15 + frontSegmentWidth * 0.5), railFrontZ);
     }
     this.sceneManager.scene.add(root);
     this.structureColliderCandidates.push({
