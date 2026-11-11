@@ -130,7 +130,10 @@ export class DayNightCycle {
     if (this.scene.background instanceof THREE.Color) this.scene.background.copy(palette.sky);
     if (this.scene.fog) this.scene.fog.color.copy(palette.fog);
     this.ambientLight.color.copy(palette.ambient);
-    this.ambientLight.intensity = THREE.MathUtils.lerp(0.58, 0.95, this.daylight);
+    // Keep a soft blue night floor so outdoor paths and silhouettes stay
+    // readable; the increase is confined to nighttime and leaves the daytime
+    // preset unchanged.
+    this.ambientLight.intensity = THREE.MathUtils.lerp(0.72, 0.95, this.daylight);
 
     this.dirLight.color.copy(palette.sunColor);
     // Raise the night key by 44%, preserving the old full-day value (1.68)
@@ -142,9 +145,9 @@ export class DayNightCycle {
 
     if (this.moonLight) {
       this.moonLight.color.copy(this.coolMoon);
-      // Calibrated +38% over the prior non-shadowing fill; it follows the
-      // existing celestial direction and fades out through the same clock.
-      this.moonLight.intensity = 0.8 * this.nightAmount;
+      // One existing non-shadowing directional fill supplies the cool lunar
+      // ambience. It follows the moon and fades out through the same clock.
+      this.moonLight.intensity = 1.05 * this.nightAmount;
       this.moonLight.position.copy(cameraPosition).addScaledVector(this.moonDirection, 65);
       this.moonLight.target.position.copy(cameraPosition);
       if (this.moonLight.target.parent !== this.scene) this.scene.add(this.moonLight.target);
@@ -153,7 +156,7 @@ export class DayNightCycle {
     if (this.hemisphereLight) {
       // Preserve the daylight preset; add a restrained cool sky fill at night
       // so grass, tree canopies and the character keep readable shadow detail.
-      this.hemisphereLight.intensity = THREE.MathUtils.lerp(0.78, 1.08, this.nightAmount);
+      this.hemisphereLight.intensity = THREE.MathUtils.lerp(0.78, 1.22, this.nightAmount);
     }
 
     if (this.rimLight) {

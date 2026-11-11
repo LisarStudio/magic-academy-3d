@@ -18,7 +18,10 @@ export interface KeyAssetDefinition {
   magicColor: number;
 }
 
-const root = './assets/keys';
+// Use Vite's deployment base rather than a document-relative URL. A relative
+// `./assets/...` path breaks when the game is opened from a nested/local route
+// or after a host rewrites the page path, leaving acquired-key icons broken.
+const root = `${import.meta.env.BASE_URL}assets/keys`;
 
 // All six progression keys have dedicated visual entries; key5_pots uses a unique procedural model.
 export const KEY_ASSETS: Partial<Record<ProgressKeyId, KeyAssetDefinition>> = {

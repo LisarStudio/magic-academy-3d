@@ -268,6 +268,23 @@ export class Game {
     // frame for another multi-megabyte FBX download and retarget pass.
     await this.level01.init();
 
+    // The crypt is already built and its source materials are loaded, but its
+    // room geometry is hidden beneath the terrain until the player enters.
+    // Compile those material variants now under the loading screen; otherwise
+    // Three.js compiles them on the first revealed frame while the transition
+    // is black, which looks like a frozen teleport on slower GPUs.
+    const cryptWarmupStartedAt = performance.now();
+    try {
+      await this.level01.precompileCuriosityCrypt(this.sceneManager.renderer, this.sceneManager.camera);
+      if (import.meta.env.DEV) {
+        console.info('[CuriosityVaultPerf] Startup crypt shader warmup completed', {
+          durationMs: +(performance.now() - cryptWarmupStartedAt).toFixed(1),
+        });
+      }
+    } catch (error) {
+      console.warn('[CuriosityVaultPerf] Startup crypt shader warmup failed; entry will use the normal renderer fallback.', error);
+    }
+
     // Optional traversal/continue clips are not required to enter the world:
     // the essential run/jump/idle clips are already part of loadPlayerModel.
     // Loading five FBX files serially here kept the loading screen up even
@@ -937,8 +954,11 @@ export class Game {
     // Avoid the severe blur caused by dropping mobile backing resolution to
     // 58%. A slightly reduced render scale is preferable to a visibly
     // pixelated frame; the desktop floor remains more permissive.
-    const minRenderScale = mobileDevice ? 0.88 : (lowPowerDevice ? 0.72 : 0.78);
-    if (this.frameTimeAverageMs > 19 && this.renderScale > minRenderScale) {
+    // With the corrected pixel-ratio mapping, a 0.76 scale still renders at
+    // roughly 1.14x on common high-DPR phones (and ~0.95x on low-power phones),
+    // while giving the GPU a meaningful recovery path instead of a fake knob.
+    const minRenderScale = mobileDevice ? 0.76 : (lowPowerDevice ? 0.72 : 0.78);
+    if (this.frameTimeAverageMs > 17.5 && this.renderScale > minRenderScale) {
       this.renderScale = Math.max(minRenderScale, this.renderScale - 0.08);
       this.fastFrameSeconds = 0;
       this.performanceAdjustCooldown = mobileDevice ? 1.25 : 1.5;
@@ -981,6 +1001,7 @@ export class Game {
       this.player.update(delta, this.inputManager, this.cameraController, animationDelta);
       this.cameraController.update(delta, this.inputManager);
     }
+    this.hud.updateStaminaAnchor(this.player.mesh, this.sceneManager.camera, this.sceneManager.renderer.domElement);
     this.updateStaffCharge();
 
     // Freeze world simulation while the defeat vignette is active; keep the

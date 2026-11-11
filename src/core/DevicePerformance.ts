@@ -20,12 +20,18 @@ export function isMobileDevice(): boolean {
 }
 
 export function renderPixelRatio(quality = 1): number {
-  // Preserve a useful pixel density on phones. The previous 0.5x floor
-  // compounded with adaptive scaling and made the whole scene visibly blocky.
+  // Keep the framebuffer close to native density on phones while allowing
+  // quality/adaptive scaling to reduce GPU work when frame times rise. The old
+  // nested 0.9 floors effectively ignored adaptive resolution on mobile.
   const lowPower = isLowPowerDevice();
   const mobile = isMobileDevice();
   const cap = mobile ? (lowPower ? 1.25 : 1.5) : (lowPower ? 1 : 1.5);
   const deviceRatio = Math.min(window.devicePixelRatio || 1, cap);
-  const qualityFloor = mobile ? 0.9 : 0.65;
-  return Math.max(mobile ? 0.9 : 0.65, deviceRatio * Math.max(qualityFloor, quality));
+  const minimumPixelRatio = mobile ? 0.9 : 0.65;
+  const qualityScale = clampRenderQuality(quality);
+  return Math.min(cap, Math.max(minimumPixelRatio, deviceRatio * qualityScale));
+}
+
+function clampRenderQuality(quality: number): number {
+  return Math.max(0.55, Math.min(1, Number.isFinite(quality) ? quality : 1));
 }

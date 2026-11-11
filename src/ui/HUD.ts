@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import type { SpellType } from '../spells/SpellProjectile';
 import { EquipmentViewer } from './EquipmentViewer';
 import { MobileTouchControls } from './MobileTouchControls';
@@ -28,7 +29,13 @@ export class HUD {
   private mpBarFillEl: HTMLElement;
   private coinCounterEl: HTMLElement | null = null;
   private staminaMeterEl: HTMLElement | null = null;
-  private staminaMeterFillEl: HTMLElement | null = null;
+  private staminaMeterFillEl: SVGPathElement | null = null;
+  private staminaTipEl: SVGCircleElement | null = null;
+  private staminaGradientStops: SVGStopElement[] = [];
+  private staminaDisplayed = false;
+  private lastStaminaColorStep = -1;
+  private readonly staminaAnchor = new THREE.Vector3();
+  private readonly staminaCameraRight = new THREE.Vector3();
   private staffChargeMeterEl: HTMLElement | null = null;
   private staffChargeFillEl: HTMLElement | null = null;
   private collectedKeysEl: HTMLElement | null = null;
@@ -123,8 +130,7 @@ export class HUD {
     this.fxVolTextEl = document.getElementById('fx-vol-text');
 
     this.coinCounterEl = document.getElementById('coin-count');
-    this.staminaMeterEl = document.getElementById('stamina-meter');
-    this.staminaMeterFillEl = document.getElementById('stamina-meter-fill');
+    this.createStaminaMeter();
     this.staffChargeMeterEl = document.getElementById('staff-charge-meter');
     this.staffChargeFillEl = document.getElementById('staff-charge-fill');
     this.collectedKeysEl = document.getElementById('hud-collected-keys');
@@ -322,6 +328,7 @@ export class HUD {
   }
 
   public showPauseMenu(visible: boolean): void {
+    this.staminaMeterEl?.classList.toggle('is-paused', visible);
     if (visible) {
       this.pauseScreenEl.classList.remove('hidden');
       const audio = (window as any).gameInstance?.audioManager;
@@ -718,11 +725,84 @@ export class HUD {
     const max = Math.max(1, maxValue);
     const safeValue = Math.max(0, Math.min(max, value));
     const ratio = safeValue / max;
+    const recovering = !visible && ratio < 0.999;
+    this.staminaDisplayed = visible || recovering;
     meter.classList.toggle('is-visible', visible);
+    meter.classList.toggle('is-recovering', recovering);
     meter.classList.toggle('is-low', ratio <= 0.25);
     meter.setAttribute('aria-valuenow', String(Math.round(safeValue)));
     meter.setAttribute('aria-hidden', String(!visible));
-    fill.style.width = `${ratio * 100}%`;
+    fill.setAttribute('stroke-dashoffset', String((1 - ratio) * 100));
+    // The fill path starts at the lower end and travels upward. Keep its
+    // moving edge at the remaining-energy boundary: full at the top, then
+    // descending smoothly as sprint stamina is spent.
+    const t = ratio;
+    const u = 1 - t;
+    const tipX = u * u * u * 33 + 3 * u * u * t * 10 + 3 * u * t * t * 11 + t * t * t * 34;
+    const tipY = u * u * u * 84 + 3 * u * u * t * 69 + 3 * u * t * t * 17 + t * t * t * 5;
+    this.staminaTipEl?.setAttribute('cx', tipX.toFixed(2));
+    this.staminaTipEl?.setAttribute('cy', tipY.toFixed(2));
+
+    // Shift the whole amber-to-red gradient toward red as stamina runs out.
+    // Quantizing to 5% avoids needless style churn while retaining a smooth look.
+    const colorStep = Math.round(ratio * 20);
+    if (colorStep !== this.lastStaminaColorStep) {
+      this.lastStaminaColorStep = colorStep;
+      const exhausted = 1 - colorStep / 20;
+      const blend = (start: number[], end: number[]) => `rgb(${start.map((channel, index) => Math.round(channel + (end[index]! - channel) * exhausted)).join(' ')})`;
+      this.staminaGradientStops[0]?.style.setProperty('stop-color', blend([255, 224, 138], [255, 74, 45]));
+      this.staminaGradientStops[1]?.style.setProperty('stop-color', blend([255, 133, 39], [218, 25, 40]));
+    }
+  }
+
+  /** Keep the curved sprint gauge in screen space beside Wukong, following
+   * the live camera projection rather than occupying the coin HUD. */
+  public updateStaminaAnchor(player: THREE.Object3D, camera: THREE.Camera, canvas: HTMLCanvasElement): void {
+    if (!this.staminaDisplayed || !this.staminaMeterEl) return;
+    player.getWorldPosition(this.staminaAnchor);
+    this.staminaAnchor.y += 1.05;
+    camera.updateMatrixWorld(true);
+    this.staminaCameraRight.setFromMatrixColumn(camera.matrixWorld, 0);
+    // Place it on the opposite screen side from the previous implementation,
+    // with the open side of the arc facing Wukong.
+    this.staminaAnchor.addScaledVector(this.staminaCameraRight, -0.72).project(camera);
+    if (this.staminaAnchor.z < -1 || this.staminaAnchor.z > 1 || Math.abs(this.staminaAnchor.x) > 1.18 || Math.abs(this.staminaAnchor.y) > 1.18) {
+      this.staminaMeterEl.classList.add('is-offscreen');
+      return;
+    }
+    this.staminaMeterEl.classList.remove('is-offscreen');
+    const bounds = canvas.getBoundingClientRect();
+    const x = bounds.left + (this.staminaAnchor.x + 1) * 0.5 * bounds.width;
+    const y = bounds.top + (1 - this.staminaAnchor.y) * 0.5 * bounds.height;
+    this.staminaMeterEl.style.left = `${Math.max(bounds.left + 24, Math.min(bounds.right - 24, x))}px`;
+    this.staminaMeterEl.style.top = `${Math.max(bounds.top + 48, Math.min(bounds.bottom - 48, y))}px`;
+  }
+
+  private createStaminaMeter(): void {
+    const meter = document.createElement('div');
+    meter.id = 'stamina-meter';
+    meter.className = 'stamina-meter';
+    meter.setAttribute('role', 'progressbar');
+    meter.setAttribute('aria-label', 'Resistencia para correr');
+    meter.setAttribute('aria-valuemin', '0');
+    meter.setAttribute('aria-valuemax', '100');
+    meter.setAttribute('aria-valuenow', '100');
+    meter.setAttribute('aria-hidden', 'true');
+    meter.innerHTML = `<svg viewBox="0 0 46 90" aria-hidden="true" focusable="false">
+      <defs><linearGradient id="stamina-arc-gradient" x1="0" y1="0" x2="0" y2="1">
+        <stop class="stamina-gradient-top" offset="0" stop-color="#ffe08a" />
+        <stop class="stamina-gradient-bottom" offset="1" stop-color="#ff8527" />
+      </linearGradient><filter id="stamina-arc-glow" x="-100%" y="-40%" width="300%" height="180%"><feGaussianBlur stdDeviation="2.4" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+      <path class="stamina-arc-halo" d="M34 5 C11 17 10 69 33 84" />
+      <path class="stamina-arc-track" d="M34 5 C11 17 10 69 33 84" />
+      <path id="stamina-meter-fill" class="stamina-meter-fill" d="M33 84 C10 69 11 17 34 5" pathLength="100" stroke-dasharray="100" stroke-dashoffset="0" />
+      <circle class="stamina-arc-tip" cx="34" cy="5" r="2.5" />
+    </svg>`;
+    this.staminaMeterEl = meter;
+    this.staminaMeterFillEl = meter.querySelector<SVGPathElement>('#stamina-meter-fill');
+    this.staminaTipEl = meter.querySelector<SVGCircleElement>('.stamina-arc-tip');
+    this.staminaGradientStops = Array.from(meter.querySelectorAll<SVGStopElement>('.stamina-gradient-top, .stamina-gradient-bottom'));
+    document.getElementById('ui-overlay')?.appendChild(meter);
   }
 
   public setStaffCharge(visible: boolean, ratio: number): void {

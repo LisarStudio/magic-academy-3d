@@ -288,10 +288,17 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 .coin-counter-row { display: flex; align-items: center; gap: 7px; min-height: 21px; }
 .coin-pickup-pop .icon-coin { animation: lisar-coin-pickup 340ms cubic-bezier(.2,.8,.3,1); }
 @keyframes lisar-coin-pickup { 45% { transform: scale(1.22); filter: drop-shadow(0 0 7px rgba(255,203,74,.9)); } }
-.stamina-meter { width: 100%; height: 3px; overflow: hidden; border-radius: 3px; background: rgba(35, 19, 12, .8); border: 1px solid rgba(214, 162, 64, .5); opacity: 0; transform: scaleX(.84); transform-origin: left; transition: opacity 240ms ease, transform 240ms ease; pointer-events: none; }
-.stamina-meter.is-visible { opacity: .95; transform: scaleX(1); }
-.stamina-meter-fill { height: 100%; width: 100%; border-radius: inherit; background: linear-gradient(90deg, #e6a932, #ffe48a); box-shadow: 0 0 5px rgba(255,196,64,.55); transition: width 100ms linear, background-color 220ms ease; }
-.stamina-meter.is-low .stamina-meter-fill { background: #f06b45; box-shadow: 0 0 5px rgba(255,91,57,.55); }
+.stamina-meter { position: absolute; z-index: 42; width: 50px; height: 96px; transform: translate(-50%, -50%) scale(.86); opacity: 0; pointer-events: none; filter: drop-shadow(0 2px 5px rgba(0, 0, 0, .82)); transition: opacity 420ms ease, transform 420ms cubic-bezier(.2,.75,.25,1); will-change: left, top, opacity, transform; }
+.stamina-meter svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.stamina-meter.is-visible { opacity: .98; transform: translate(-50%, -50%) scale(1); }
+.stamina-meter.is-recovering { opacity: 0; transform: translate(-50%, -50%) scale(.93); transition-duration: 900ms; }
+.stamina-meter.is-paused, .stamina-meter.is-offscreen { opacity: 0 !important; }
+.stamina-arc-halo { fill: none; stroke: rgba(255, 174, 57, .25); stroke-width: 9; stroke-linecap: round; filter: url(#stamina-arc-glow); }
+.stamina-arc-track { fill: none; stroke: rgba(21, 12, 17, .78); stroke-width: 6.5; stroke-linecap: round; }
+.stamina-meter-fill { fill: none; stroke: url(#stamina-arc-gradient); stroke-width: 4; stroke-linecap: round; filter: url(#stamina-arc-glow); transition: stroke-dashoffset 100ms linear; }
+.stamina-gradient-top, .stamina-gradient-bottom { transition: stop-color 220ms ease; }
+.stamina-arc-tip { fill: #ffe5a2; stroke: rgba(255, 139, 31, .75); stroke-width: 1.5; filter: url(#stamina-arc-glow); }
+@media (max-width: 700px) { .stamina-meter { width: 40px; height: 78px; } }
 .staff-charge-meter { display: grid; grid-template-columns: auto minmax(48px, 1fr); align-items: center; gap: 6px; max-height: 0; overflow: hidden; opacity: 0; transition: opacity 180ms ease, max-height 180ms ease; color: #ffe2a0; font: 700 7px/1 system-ui,sans-serif; letter-spacing: .06em; }
 .staff-charge-meter.is-visible { max-height: 14px; opacity: .9; }
 .staff-charge-track { height: 4px; overflow: hidden; border: 1px solid rgba(255,194,67,.55); border-radius: 4px; background: rgba(36,12,8,.8); }
@@ -3153,6 +3160,33 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 @media (max-width: 600px) {
   #coin-counter-container { padding: 3px 7px; }
   .icon-coin { width: 21px; height: 21px; flex-basis: 21px; }
+}
+
+/* Lisar Coin artwork should read at portrait scale beside Wukong's HUD. */
+#coin-counter-container {
+  width: 160px;
+  min-height: 118px;
+  box-sizing: border-box;
+  padding: 5px 9px;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+}
+#coin-counter-container .coin-counter-row { min-height: 108px; gap: 6px; }
+#coin-counter-container .icon-coin {
+  display: block;
+  width: 90px;
+  height: 108px;
+  flex: 0 0 90px;
+  object-fit: contain;
+  image-rendering: auto;
+  filter: drop-shadow(0 1px 2px #08060b) drop-shadow(0 0 7px rgba(255, 190, 58, .5));
+}
+#coin-counter-container #coin-count { font-size: 15px; white-space: nowrap; }
+@media (max-width: 600px) {
+  #coin-counter-container { width: 100%; min-height: 82px; padding: 3px 5px; }
+  #coin-counter-container .coin-counter-row { min-height: 74px; gap: 4px; }
+  #coin-counter-container .icon-coin { width: 60px; height: 72px; flex-basis: 60px; }
+  #coin-counter-container #coin-count { font-size: clamp(10px, 3vw, 13px); }
 }
 
 /* 0.0.37 visual repair: replace the baked, oversized boss image with live UI. */

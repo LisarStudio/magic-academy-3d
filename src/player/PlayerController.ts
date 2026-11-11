@@ -27,6 +27,7 @@ export class PlayerController {
    * supplied free-fall pose. That clip is reserved for genuinely high drops. */
   private airApexY = 0;
   private doubleJumpPivot: THREE.Group | null = null;
+  private doubleJumpSpinning = false;
   private visualModelBasePosition = new THREE.Vector3();
   private dodgeCooldown = 0;
   private dodgeInvulnerability = 0;
@@ -60,6 +61,13 @@ export class PlayerController {
   private groundRaycaster = new THREE.Raycaster();
   private colliders: THREE.Object3D[] = [];
   private solidBlockerBounds: Array<{ mesh: THREE.Mesh; bounds: THREE.Box3 }> = [];
+  private mountainSurfaceColliders: Array<{ mesh: THREE.InstancedMesh; bounds: THREE.Box3 }> = [];
+  private readonly mountainRaycastCandidates: THREE.Object3D[] = [];
+  private readonly mountainInstanceMatrix = new THREE.Matrix4();
+  private readonly mountainWorldMatrix = new THREE.Matrix4();
+  private readonly mountainNormalMatrix = new THREE.Matrix3();
+  private readonly mountainRayOrigin = new THREE.Vector3();
+  private readonly mountainRaySide = new THREE.Vector3();
   private worldBoundary: readonly (readonly [number, number])[] | null = null;
 
   public onHealthChange?: (hp: number, maxHp: number) => void;
@@ -546,6 +554,19 @@ export class PlayerController {
     for (const collider of colliders) collider.traverse(includeBlocker);
   }
 
+  /** Install the exact visible rock surfaces as movement-only colliders. They
+   * stay out of the ground ray tree; spatial chunk bounds select just the
+   * nearby instanced chunks before the real source mesh is raycast. */
+  public setMountainSurfaceColliders(meshes: readonly THREE.InstancedMesh[]): void {
+    this.mountainSurfaceColliders.length = 0;
+    for (const mesh of meshes) {
+      mesh.updateMatrixWorld(true);
+      if (!mesh.boundingBox) mesh.computeBoundingBox();
+      if (!mesh.boundingBox) continue;
+      this.mountainSurfaceColliders.push({ mesh, bounds: mesh.boundingBox.clone().applyMatrix4(mesh.matrixWorld) });
+    }
+  }
+
   /** A final swept-position guard for the outdoor map edge. Mesh raycasts are
    * still used for ordinary walls; this polygon clamp also stops sprint/jump
    * tunnelling through invisible perimeter segments or decorative mountains. */
@@ -810,6 +831,7 @@ export class PlayerController {
       const dangerousFall = prevVelY < -12.0;
 
       this.jumpCount = 0;
+      this.doubleJumpSpinning = false;
       this.doubleJumpSpinTimer = 0;
       if (this.doubleJumpPivot) this.doubleJumpPivot.rotation.x = 0;
 
@@ -824,6 +846,9 @@ export class PlayerController {
       this.velocity.y = 0;
       this.isGrounded = true;
       this.jumpCount = 0;
+      this.doubleJumpSpinning = false;
+      if (this.doubleJumpPivot) this.doubleJumpPivot.rotation.x = 0;
+      this.doubleJumpSpinTimer = 0;
       this.airApexY = floorY;
     } else {
       this.isGrounded = false;
@@ -841,6 +866,7 @@ export class PlayerController {
         const audioManager = (window as any).gameInstance?.audioManager;
 
         if (this.isGrounded) {
+          this.doubleJumpSpinning = false;
           this.velocity.y = this.jumpForce;
           this.isGrounded = false;
           this.airApexY = this.mesh.position.y;
@@ -851,6 +877,7 @@ export class PlayerController {
           this.velocity.y = this.jumpForce * 0.95;
           this.airApexY = this.mesh.position.y;
           this.jumpCount = 2;
+          this.doubleJumpSpinning = true;
           this.doubleJumpSpinTimer = 0.4;
           if (!this.hasStaff) {
             this.animationController.playState('Wukong_NoWood_DoubleJump' as any);
@@ -860,16 +887,6 @@ export class PlayerController {
           if (audioManager) audioManager.playJumpGrunt();
         }
       };
-    }
-
-    // Process double jump visual frontflip spin (forward rotation)
-    if (this.doubleJumpSpinTimer > 0) {
-      this.doubleJumpSpinTimer -= delta;
-      const progress = 1.0 - (this.doubleJumpSpinTimer / 0.4);
-      if (this.doubleJumpPivot) this.doubleJumpPivot.rotation.x = progress * Math.PI * 2;
-      if (this.doubleJumpSpinTimer <= 0) {
-        if (this.doubleJumpPivot) this.doubleJumpPivot.rotation.x = 0;
-      }
     }
 
     // 2. Movement Direction relative to Camera
@@ -916,7 +933,9 @@ export class PlayerController {
         if (this.sprintExhausted && this.stamina >= PlayerController.SPRINT_RECOVERY_THRESHOLD) this.sprintExhausted = false;
       }
     }
-    this.onStaminaChange?.(this.stamina, PlayerController.SPRINT_STAMINA_MAX, this.sprintingThisFrame || this.stamina < PlayerController.SPRINT_STAMINA_MAX - 0.01);
+    // The HUD is foreground-only while Shift is actively sprinting; it keeps
+    // receiving the recovering value so the curved gauge fills as it fades out.
+    this.onStaminaChange?.(this.stamina, PlayerController.SPRINT_STAMINA_MAX, this.sprintingThisFrame);
     const isSprinting = this.sprintingThisFrame;
     const currentSpeed = isSprinting ? this.runSpeed : this.moveSpeed;
 
@@ -950,7 +969,7 @@ export class PlayerController {
     const horizontalSpeed = horizontalVel.length();
     let stepUpTargetY: number | null = null;
 
-    if (horizontalSpeed > 0.1 && this.colliders.length > 0) {
+    if (horizontalSpeed > 0.1 && (this.colliders.length > 0 || this.mountainSurfaceColliders.length > 0)) {
       const moveAmount = horizontalSpeed * delta;
       const moveNorm = horizontalVel.clone().normalize();
 
@@ -959,20 +978,75 @@ export class PlayerController {
       this.wallRaycaster.set(rayOrigin, moveNorm);
       this.wallRaycaster.far = this.PLAYER_RADIUS + moveAmount;
 
-      const rawWallHits = this.wallRaycaster.intersectObjects(this.colliders, true);
-      const wallHits = rawWallHits.filter(h => !isPlayerChild(h.object));
+      // The scenery is drawn as InstancedMeshes, but a single giant instance
+      // bounds box cannot describe its actual outer faces. Broad-phase only
+      // the nearby chunks, then raycast their original GLB triangles.
+      const rayEndX = rayOrigin.x + moveNorm.x * this.wallRaycaster.far;
+      const rayEndZ = rayOrigin.z + moveNorm.z * this.wallRaycaster.far;
+      const sweepMinX = Math.min(rayOrigin.x, rayEndX) - this.PLAYER_RADIUS;
+      const sweepMaxX = Math.max(rayOrigin.x, rayEndX) + this.PLAYER_RADIUS;
+      const sweepMinY = this.mesh.position.y + 0.08;
+      const sweepMaxY = this.mesh.position.y + 1.45;
+      const sweepMinZ = Math.min(rayOrigin.z, rayEndZ) - this.PLAYER_RADIUS;
+      const sweepMaxZ = Math.max(rayOrigin.z, rayEndZ) + this.PLAYER_RADIUS;
+      const mountainCandidates = this.mountainRaycastCandidates;
+      mountainCandidates.length = 0;
+      for (const entry of this.mountainSurfaceColliders) {
+        const box = entry.bounds;
+        if (box.max.x < sweepMinX || box.min.x > sweepMaxX ||
+            box.max.y < sweepMinY || box.min.y > sweepMaxY ||
+            box.max.z < sweepMinZ || box.min.z > sweepMaxZ) continue;
+        mountainCandidates.push(entry.mesh);
+      }
 
-      if (wallHits.length > 0 && wallHits[0].distance < this.PLAYER_RADIUS + moveAmount) {
-        const hitObject = wallHits[0].object;
+      const rawWallHits = this.colliders.length > 0 ? this.wallRaycaster.intersectObjects(this.colliders, true) : [];
+      let wallHit = rawWallHits.find((hit) => !isPlayerChild(hit.object));
+      if (mountainCandidates.length > 0) {
+        // Sweep the character's occupied width and height against the real
+        // rock triangles. A single chest-height center ray can miss sloped
+        // surfaces or let Wukong clip through an overhang at shoulder height.
+        this.mountainRaySide.set(-moveNorm.z, 0, moveNorm.x).multiplyScalar(this.PLAYER_RADIUS * 0.72);
+        let nearestMountainHit: THREE.Intersection | null = null;
+        for (const [heightOffset, sideSign] of [[-0.48, 0], [0, 0], [0.48, 0], [0, -1], [0, 1]] as const) {
+          this.mountainRayOrigin.copy(rayOrigin);
+          this.mountainRayOrigin.y += heightOffset;
+          if (sideSign !== 0) this.mountainRayOrigin.addScaledVector(this.mountainRaySide, sideSign);
+          this.wallRaycaster.set(this.mountainRayOrigin, moveNorm);
+          const hits = this.wallRaycaster.intersectObjects(mountainCandidates, false);
+          const hit = hits.find((candidate) => !isPlayerChild(candidate.object));
+          if (hit && (!nearestMountainHit || hit.distance < nearestMountainHit.distance)) nearestMountainHit = hit;
+        }
+        if (nearestMountainHit && (!wallHit || nearestMountainHit.distance < wallHit.distance)) wallHit = nearestMountainHit;
+      }
+
+      if (wallHit && wallHit.distance < this.PLAYER_RADIUS + moveAmount) {
+        const hitObject = wallHit.object;
         const objName = (hitObject.name || '').toLowerCase();
+        const isMountainSurface = hitObject.userData.horizonMountainSurface === true;
         // Guard rails may include "stair" in their node name, but must remain
         // solid walls. Only the tread/ramp surfaces should bypass wall blocking.
         const isStairGuard = objName.includes('guard') || objName.includes('handrail');
         const isStairStep = !isStairGuard && (objName.includes('step') || objName.includes('stair') || objName.includes('ramp'));
         let canClimbActualStep = false;
-        const wallNormal = wallHits[0].face?.normal?.clone() || new THREE.Vector3(0, 0, 1);
-        wallNormal.transformDirection(hitObject.matrixWorld);
-        if (!isStairStep && this.isGrounded && Math.abs(wallNormal.y) < 0.35) {
+        const wallNormal = wallHit.face?.normal?.clone() || new THREE.Vector3(0, 0, 1);
+        if ((hitObject as THREE.InstancedMesh).isInstancedMesh && wallHit.instanceId !== undefined) {
+          const instancedHit = hitObject as THREE.InstancedMesh;
+          instancedHit.getMatrixAt(wallHit.instanceId, this.mountainInstanceMatrix);
+          this.mountainWorldMatrix.multiplyMatrices(instancedHit.matrixWorld, this.mountainInstanceMatrix);
+          this.mountainNormalMatrix.getNormalMatrix(this.mountainWorldMatrix);
+          wallNormal.applyNormalMatrix(this.mountainNormalMatrix);
+        } else {
+          wallNormal.transformDirection(hitObject.matrixWorld);
+        }
+        if (isMountainSurface) {
+          // Mountain faces are solid regardless of slope; they must not act as
+          // climbable ramps. Leave the fallback perimeter behind the ridge.
+          this.velocity.x = 0;
+          this.velocity.z = 0;
+          stepUpTargetY = null;
+          canClimbActualStep = false;
+        }
+        if (!isMountainSurface && !isStairStep && this.isGrounded && Math.abs(wallNormal.y) < 0.35) {
           // Imported temple risers don't necessarily have useful names. Probe
           // the walkable top just ahead; climb only if it is genuinely within
           // the same 45 cm step limit used by the grounding solver.
@@ -993,7 +1067,10 @@ export class PlayerController {
         }
 
         // Ignore named steps and unnamed risers only when a walkable top was found.
-        if (!isStairStep && !canClimbActualStep) {
+        if (isMountainSurface) {
+          // Already stopped above; do not project against the triangle's
+          // vertical component or the character can be pushed into the mesh.
+        } else if (!isStairStep && !canClimbActualStep) {
           // Only treat as a wall if it is a steep vertical surface (abs(normal.y) < 0.35)
           if (Math.abs(wallNormal.y) < 0.35) {
             wallNormal.y = 0;
@@ -1258,7 +1335,17 @@ export class PlayerController {
     // slow, hunched free-fall animation at the apex.
     const highFall = this.velocity.y < -8.0 && this.airApexY - this.mesh.position.y > 2.0;
     if (!this.isGrounded && !this.isAttacking && highFall) {
+      this.doubleJumpSpinning = false;
+      this.doubleJumpSpinTimer = 0;
+      if (this.doubleJumpPivot) this.doubleJumpPivot.rotation.x = 0;
       this.animationController.playState('Fall', 0.12);
+    } else if (!this.isGrounded && this.doubleJumpSpinning) {
+      // Keep the double-jump spin going through a normal descent. A severe fall
+      // above ends it and hands animation control to the existing fall clip.
+      const spinRate = (Math.PI * 2) / 0.4;
+      if (this.doubleJumpPivot) this.doubleJumpPivot.rotation.x =
+        (this.doubleJumpPivot.rotation.x + spinRate * delta) % (Math.PI * 2);
+      this.doubleJumpSpinTimer = Math.max(0, this.doubleJumpSpinTimer - delta);
     } else if (this.isGrounded && !this.isAttacking) {
       if (isMoving) {
         this.animationController.playState(isSprinting ? 'Sprint' : 'Run');

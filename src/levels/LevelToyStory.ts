@@ -51,10 +51,9 @@ export class LevelToyStory {
   public dayNightCycle!: DayNightCycle;
 
   public levelColliders: THREE.Object3D[] = [];
-  // Reused, invisible box proxies give the player and orbit camera a physical
-  // boundary at the decorative mountain ring without changing the rock GLB.
-  private readonly horizonRockBlockerGeometry = new THREE.BoxGeometry(1, 1, 1);
-  private readonly horizonRockBlockerMaterial = new THREE.MeshBasicMaterial({
+  // Shared invisible material for exact, detached instanced mountain meshes.
+  // They are raycast-only and never enter the render list.
+  private readonly horizonRockCollisionMaterial = new THREE.MeshBasicMaterial({
     colorWrite: false,
     depthWrite: false,
     side: THREE.DoubleSide,
@@ -134,6 +133,16 @@ export class LevelToyStory {
   private cryptPortalMaterial: THREE.ShaderMaterial | null = null;
   private cryptEntranceGlow: THREE.PointLight | null = null;
   private arenaMoonFill: THREE.PointLight | null = null;
+  private exteriorMoonlightGroup: THREE.Group | null = null;
+  private exteriorMoonBeamMaterial: THREE.ShaderMaterial | null = null;
+  private templeWindowGlowMaterial: THREE.ShaderMaterial | null = null;
+  private exteriorMoonBeams: Array<{ root: THREE.Group; start: THREE.Vector3; end: THREE.Vector3; phase: number; yaw: number }> = [];
+  private exteriorMoonTime = 0;
+  private exteriorMoonOrbs: THREE.Points | null = null;
+  private exteriorMoonOrbBase: Float32Array | null = null;
+  private exteriorMoonOrbPhase: Float32Array | null = null;
+  private exteriorMoonOrbElapsed = 0;
+  private readonly templeInteriorLights: THREE.PointLight[] = [];
   private constellationSystem: ConstellationSystem | null = null;
   private skyPanorama: SkyPanoramaSystem | null = null;
   private skyDebugPanel: HTMLElement | null = null;
@@ -195,6 +204,8 @@ export class LevelToyStory {
   private readonly curiosityCryptReturnPoint = new THREE.Vector3(-10.0, -5.9, -40);
   private isInsideCuriosityCrypt = false;
   private curiosityCryptTransitioning = false;
+  /** Set only for a lethal hit from a crypt guardian; death returns Wukong to the surface entrance. */
+  private respawnFromCuriosityCrypt = false;
   private canopyTrial: {
     base: THREE.Vector3;
     top: THREE.Vector3;
@@ -368,7 +379,25 @@ export class LevelToyStory {
     this.subtitleSystem = subtitleSystem;
     this.audioManager = audioManager;
     this.onResourceProgress = onResourceProgress;
-    this.player.onRespawn = () => queueMicrotask(() => this.handleBossPlayerRespawn());
+    this.player.onRespawn = () => {
+      if (this.respawnFromCuriosityCrypt) {
+        this.respawnFromCuriosityCrypt = false;
+        // The guardian's lethal hit respawns at the outdoor mouth. Restore the
+        // surface world before the next player ground-resolution frame so the
+        // underground floor cannot leave Wukong suspended beneath the map.
+        this.isInsideCuriosityCrypt = false;
+        this.curiosityCryptTransitioning = false;
+        this.isTeleportingToCrypt = false;
+        if (this.worldTerrainMesh) this.worldTerrainMesh.visible = true;
+        for (const guardian of this.cryptGuardians) guardian.mesh.visible = false;
+        this.player.isGrounded = false;
+        this.player.jumpCount = 0;
+        this.player.velocity.set(0, 0, 0);
+        this.player.mesh.updateMatrixWorld(true);
+        this.cameraController.snapBehindTarget();
+      }
+      queueMicrotask(() => this.handleBossPlayerRespawn());
+    };
   }
 
   public async init(): Promise<void> {
@@ -840,6 +869,8 @@ export class LevelToyStory {
       applyGoldenTempleLut(routeTemple);
       this.addTempleCollision(routeTemple);
       this.addTempleStoneFloor(routeTemple);
+      this.addTempleInteriorLighting(routeTemple);
+      this.addExteriorMoonlightEffects();
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese Temple asset.', templeResult.reason);
     }
@@ -1518,6 +1549,297 @@ export class LevelToyStory {
       // collider-cache updates never race the first approach frame.
       root, center, radius: 30, active: false
     });
+  }
+
+  /** Two restrained, non-shadowing practicals make the temple interiors read
+   * warmly through their existing openings while leaving the authored shell intact. */
+  private addTempleInteriorLighting(temple: THREE.Object3D): void {
+    temple.updateMatrixWorld(true);
+    const lowerFloorY = this.centralTempleFloorTopY ?? temple.position.y + 1.35;
+    const bounds = new THREE.Box3().setFromObject(temple);
+    const localBounds = new THREE.Box3();
+    const inverseRoot = temple.matrixWorld.clone().invert();
+    temple.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      if (!mesh.geometry.boundingBox) return;
+      localBounds.union(mesh.geometry.boundingBox.clone().applyMatrix4(inverseRoot.clone().multiply(mesh.matrixWorld)));
+    });
+
+    // Measure the upper walkable deck from the original GLB instead of
+    // guessing a world-space height. Sample a small interior grid once at load.
+    const localHeight = localBounds.max.y - localBounds.min.y;
+    const upperCandidates: number[] = [];
+    const raycaster = new THREE.Raycaster();
+    const down = new THREE.Vector3(0, -1, 0);
+    for (const x of [-2.5, 0, 2.5]) for (const z of [-2.5, 0, 2.5]) {
+      const sample = temple.localToWorld(new THREE.Vector3(x, 0, z));
+      raycaster.set(new THREE.Vector3(sample.x, bounds.max.y + 1, sample.z), down);
+      raycaster.far = bounds.max.y - bounds.min.y + 2;
+      const hit = raycaster.intersectObject(temple, true).find((candidate) => {
+        if (!candidate.face) return false;
+        const localPoint = temple.worldToLocal(candidate.point.clone());
+        const normalY = candidate.face.normal.clone().transformDirection(candidate.object.matrixWorld).y;
+        return normalY > 0.82 && localPoint.y > localBounds.min.y + localHeight * 0.22 &&
+          localPoint.y < localBounds.min.y + localHeight * 0.70;
+      });
+      if (hit) upperCandidates.push(hit.point.y);
+    }
+    upperCandidates.sort((a, b) => a - b);
+    const upperFloorY = upperCandidates.length >= 3
+      ? upperCandidates[Math.floor(upperCandidates.length / 2)]
+      : lowerFloorY + Math.max(4.4, localHeight * temple.scale.y * 0.34);
+
+    const lowPower = isLowPowerDevice() || (navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches);
+    // Put the warm practicals inside the real footprint, near its windowed
+    // facades. The former single center light per level sat too far from the
+    // openings to read outdoors. Four lights total on desktop, two on mobile;
+    // all share the scene's existing no-shadow lighting path.
+    const floorLights = [
+      { floor: 'first', y: lowerFloorY + 2.65, localY: 3.0, intensity: lowPower ? 7.5 : 5.2, range: 14.5 },
+      { floor: 'upper', y: upperFloorY + 2.2, localY: 9.2, intensity: lowPower ? 7.0 : 4.8, range: 13.5 },
+    ];
+    for (const practical of floorLights) {
+      const sides = lowPower ? [[0, 0]] : [[-2.15, -1.75], [2.15, 1.75]];
+      for (let i = 0; i < sides.length; i++) {
+        const [localX, localZ] = sides[i];
+        const local = new THREE.Vector3(localX, practical.localY, localZ);
+        const position = temple.localToWorld(local);
+        // Preserve the measured deck height if the asset root has a small
+        // vertical offset; calculate local X/Z from the actual temple matrix.
+        position.y = practical.y;
+        const light = new THREE.PointLight(0xffbc79, practical.intensity, practical.range, 1.7);
+        light.name = `central_temple_${practical.floor}_warm_window_fill_${i + 1}`;
+        light.position.copy(position);
+        light.castShadow = false;
+        this.sceneManager.scene.add(light);
+        this.dayNightCycle?.registerNightLight(light);
+        this.templeInteriorLights.push(light);
+      }
+    }
+
+    // Subtle, soft-window radiance makes the existing interior practicals
+    // readable from a distance even where the authored lattice uses opaque
+    // textured panels. It is a single transparent draw, attached to the GLB;
+    // it neither edits the source materials nor adds architectural geometry.
+    const positions: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    const addWindow = (center: THREE.Vector3, tangent: THREE.Vector3, width: number, height: number) => {
+      const halfW = tangent.clone().multiplyScalar(width * 0.5);
+      const halfH = new THREE.Vector3(0, height * 0.5, 0);
+      const baseIndex = positions.length / 3;
+      const corners = [center.clone().sub(halfW).sub(halfH), center.clone().add(halfW).sub(halfH), center.clone().add(halfW).add(halfH), center.clone().sub(halfW).add(halfH)];
+      for (const corner of corners) positions.push(corner.x, corner.y, corner.z);
+      uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
+      indices.push(baseIndex, baseIndex + 1, baseIndex + 2, baseIndex, baseIndex + 2, baseIndex + 3);
+    };
+    // A slight exterior bias keeps the glow clear of the source wall surface
+    // while remaining within the original window openings and lattice bays.
+    const facadeOffset = 5.66;
+    for (const y of [3.05, 9.15]) {
+      // Three lit bays per facade, leaving the ground-floor entrance clear.
+      for (const x of [-3.45, 3.45]) {
+        addWindow(new THREE.Vector3(x, y, -facadeOffset), new THREE.Vector3(1, 0, 0), 1.35, 1.85);
+        addWindow(new THREE.Vector3(x, y, facadeOffset), new THREE.Vector3(1, 0, 0), 1.35, 1.85);
+      }
+      for (const z of [-3.1, 3.1]) {
+        addWindow(new THREE.Vector3(-facadeOffset, y, z), new THREE.Vector3(0, 0, 1), 1.35, 1.85);
+        addWindow(new THREE.Vector3(facadeOffset, y, z), new THREE.Vector3(0, 0, 1), 1.35, 1.85);
+      }
+    }
+    const glowGeometry = new THREE.BufferGeometry();
+    glowGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    glowGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    glowGeometry.setIndex(indices);
+    const glowMaterial = new THREE.ShaderMaterial({
+      uniforms: { uGlow: { value: 1 }, uTime: { value: 0 } },
+      vertexShader: 'varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+      fragmentShader: `
+        uniform float uGlow; uniform float uTime; varying vec2 vUv;
+        void main(){
+          float x=abs(vUv.x-0.5)*2.0;
+          float y=abs(vUv.y-0.5)*2.0;
+          float soft=pow(1.0-smoothstep(0.12,1.0,x),0.8)*(1.0-smoothstep(0.68,1.0,y));
+          float slats=0.88+0.12*step(0.35,fract(vUv.x*7.0));
+          float pulse=0.94+0.06*sin(uTime*0.7+vUv.x*4.0);
+          float alpha=soft*slats*pulse*0.40*uGlow;
+          gl_FragColor=vec4(vec3(1.0,0.42,0.12),alpha);
+        }`,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    });
+    const windowGlow = new THREE.Mesh(glowGeometry, glowMaterial);
+    windowGlow.name = 'central_temple_existing_window_warm_glow';
+    windowGlow.userData.noPlayerCollision = true;
+    windowGlow.frustumCulled = false;
+    windowGlow.renderOrder = 2;
+    temple.add(windowGlow);
+    this.templeWindowGlowMaterial = glowMaterial;
+  }
+
+  /** Low-cost moon shafts and a tiny drifting-orb field for the open exterior.
+   * These are decorative meshes/points only: no extra shadow maps or lights. */
+  private addExteriorMoonlightEffects(): void {
+    if (this.exteriorMoonlightGroup) return;
+    const lowPower = isLowPowerDevice() || (navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches);
+    const group = new THREE.Group();
+    group.name = 'exterior_moonlight_shafts_and_orbs';
+    group.userData.noPlayerCollision = true;
+
+    const beamMaterial = new THREE.ShaderMaterial({
+      uniforms: { uNightIntensity: { value: this.dayNightCycle?.nightAmount ?? 1 }, uTime: { value: 0 } },
+      vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+      fragmentShader: `
+        uniform float uNightIntensity; uniform float uTime; varying vec2 vUv;
+        void main(){
+          float edge=abs(vUv.x-0.5)*2.0;
+          float radial=1.0-smoothstep(0.04,1.0,edge);
+          float ends=smoothstep(0.0,0.18,vUv.y)*(1.0-smoothstep(0.80,1.0,vUv.y));
+          float softBand=0.91+0.09*sin(vUv.y*20.0-uTime*0.38);
+          float alpha=radial*ends*softBand*0.16*uNightIntensity;
+          gl_FragColor=vec4(vec3(0.43,0.58,0.92),alpha);
+        }`,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    });
+    this.exteriorMoonBeamMaterial = beamMaterial;
+    const beamGeometry = new THREE.PlaneGeometry(3.0, 16);
+    // Sweep very slowly along the already-authored western/eastern stone
+    // approaches. This keeps the moon pools on navigable ground instead of
+    // creating arbitrary glowing spots in the grass.
+    const paths = [
+      [new THREE.Vector3(-17, 0, -40), new THREE.Vector3(-27, 0, -50), new THREE.Vector3(-39, 0, -62)],
+      [new THREE.Vector3(17, 0, -40), new THREE.Vector3(27, 0, -50), new THREE.Vector3(39, 0, -62)],
+    ];
+    const beamCount = lowPower ? 1 : paths.length;
+    for (let i = 0; i < beamCount; i++) {
+      const points = paths[i];
+      const start = points[0].clone();
+      const end = points[points.length - 1].clone();
+      start.y = this.getTerrainHeight(start.x, start.z);
+      end.y = this.getTerrainHeight(end.x, end.z);
+      const initial = start.clone().lerp(end, 0.5);
+      const shaft = new THREE.Group();
+      shaft.name = `exterior_moon_shaft_${i + 1}`;
+      shaft.position.set(initial.x, initial.y + 7.6, initial.z);
+      for (let crossed = 0; crossed < 2; crossed++) {
+        const plane = new THREE.Mesh(beamGeometry, beamMaterial);
+        plane.rotation.set(0.27, crossed * Math.PI * 0.5, 0);
+        plane.frustumCulled = false;
+        shaft.add(plane);
+      }
+      const pathDirection = new THREE.Vector3().subVectors(end, start).setY(0).normalize();
+      const yaw = Math.atan2(pathDirection.x, pathDirection.z) + Math.PI * 0.5;
+      shaft.rotation.y = yaw;
+      this.exteriorMoonBeams.push({ root: shaft, start, end, phase: i * Math.PI, yaw });
+      group.add(shaft);
+    }
+
+    const orbCount = lowPower ? 20 : 42;
+    const positions = new Float32Array(orbCount * 3);
+    const base = new Float32Array(orbCount * 3);
+    const phases = new Float32Array(orbCount);
+    for (let i = 0; i < orbCount; i++) {
+      const lane = i % beamCount;
+      const anchor = paths[lane][1];
+      const seed = (i * 16807 % 2147483647) / 2147483647;
+      const seed2 = ((i + 37) * 48271 % 2147483647) / 2147483647;
+      const offset = i * 3;
+      base[offset] = anchor.x + (seed - 0.5) * 2.8;
+      base[offset + 1] = this.getTerrainHeight(anchor.x, anchor.z) + 0.7 + seed2 * 11.2;
+      base[offset + 2] = anchor.z + (seed2 - 0.5) * 1.4;
+      positions[offset] = base[offset];
+      positions[offset + 1] = base[offset + 1];
+      positions[offset + 2] = base[offset + 2];
+      phases[i] = seed * Math.PI * 2;
+    }
+    const orbGeometry = new THREE.BufferGeometry();
+    orbGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const orbCanvas = document.createElement('canvas');
+    orbCanvas.width = orbCanvas.height = 32;
+    const ctx = orbCanvas.getContext('2d');
+    if (ctx) {
+      const glow = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+      glow.addColorStop(0, 'rgba(235,246,255,1)');
+      glow.addColorStop(0.22, 'rgba(176,211,255,0.8)');
+      glow.addColorStop(1, 'rgba(105,157,255,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, 32, 32);
+    }
+    const orbTexture = new THREE.CanvasTexture(orbCanvas);
+    orbTexture.colorSpace = THREE.SRGBColorSpace;
+    const orbMaterial = new THREE.PointsMaterial({
+      color: 0xc7ddff,
+      map: orbTexture,
+      size: lowPower ? 0.24 : 0.21,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      sizeAttenuation: true,
+      toneMapped: false,
+    });
+    const orbs = new THREE.Points(orbGeometry, orbMaterial);
+    orbs.name = 'exterior_moonlight_tiny_orbs';
+    orbs.frustumCulled = false;
+    group.add(orbs);
+    this.exteriorMoonOrbBase = base;
+    this.exteriorMoonOrbPhase = phases;
+    this.exteriorMoonOrbs = orbs;
+    this.exteriorMoonlightGroup = group;
+    this.sceneManager.scene.add(group);
+  }
+
+  private updateExteriorMoonlightEffects(delta: number, nightAmount: number): void {
+    if (!this.exteriorMoonlightGroup) return;
+    const visible = nightAmount > 0.035 && !this.isInsideCuriosityCrypt;
+    this.exteriorMoonlightGroup.visible = visible;
+    this.exteriorMoonTime += Math.min(delta, 0.1);
+    if (this.exteriorMoonBeamMaterial) {
+      this.exteriorMoonBeamMaterial.uniforms.uNightIntensity.value = nightAmount;
+      this.exteriorMoonBeamMaterial.uniforms.uTime.value = this.exteriorMoonTime;
+    }
+    if (this.templeWindowGlowMaterial) {
+      this.templeWindowGlowMaterial.uniforms.uGlow.value = nightAmount;
+      this.templeWindowGlowMaterial.uniforms.uTime.value = this.exteriorMoonTime;
+    }
+    if (visible) {
+      for (const beam of this.exteriorMoonBeams) {
+        // Move the paired light sheets gently along route segments. The sweep
+        // is deterministic, low frequency and transform-only (no allocations
+        // or extra light/shadow work in the frame loop).
+        const travel = 0.5 + 0.22 * Math.sin(this.exteriorMoonTime * 0.12 + beam.phase);
+        beam.root.position.lerpVectors(beam.start, beam.end, travel);
+        beam.root.position.y += 7.6;
+        const moon = this.dayNightCycle?.moonDirection;
+        if (moon) beam.root.rotation.y = beam.yaw + Math.atan2(moon.x, moon.z) * 0.025;
+      }
+    }
+    if (!this.exteriorMoonOrbs || !this.exteriorMoonOrbBase || !this.exteriorMoonOrbPhase) return;
+    const material = this.exteriorMoonOrbs.material as THREE.PointsMaterial;
+    material.opacity = 0.72 * nightAmount;
+    if (!visible) return;
+    this.exteriorMoonOrbElapsed += delta;
+    if (this.exteriorMoonOrbElapsed < 1 / 24) return;
+    this.exteriorMoonOrbElapsed = 0;
+    const positions = this.exteriorMoonOrbs.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const values = positions.array as Float32Array;
+    for (let i = 0; i < this.exteriorMoonOrbPhase.length; i++) {
+      const offset = i * 3;
+      const phase = this.exteriorMoonOrbPhase[i] + performance.now() * 0.00022;
+      values[offset] = this.exteriorMoonOrbBase[offset] + Math.sin(phase) * 0.16;
+      values[offset + 1] = this.exteriorMoonOrbBase[offset + 1] + Math.sin(phase * 0.71) * 0.28;
+      values[offset + 2] = this.exteriorMoonOrbBase[offset + 2] + Math.cos(phase * 0.83) * 0.12;
+    }
+    positions.needsUpdate = true;
   }
 
   private addTempleCollision(asset: THREE.Object3D): void {
@@ -2670,6 +2992,12 @@ export class LevelToyStory {
           [-25, 0, -90], [25, 0, -90], [-40, 0, -80], [45, 0, -80], [0, 0, -105],
           [-35, 0, -10], [35, 0, -15], [-20, 0, -84], [20, 0, -84], [-50, 0, -45]
         ];
+        // The Qi route uses the exact same authored blossom trees as the rest
+        // of the map. Keep these as visual-only instances so the established
+        // staircase, perches and liana collision remain untouched.
+        const qiCanopyTreePositions: [number, number, number][] = [
+          [30, 0, 0], [38, 0, -10], [46, 0, 1], [54, 0, -9], [62, 0, 0],
+        ];
         // The paths are built synchronously before these async assets resolve.
         // Do not let a trunk or its collider intrude into a walkable corridor.
         const safePositions = positions.filter(([x, , z]) => !this.isVegetationNearPath(x, z, 3.2));
@@ -2714,7 +3042,7 @@ export class LevelToyStory {
             return material;
           });
           const treeMaterial = Array.isArray(mesh.material) ? treeMaterials : treeMaterials[0];
-          const instances = new THREE.InstancedMesh(mesh.geometry, treeMaterial, safePositions.length);
+          const instances = new THREE.InstancedMesh(mesh.geometry, treeMaterial, safePositions.length + qiCanopyTreePositions.length);
           instances.name = 'original_pinus_tree_instances';
           instances.castShadow = false;
           instances.receiveShadow = false;
@@ -2730,6 +3058,21 @@ export class LevelToyStory {
             baseMatrices.push(baseMatrix.clone());
             instances.setMatrixAt(i, baseMatrix);
             instances.setColorAt(i, blossomPalette[Math.floor(rand() * blossomPalette.length)]!);
+          });
+          qiCanopyTreePositions.forEach(([x, , z], routeIndex) => {
+            const i = safePositions.length + routeIndex;
+            const ground = this.getTerrainHeight(x, z);
+            // Slightly lighter/smaller crowns frame each landing rather than
+            // engulfing the walkable boards, chest or key pickup.
+            const scale = 0.64 + (routeIndex % 3) * 0.025;
+            dummy.position.set(x, ground, z);
+            dummy.rotation.set(0, [-0.35, 0.65, 1.15, -0.8, 0.25][routeIndex]!, 0);
+            dummy.scale.setScalar(scale);
+            dummy.updateMatrix();
+            const baseMatrix = dummy.matrix.clone().multiply(relative);
+            baseMatrices.push(baseMatrix.clone());
+            instances.setMatrixAt(i, baseMatrix);
+            instances.setColorAt(i, blossomPalette[(routeIndex + 1) % blossomPalette.length]!);
           });
           instances.instanceMatrix.needsUpdate = true;
           if (instances.instanceColor) instances.instanceColor.needsUpdate = true;
@@ -3527,33 +3870,8 @@ export class LevelToyStory {
     const pivot = new THREE.Matrix4().makeTranslation(
       -sourceCenter.x, -sourceBounds.min.y, -sourceCenter.z,
     );
-    // The instanced scenery is visual-only to Three.js collision queries.
-    // Create one conservative proxy per placement, reused by the existing
-    // static blocker and camera collision systems (no per-frame work).
-    for (let index = 0; index < placements.length; index++) {
-      const placement = placements[index]!;
-      const blocker = new THREE.Mesh(this.horizonRockBlockerGeometry, this.horizonRockBlockerMaterial);
-      blocker.name = `horizon_rock_solid_blocker_${String(index + 1).padStart(3, '0')}`;
-      blocker.position.set(
-        placement.x,
-        placement.y + sourceSize.y * placement.scale * 0.5,
-        placement.z,
-      );
-      blocker.rotation.y = placement.yaw;
-      blocker.scale.set(
-        Math.max(1, sourceSize.x * placement.scale * 0.72),
-        Math.max(1, sourceSize.y * placement.scale * 0.92),
-        Math.max(1, sourceSize.z * placement.scale * 0.72),
-      );
-      blocker.userData.solidPlayerBlocker = true;
-      blocker.userData.decorativeMountainBlocker = true;
-      blocker.visible = false;
-      blocker.castShadow = false;
-      blocker.receiveShadow = false;
-      blocker.updateMatrixWorld(true);
-      this.levelColliders.push(blocker);
-      this.sceneManager.scene.add(blocker);
-    }
+    const mountainSurfaceColliders: THREE.InstancedMesh[] = [];
+    const collisionChunkSize = 8;
     for (let meshIndex = 0; meshIndex < meshes.length; meshIndex++) {
       const sourceMesh = meshes[meshIndex];
       const instanced = new THREE.InstancedMesh(sourceMesh.geometry, sourceMesh.material, placements.length);
@@ -3580,11 +3898,32 @@ export class LevelToyStory {
         instanced.setMatrixAt(index, placementMatrix);
         instanced.setColorAt(index, placement.tint);
       });
+      // Mirror the visible GLB instances into small detached chunks. Their
+      // matrices and source triangles match the render mesh exactly, while
+      // each chunk's measured bounds let PlayerController raycast only rocks
+      // near Wukong instead of testing the entire mountain ring every frame.
+      for (let start = 0; start < placements.length; start += collisionChunkSize) {
+        const count = Math.min(collisionChunkSize, placements.length - start);
+        const collisionChunk = new THREE.InstancedMesh(sourceMesh.geometry, this.horizonRockCollisionMaterial, count);
+        collisionChunk.name = `horizon_mountain_surface_collision_${meshIndex + 1}_${Math.floor(start / collisionChunkSize) + 1}`;
+        collisionChunk.userData.horizonMountainSurface = true;
+        collisionChunk.frustumCulled = false;
+        for (let localIndex = 0; localIndex < count; localIndex++) {
+          instanced.getMatrixAt(start + localIndex, rotation);
+          collisionChunk.setMatrixAt(localIndex, rotation);
+        }
+        collisionChunk.instanceMatrix.needsUpdate = true;
+        collisionChunk.updateMatrixWorld(true);
+        collisionChunk.computeBoundingBox();
+        collisionChunk.computeBoundingSphere();
+        mountainSurfaceColliders.push(collisionChunk);
+      }
       instanced.instanceMatrix.needsUpdate = true;
       if (instanced.instanceColor) instanced.instanceColor.needsUpdate = true;
       instanced.computeBoundingSphere();
       this.sceneManager.scene.add(instanced);
     }
+    this.player.setMountainSurfaceColliders(mountainSurfaceColliders);
   }
 
   private buildSecretLavaRoute(scene: THREE.Scene): void {
@@ -4331,24 +4670,6 @@ export class LevelToyStory {
     });
     this.canopyPlatformsMaterial = platformMat;
 
-    // Use the supplied low-weight oak mesh (20 KB), cloned at varied scales and yaw.
-    void new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}assets/environment/tree_oak.gltf?v=canopy-oak-1`)
-      .then(({ scene: oak }) => {
-        treeBases.forEach((treeBase, i) => {
-          const tree = oak.clone(true);
-          tree.name = `qi_canopy_oak_${i + 1}`;
-          tree.position.copy(treeBase);
-          tree.scale.setScalar([1.42, 1.12, 1.27, 1.05, 1.35][i]!);
-          tree.rotation.y = [-0.35, 0.65, 1.15, -0.8, 0.25][i]!;
-          tree.traverse((node) => {
-            const mesh = node as THREE.Mesh;
-            if (mesh.isMesh) { mesh.castShadow = true; mesh.receiveShadow = true; }
-          });
-          scene.add(tree);
-        });
-      })
-      .catch((error) => console.warn('[CanopyTrial] Could not load bundled oak model.', error));
-
     const addRouteMesh = (mesh: THREE.Mesh, name: string, collider = false) => {
       mesh.name = name;
       mesh.castShadow = mesh.receiveShadow = true;
@@ -4518,14 +4839,47 @@ export class LevelToyStory {
       tread.rotation.y = -angle;
     }
 
+    // Keep all deck boards in one GPU-instanced batch: the more polished wood
+    // detail adds one draw call instead of dozens on mobile.
+    const perchPlanks = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1), warmWood, routePoints.length * 7,
+    );
+    perchPlanks.name = 'qi_canopy_perch_individual_wood_planks';
+    perchPlanks.visible = false;
+    perchPlanks.castShadow = perchPlanks.receiveShadow = true;
+    const perchPlankDummy = new THREE.Object3D();
+    let perchPlankIndex = 0;
+
     // Four intermediate/final timber platforms are mounted to the remaining trees.
     routePoints.forEach((point, i) => {
       const width = i === 4 ? 4.4 : i === 0 ? 4.2 : 3.25;
       const depth = i === 4 ? 4.0 : i === 0 ? 3.8 : 3.2;
       addBox('qi_canopy_perch_' + (i + 1), point.x, point.y - 0.28, point.z, width, 0.56, depth, platformMat, true);
-      for (const edge of [-1, 1]) addBox('qi_canopy_perch_trim_' + (i + 1), point.x, point.y - 0.48, point.z + edge * (depth * 0.5 - 0.14), width * 0.92, 0.08, 0.12, darkWood);
-      if (i > 0 && i < 4) for (const sx of [-1, 1]) addBox('qi_canopy_perch_guard_' + i + '_' + sx, point.x + sx * (width / 2 - 0.12), point.y + 0.38, point.z, 0.12, 0.72, depth * 0.78, warmWood);
+      // Visible individual boards give the functional collider a real timber
+      // platform finish. A dark rim and two underside beams tie it into the tree.
+      for (let plank = 0; plank < 7; plank++) {
+        const plankWidth = (width - 0.24) / 7;
+        const plankX = point.x - width / 2 + 0.12 + plankWidth * (plank + 0.5);
+        perchPlankDummy.position.set(plankX, point.y + 0.012, point.z);
+        perchPlankDummy.scale.set(plankWidth - 0.035, 0.07, depth - 0.18);
+        perchPlankDummy.updateMatrix();
+        perchPlanks.setMatrixAt(perchPlankIndex, perchPlankDummy.matrix);
+        perchPlanks.setColorAt(perchPlankIndex, new THREE.Color(plank % 3 === 0 ? 0xffffff : 0xb6a58c));
+        perchPlankIndex++;
+      }
+      for (const edge of [-1, 1]) {
+        addBox('qi_canopy_perch_trim_' + (i + 1), point.x, point.y - 0.48, point.z + edge * (depth * 0.5 - 0.14), width * 0.96, 0.12, 0.16, darkWood);
+        addBox(`qi_canopy_perch_beam_${i + 1}_${edge}`, point.x, point.y - 0.39, point.z + edge * (depth * 0.34), width * 0.96, 0.18, 0.2, darkWood);
+      }
+      if (i > 0 && i < 4) for (const sx of [-1, 1]) {
+        addBox('qi_canopy_perch_guard_' + i + '_' + sx, point.x + sx * (width / 2 - 0.12), point.y + 0.38, point.z, 0.12, 0.72, depth * 0.78, warmWood);
+        addBox(`qi_canopy_perch_post_${i}_${sx}`, point.x + sx * (width / 2 - 0.12), point.y + 0.48, point.z, 0.18, 0.96, 0.18, darkWood);
+      }
     });
+    perchPlanks.instanceMatrix.needsUpdate = true;
+    if (perchPlanks.instanceColor) perchPlanks.instanceColor.needsUpdate = true;
+    scene.add(perchPlanks);
+    this.canopyRouteVisuals.push(perchPlanks);
 
     // Root sigil and seven small weathered stones establish a natural sanctuary.
     const shrineSigil = new THREE.Mesh(new THREE.TorusGeometry(2.15, 0.045, 6, 48), new THREE.MeshBasicMaterial({ color: 0xd7a94d, transparent: true, opacity: 0.72, toneMapped: false }));
@@ -4571,8 +4925,11 @@ export class LevelToyStory {
     const vineMaterial = new THREE.MeshStandardMaterial({ color: 0x78913c, roughness: 0.94, emissive: 0x385313, emissiveIntensity: 0.42 });
     routePoints.slice(0, -1).forEach((point, i) => {
       const next = routePoints[i + 1]!;
-      const start = point.clone().add(new THREE.Vector3(0, 1.5, 0));
-      const end = next.clone().add(new THREE.Vector3(0, 1.55, 0));
+      // Keep the first grip just above Wukong's reach from the deck so the
+      // opening action is available while standing; later grips stay slightly
+      // higher to preserve the swing silhouette across the canopy.
+      const start = point.clone().add(new THREE.Vector3(0, i === 0 ? 1.02 : 1.35, 0));
+      const end = next.clone().add(new THREE.Vector3(0, 1.35, 0));
       const control = new THREE.Vector3((start.x + end.x) * 0.5, Math.max(start.y, end.y) + (i % 2 ? 2.25 : 2.7), (start.z + end.z) * 0.5);
       const curve = new THREE.QuadraticBezierCurve3(start, control, end);
       routePaths.push(new THREE.QuadraticBezierCurve3(point.clone(), control.clone().add(new THREE.Vector3(0, -0.15, 0)), next.clone()));
@@ -4597,7 +4954,9 @@ export class LevelToyStory {
       this.canopyRouteVisuals.push(handhold);
     });
 
-    this.canopyChest = new TreasureChest(landing.clone(), Math.PI);
+    // Set the chest on the open, camera-facing half of the final deck so the
+    // reward stays visible against the blossom canopy.
+    this.canopyChest = new TreasureChest(landing.clone().add(new THREE.Vector3(0.75, 0, 0.72)), Math.PI);
     this.canopyChest.mesh.name = 'canopy_secret_key_chest';
     scene.add(this.canopyChest.mesh);
     this.chests.push(this.canopyChest);
@@ -4692,7 +5051,7 @@ export class LevelToyStory {
 
     // The staircase has real per-step colliders. Reaching the deck is based on
     // actual position and elevation; there is no snap-to-platform or auto-climb.
-    if (this.canopyRouteIndex < 0 && this.canopyTrialActivated && horizontal(route.top) < 2.8 && Math.abs(playerPos.y - route.top.y) < 1.7) {
+    if (this.canopyRouteIndex < 0 && this.canopyTrialActivated && horizontal(route.top) < 4.0 && Math.abs(playerPos.y - route.top.y) < 2.6) {
       this.canopyRouteIndex = 0;
       this.player.isGrounded = true;
       this.subtitleSystem.show('Primera casa del árbol', 'Buen comienzo. Agárrate a la liana que une los siguientes árboles.');
@@ -4700,7 +5059,9 @@ export class LevelToyStory {
 
     if (this.canopyRouteIndex >= 0 && this.canopyRouteIndex < route.routePoints.length - 1) {
       const current = route.routePoints[this.canopyRouteIndex]!;
-      if (horizontal(current) < 3.1 && Math.abs(playerPos.y - current.y) < 2.3) {
+      const gripReach = this.canopyRouteIndex === 0 ? 4.2 : 3.7;
+      const gripHeightReach = this.canopyRouteIndex === 0 ? 3.0 : 2.7;
+      if (horizontal(current) < gripReach && Math.abs(playerPos.y - current.y) < gripHeightReach) {
         const nextIndex = this.canopyRouteIndex + 1;
         const clip = this.canopyRouteIndex % 2 === 0 ? 'Swing_To_Land' : 'Swing_To_Land2';
         const canSwing = this.player.animationController.hasClip(clip);
@@ -5989,7 +6350,15 @@ export class LevelToyStory {
           this.combatTutorialShown = true;
           this.showCombatControlsHint();
         }
-        const cp = this.checkpointManager.getActiveCheckpointPosition();
+        const wasInsideCrypt = this.isInsideCuriosityCrypt;
+        const lethalHit = this.player.health <= dmg && !this.player.isInvulnerable &&
+          !this.player.isControlsLocked && !this.player.isMovementLocked;
+        // A crypt death must not restore an outdoor checkpoint's underground
+        // coordinates (or keep the crypt ground resolver active after respawn).
+        const cp = wasInsideCrypt
+          ? new THREE.Vector3(this.curiosityCryptSurface.x, this.curiosityCryptSurface.y + 0.2, this.curiosityCryptSurface.z + 3.0)
+          : this.checkpointManager.getActiveCheckpointPosition();
+        if (wasInsideCrypt && lethalHit) this.respawnFromCuriosityCrypt = true;
         this.player.takeDamage(dmg, cp);
         this.audioManager.playPlayerHurt();
         const hud = (window as any).gameInstance?.hud;
@@ -6911,6 +7280,7 @@ export class LevelToyStory {
     }
     const skyPhase = this.dayNightCycle?.phase ?? 0.05;
     const nightAmount = this.dayNightCycle?.nightAmount ?? 1;
+    this.updateExteriorMoonlightEffects(delta, nightAmount);
     if (this.arenaMoonFill) this.arenaMoonFill.intensity = 64 * nightAmount;
     this.twinCatsChallenge?.setNightAmount(nightAmount);
     if (this.skyPanorama && this.dayNightCycle) {
