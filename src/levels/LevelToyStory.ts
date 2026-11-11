@@ -971,6 +971,7 @@ export class LevelToyStory {
       const brassGeometry = new THREE.SphereGeometry(0.075, 8, 6);
       const cordMaterial = new THREE.MeshStandardMaterial({ color: 0x68432d, roughness: 0.88, metalness: 0.08 });
       const anchorMaterial = new THREE.MeshStandardMaterial({ color: 0xb7833c, roughness: 0.38, metalness: 0.64, emissive: 0x4a2605, emissiveIntensity: 0.16 });
+      const warmLanternMaterials = new Map<THREE.Material, THREE.Material>();
       const mothAnchors: THREE.Vector3[] = [];
       const down = new THREE.Vector3(0, -1, 0);
       const pairLights: THREE.Vector3[] = [];
@@ -993,12 +994,21 @@ export class LevelToyStory {
         pairRoot.traverse((object) => {
           const mesh = object as THREE.Mesh;
           if (!mesh.isMesh) return;
-          const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-          materials.forEach((material) => {
-            if (material instanceof THREE.MeshStandardMaterial && material.emissiveIntensity > 0) {
-              this.dayNightCycle?.registerNightEmissiveMaterial(material);
+          const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          const nightMaterials = sourceMaterials.map((source) => {
+            let material = warmLanternMaterials.get(source);
+            if (!material) {
+              material = source.clone();
+              if (material instanceof THREE.MeshStandardMaterial) {
+                material.emissive.set(0xff5b1c);
+                material.emissiveIntensity = 0.38;
+                this.dayNightCycle?.registerNightEmissiveMaterial(material);
+              }
+              warmLanternMaterials.set(source, material);
             }
+            return material;
           });
+          mesh.material = Array.isArray(mesh.material) ? nightMaterials : nightMaterials[0];
         });
         const namedLampNodes = ['lantern', 'lantern.001']
           .map((name) => pairRoot.getObjectByName(name))
@@ -1123,6 +1133,24 @@ export class LevelToyStory {
       upperEaveFill.castShadow = false;
       scene.add(upperEaveFill);
       this.dayNightCycle?.registerNightLight(upperEaveFill);
+
+      // Paired low fills reveal the entrance columns and carved timber from
+      // both sides. They share a no-shadow setup, follow the actual temple
+      // transform, and fade with the same day/night clock as the lanterns.
+      const mobileLighting = navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches;
+      [-2.85, 2.85].forEach((localX, index) => {
+        const columnFill = new THREE.PointLight(
+          0xffb66b,
+          mobileLighting ? 1.8 : 2.7,
+          mobileLighting ? 9 : 12,
+          2,
+        );
+        columnFill.name = `central_temple_column_warm_fill_${index + 1}_no_shadows`;
+        columnFill.position.copy(this.centralTempleObject!.localToWorld(new THREE.Vector3(localX, 2.8, -4.15)));
+        columnFill.castShadow = false;
+        scene.add(columnFill);
+        this.dayNightCycle?.registerNightLight(columnFill);
+      });
     }
     this.player.setColliders(this.levelColliders);
     this.cameraController.setCollisionObjects(this.levelColliders);
