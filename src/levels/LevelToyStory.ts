@@ -77,10 +77,10 @@ export class LevelToyStory {
   public collectedKeys = {
     key1_gekko: false, // 50 coins quest
     key2_boss: false,  // boss arena
-    key3_platform: false, // existing third-key slot, now awarded as the Qi key in the tree challenge
+    key3_platform: false, // Llave de la Naturaleza at its original world pickup
     key4_curiosity: false,
     key5_pots: false,
-    key6_gargoyles: false,
+    key6_qi_celestial: false, // final reward in the tree canopy chest
   };
   public totalKeysCount = 0;
 
@@ -334,9 +334,9 @@ export class LevelToyStory {
   public keyDefinitions: Record<string, KeyData> = {
     key1_gekko: { id: 'key1_gekko', name: 'Llave de la Riqueza (Gekko)', color: 0xffc94e, emissiveColor: 0xffb51b, obtained: false, modelUrl: getKeyAsset('key1_gekko')?.modelUrl },
     key2_boss: { id: 'key2_boss', name: 'Llave de la Valentía (Jefe Cangrejo)', color: 0x62dfff, emissiveColor: 0x248ccc, obtained: false, modelUrl: getKeyAsset('key2_boss')?.modelUrl },
-    key3_platform: { id: 'key3_platform', name: 'Llave del Qi Celestial', color: 0x62dfff, emissiveColor: 0x2fb8ed, obtained: false, modelUrl: getKeyAsset('key3_platform')?.modelUrl },
+    key3_platform: { id: 'key3_platform', name: 'Llave de la Naturaleza', color: 0x79e6a3, emissiveColor: 0x45b87b, obtained: false, modelUrl: getKeyAsset('key3_platform')?.modelUrl },
     key4_curiosity: { id: 'key4_curiosity', name: 'Llave de la Curiosidad', color: 0xc49aff, emissiveColor: 0x7748bd, obtained: false, modelUrl: getKeyAsset('key4_curiosity')?.modelUrl },
-    key6_gargoyles: { id: 'key6_gargoyles', name: 'Llave del Secreto (Gargolas)', color: 0xffbd70, emissiveColor: 0xbf6b2b, obtained: false, modelUrl: getKeyAsset('key6_gargoyles')?.modelUrl },
+    key6_qi_celestial: { id: 'key6_qi_celestial', name: 'Llave del Qi Celestial', color: 0xffd15a, emissiveColor: 0xffa51e, obtained: false, modelUrl: getKeyAsset('key6_qi_celestial')?.modelUrl },
     key5_pots: { id: 'key5_pots', name: 'Llave de Destrucción (Gemas)', color: 0xff493c, emissiveColor: 0xff5533, obtained: false, modelUrl: getKeyAsset('key5_pots')?.modelUrl },
   };
 
@@ -345,6 +345,7 @@ export class LevelToyStory {
 
   // Boss reference
   private bossEnemy!: EnemyController;
+  private bossArenaRocks: THREE.Mesh[] = [];
   private bossEncounterActive = false;
 
   public stateFlags = {
@@ -412,6 +413,7 @@ export class LevelToyStory {
     });
     this.setupCheckpoints();
     this.setupInteractiveProps();
+    this.setupProgressionKeys();
     this.setupCollectibles();
     this.setupEnemies();
     this.setupNPCs();
@@ -3319,6 +3321,36 @@ export class LevelToyStory {
             return;
           }
 
+          // Match the Nezha-X arena props to the mossy rock instances shown
+          // elsewhere in the level. Keep each existing Mesh as its gameplay
+          // carrier so the boss can grab, throw, hide, and restore it normally.
+          const arenaFloorTopY = arenaFloor.position.y + 0.1;
+          for (const carrier of arenaRocks) {
+            const visibleBoulder = source.clone(true);
+            visibleBoulder.name = `${carrier.name}_mossy_visual`;
+            const scaleX = 2 / sourceSize.x;
+            const scaleY = 2 / sourceSize.y;
+            const scaleZ = 2 / sourceSize.z;
+            visibleBoulder.scale.set(scaleX, scaleY, scaleZ);
+            visibleBoulder.position.set(
+              -sourceCenter.x * scaleX,
+              -sourceBounds.min.y * scaleY +
+                (arenaFloorTopY - carrier.position.y) / Math.max(0.01, carrier.scale.y),
+              -sourceCenter.z * scaleZ,
+            );
+            visibleBoulder.traverse((part) => {
+              const mesh = part as THREE.Mesh;
+              if (!mesh.isMesh) return;
+              mesh.castShadow = true;
+              mesh.receiveShadow = true;
+            });
+            carrier.add(visibleBoulder);
+            carrier.castShadow = false;
+            carrier.receiveShadow = false;
+            const carrierMaterial = carrier.material as THREE.Material;
+            carrierMaterial.visible = false;
+          }
+
           const blockerMaterial = new THREE.MeshBasicMaterial({
             colorWrite: false,
             depthWrite: false,
@@ -3478,19 +3510,41 @@ export class LevelToyStory {
     this.arenaMoonFill.castShadow = false;
     scene.add(this.arenaMoonFill);
 
-    // Low boundaries for the arena
-    const boundaryGeo = new THREE.BoxGeometry(4, 1.5, 1);
-    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 6) {
-      const boundary = new THREE.Mesh(boundaryGeo, stoneMat);
-      boundary.position.set(
-        arenaCenter.x + Math.cos(angle) * 15,
-        arenaCenter.y + 0.6,
-        arenaCenter.z + Math.sin(angle) * 15
+    // Replace the old conspicuous rectangular arena pillars with a ring of
+    // shared, low-poly boulders. A rock can be physically lifted and thrown
+    // by the boss; the shared geometry/material avoids per-rock GPU assets.
+    const arenaRockGeometry = new THREE.IcosahedronGeometry(1, 1);
+    const arenaRockMaterial = new THREE.MeshStandardMaterial({
+      color: 0x343b50, roughness: 0.94, metalness: 0.02,
+      map: stoneMat instanceof THREE.MeshStandardMaterial ? stoneMat.map : null,
+      bumpMap: stoneMat instanceof THREE.MeshStandardMaterial ? stoneMat.bumpMap : null,
+      bumpScale: 0.035,
+    });
+    // These meshes remain the boss attack/collision carriers. Their visible
+    // surfaces are replaced with the same mossy boulder asset used elsewhere.
+    const arenaRocks: THREE.Mesh[] = [];
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2;
+      const rock = new THREE.Mesh(arenaRockGeometry, arenaRockMaterial);
+      rock.name = `nezha_x_arena_throw_rock_${i + 1}`;
+      rock.position.set(
+        arenaCenter.x + Math.cos(angle) * 13.1,
+        arenaCenter.y + 0.48,
+        arenaCenter.z + Math.sin(angle) * 13.1,
       );
-      boundary.rotation.y = -angle;
-      scene.add(boundary);
-      this.levelColliders.push(boundary);
+      const size = 0.82 + (i % 3) * 0.08;
+      rock.scale.set(size * (0.88 + (i % 2) * 0.16), 0.58 + (i % 3) * 0.06, size);
+      rock.rotation.set(0.04 * (i % 3), angle + i * 0.41, 0.08 * ((i % 2) ? 1 : -1));
+      rock.castShadow = true;
+      rock.receiveShadow = true;
+      rock.userData.ownerId = 'crab_boss';
+      rock.userData.homePosition = rock.position.clone();
+      rock.userData.homeRotation = rock.rotation.clone();
+      scene.add(rock);
+      this.levelColliders.push(rock);
+      arenaRocks.push(rock);
     }
+    this.bossArenaRocks = arenaRocks;
 
     // The four-key exit remains the same door; its destination is now hidden
     // behind a traversable volcanic route at the eastern edge of the map.
@@ -5078,7 +5132,7 @@ export class LevelToyStory {
     this.chests.push(this.canopyChest);
     // Warm the authored key model while the level is being prepared. Chest
     // interaction only reveals the already-cached model; it never waits on I/O.
-    void preloadKeyModel('key3_platform').catch((error) => {
+    void preloadKeyModel('key6_qi_celestial').catch((error) => {
       console.warn('[CanopyTrial] Qi key preload failed; it will retry asynchronously when revealed.', error);
     });
     this.canopyRewardHint = null;
@@ -5142,7 +5196,7 @@ export class LevelToyStory {
     const distBase = horizontal(route.base);
     if (!this.canopyTrialActivated && distBase < 18) {
       this.setCanopyRouteActive(true);
-      this.subtitleSystem.show('Desafío del Qi Celestial', 'Sube a la primera casa del árbol y cruza las cuatro lianas para alcanzar el cofre final.');
+      this.subtitleSystem.show('Desafío de las lianas', 'Sube a la primera casa del árbol y cruza las cuatro lianas para alcanzar el cofre final.');
     }
     if (this.canopyPlatformsMaterial && this.canopyTrialActivated && this.canopyActivationProgress < 1) {
       this.canopyActivationProgress = Math.min(1, this.canopyActivationProgress + delta * 2.8);
@@ -5225,8 +5279,8 @@ export class LevelToyStory {
       this.canopyChestOpen = this.canopyChest.isUnlocked = true;
       this.canopyChest.unlock(this.audioManager, this.collectibleSystem, () => {
         const rewardPosition = this.canopyChest!.mesh.position.clone();
-        if (!this.collectedKeys.key3_platform) {
-          this.spawn3DKey('key3_platform', rewardPosition.add(new THREE.Vector3(0, 1.15, 0)), true);
+        if (!this.collectedKeys.key6_qi_celestial) {
+          this.spawn3DKey('key6_qi_celestial', rewardPosition.add(new THREE.Vector3(0, 1.15, 0)), true);
         }
         this.completeCanopyTrial();
       });
@@ -5237,7 +5291,7 @@ export class LevelToyStory {
   private tryStartIntroKeyCelebration(): void {
     const game = (window as any).gameInstance;
     if (this.introKeyCelebrationInProgress || this.stateFlags.introKeysCelebrated ||
-        !this.collectedKeys.key3_platform || this.totalKeysCount < 6 ||
+        !this.collectedKeys.key6_qi_celestial || this.totalKeysCount < 6 ||
         this.isCinematicPlaying || game?.cinematicCamera?.isActive() || game?.menuState !== 'Playing' || game?.isPaused) return;
     const camera = game?.cinematicCamera as { moveCamera: (...args: any[]) => Promise<void>; abort: () => void } | undefined;
     const hud = game?.hud;
@@ -5400,6 +5454,13 @@ export class LevelToyStory {
     addStonePath('north_ridge_stone_path', [new THREE.Vector3(-55, 0, -75), new THREE.Vector3(0, 0, -75), new THREE.Vector3(55, 0, -75)], 3.6);
   }
 
+  /** Restore Nature's original outdoor pickup, separate from the canopy Qi chest. */
+  private setupProgressionKeys(): void {
+    const x = 15;
+    const z = -47;
+    this.spawn3DKey('key3_platform', new THREE.Vector3(x, this.getTerrainHeight(x, z) + 0.8, z));
+  }
+
   private setupInteractiveProps(): void {
     const scene = this.sceneManager.scene;
 
@@ -5511,10 +5572,6 @@ export class LevelToyStory {
         originalActivate.call(gargoyle, audio, colliders);
         this.litGargoylesCount++;
         this.subtitleSystem.show('Sistema', `Gárgola iluminada (${this.litGargoylesCount}/4)`);
-        
-        if (this.litGargoylesCount >= 4) {
-          this.awardKey('key6_gargoyles', new THREE.Vector3(0, 0.5, -35)); // Spawns inside castle entrance
-        }
       };
     });
   }
@@ -6436,6 +6493,7 @@ export class LevelToyStory {
     // Boss Giant Crab in the Sand Arena (firmly grounded at y = 0.2)
     const bossY = 0.2;
     this.bossEnemy = new EnemyController('crab_boss', new THREE.Vector3(45, bossY, -40));
+    this.bossEnemy.setBossArenaRocks(this.bossArenaRocks);
     this.enemies.push(patrol1, patrol2, patrol3, patrol4, patrol5, lavaGuard1, lavaGuard2, ...this.cryptGuardians, this.bossEnemy);
 
     this.enemies.forEach(e => {
@@ -6665,7 +6723,7 @@ export class LevelToyStory {
       }
     }
     this.totalKeysCount = Object.values(this.collectedKeys).filter(Boolean).length;
-    if (this.collectedKeys.key3_platform) {
+    if (this.collectedKeys.key6_qi_celestial) {
       this.canopyChestOpen = true;
       this.canopyChest?.restoreOpen(false);
       this.completeCanopyTrial();
@@ -6686,7 +6744,7 @@ export class LevelToyStory {
 
     // Key milestones (apart from Gekko's 50-coin reward) also feed the staff
     // progression, making all five upgrades reachable through full exploration.
-    if (keyId !== 'key1_gekko' && keyId !== 'key3_platform') {
+    if (keyId !== 'key1_gekko' && keyId !== 'key3_platform' && keyId !== 'key6_qi_celestial') {
       this.powerOrbSystem?.spawn(this.player.mesh.position.clone(), 250);
     }
 
@@ -6703,9 +6761,9 @@ export class LevelToyStory {
     let keyName = '';
     if (keyId === 'key1_gekko') keyName = 'Llave de la Riqueza (Gekko 50 Monedas)';
     if (keyId === 'key2_boss') keyName = 'Llave de la Valentía (Jefe Cangrejo)';
-    if (keyId === 'key3_platform') keyName = getKeyAsset(keyId)?.name ?? 'Llave del Qi Celestial';
+    if (keyId === 'key3_platform') keyName = getKeyAsset(keyId)?.name ?? 'Llave de la Naturaleza';
     if (keyId === 'key4_curiosity') keyName = 'Llave de la Curiosidad';
-    if (keyId === 'key6_gargoyles') keyName = 'Llave del Secreto (Gárgolas)';
+    if (keyId === 'key6_qi_celestial') keyName = getKeyAsset(keyId)?.name ?? 'Llave del Qi Celestial';
     if (keyId === 'key5_pots') keyName = 'Llave de Destrucción (Gemas)';
 
     this.subtitleSystem.show('LISAR', `¡Has obtenido la ${keyName}! (${this.totalKeysCount}/4 Requeridas)`);
@@ -8524,8 +8582,8 @@ export class LevelToyStory {
     };
     window.addEventListener('keydown', skipHandler);
     hud.showTypewriterDialogue(
-      'Cangrejo',
-      '¡Esquiva las marcas del suelo! Cuando se canse, acércate y golpéalo.',
+      'Nezha-X',
+      'Esquiva las marcas y las rocas que lance. Ataca cuando retroceda y quede vulnerable.',
       () => {
         if (!cinematicFinished) autoFinishTimer = window.setTimeout(finishCinematic, 1300);
       },

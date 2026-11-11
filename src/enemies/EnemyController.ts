@@ -70,8 +70,8 @@ export class EnemyController {
 
   // Boss Battle variables
   private bossPatternIndex = 0;
-  private bossPattern: 'CLAW' | 'VOLLEY' | 'CHARGE' | 'SLAM' = 'CLAW';
-  private bossAttackPhase: 'READY' | 'TELEGRAPH' | 'EXECUTE' | 'RECOVERY' = 'READY';
+  private bossPattern: 'CLAW' | 'VOLLEY' | 'CHARGE' | 'SLAM' | 'ROCK_THROW' = 'CLAW';
+  private bossAttackPhase: 'READY' | 'SEEK_ROCK' | 'TELEGRAPH' | 'EXECUTE' | 'RECOVERY' = 'READY';
   private bossPhaseTimer = 0;
   private bossAttackCooldown = 0;
   private bossAttackHitApplied = false;
@@ -79,6 +79,17 @@ export class EnemyController {
   private bossDefenseCueShown = false;
   private readonly bossAttackDirection = new THREE.Vector3();
   private readonly bossImpactPoint = new THREE.Vector3();
+  private bossArenaRocks: THREE.Mesh[] = [];
+  private bossRockTarget: THREE.Mesh | null = null;
+  private readonly bossRockHome = new THREE.Vector3();
+  private readonly bossRockVelocity = new THREE.Vector3();
+  private bossRockInFlight = false;
+  private bossRockFlightLife = 0;
+  private readonly bossRockStart = new THREE.Vector3();
+  private readonly bossRockEnd = new THREE.Vector3();
+  private readonly bossRockSegment = new THREE.Vector3();
+  private readonly bossRockToPlayer = new THREE.Vector3();
+  private readonly bossRockClosest = new THREE.Vector3();
   private bossTelegraphRoot: THREE.Group | null = null;
   private bossWarningFill: THREE.Mesh | null = null;
   private bossWarningRing: THREE.Mesh | null = null;
@@ -262,6 +273,12 @@ export class EnemyController {
     }
     this.bossTelegraphRoot.add(this.bossProjectileGroup);
     scene.add(this.bossTelegraphRoot);
+  }
+
+  /** The arena's actual rubble meshes are reused by the boss rock-throw move. */
+  public setBossArenaRocks(rocks: THREE.Mesh[]): void {
+    if (this.id !== 'crab_boss') return;
+    this.bossArenaRocks = rocks;
   }
 
   public static async preloadMasterTemplate(): Promise<void> {
@@ -866,6 +883,7 @@ export class EnemyController {
       this.bossVolleyShotTimer = 0;
       this.bossVolleyFinishTimer = 0;
       this.clearBossProjectiles();
+      this.restoreBossRock();
       this.bossEyeWindup = 0;
       if (this.bossEyeGlow) (this.bossEyeGlow.material as THREE.MeshBasicMaterial).opacity = 0;
       if (this.bossEyeLight) this.bossEyeLight.intensity = 0;
@@ -1185,7 +1203,10 @@ export class EnemyController {
 
     this.proceduralTime += delta * 6;
     this.updateBossEyeEmission(delta);
-    if (this.id === 'crab_boss') this.updateBossProjectiles(delta, playerPos);
+    if (this.id === 'crab_boss') {
+      this.updateBossProjectiles(delta, playerPos);
+      this.updateBossThrownRock(delta, playerPos);
+    }
 
     // ── Standard enemy DYING sequence ──
     if (this.state === 'DYING') {
@@ -1494,6 +1515,7 @@ export class EnemyController {
     this.bossAttackCooldown = 0;
     this.bossAttackHitApplied = false;
     this.clearBossProjectiles();
+    this.restoreBossRock();
     this.bossVolleyShotsRemaining = 0;
     this.bossVolleyShotTimer = 0;
     this.bossVolleyFinishTimer = 0;
@@ -1505,8 +1527,31 @@ export class EnemyController {
   }
 
   private beginBossAttack(playerPos: THREE.Vector3): void {
-    this.bossPattern = (['CLAW', 'VOLLEY', 'CHARGE', 'SLAM'] as const)[this.bossPatternIndex % 4];
+    this.bossPattern = (['ROCK_THROW', 'CLAW', 'VOLLEY', 'CHARGE', 'SLAM'] as const)[this.bossPatternIndex % 5];
     this.bossPatternIndex++;
+    if (this.bossPattern === 'ROCK_THROW') {
+      let nearest: THREE.Mesh | null = null;
+      let nearestDistanceSq = Infinity;
+      for (const rock of this.bossArenaRocks) {
+        if (!rock.visible || rock.userData.ownerId !== this.id || rock === this.bossRockTarget) continue;
+        const distanceSq = rock.position.distanceToSquared(this.mesh.position);
+        if (distanceSq < nearestDistanceSq) { nearest = rock; nearestDistanceSq = distanceSq; }
+      }
+      if (nearest) {
+        this.bossRockTarget = nearest;
+        const home = nearest.userData.homePosition;
+        this.bossRockHome.copy(home instanceof THREE.Vector3 ? home : nearest.position);
+        this.bossAttackPhase = 'SEEK_ROCK';
+        this.state = 'ATTACK';
+        this.bossPhaseTimer = 3.8;
+        this.bossAttackHitApplied = false;
+        this.hideBossTelegraph();
+        this.debugBossEvent('ROCK_SEEK_STARTED', { rock: nearest.name });
+        return;
+      }
+      // A depleted prop pool never stalls combat; use a standard move.
+      this.bossPattern = 'CLAW';
+    }
     this.debugBossEvent('ATTACK_TELEGRAPH', { pattern: this.bossPattern, index: this.bossPatternIndex });
     this.bossAttackPhase = 'TELEGRAPH';
     // The attack updater only runs in ATTACK. Without this transition the boss
@@ -1533,9 +1578,40 @@ export class EnemyController {
       return;
     }
 
+    if (this.bossAttackPhase === 'SEEK_ROCK') {
+      const rock = this.bossRockTarget;
+      if (!rock?.visible) { this.bossAttackPhase = 'READY'; this.state = 'CHASE'; return; }
+      this.bossPhaseTimer -= delta;
+      const toRock = EnemyController.TEMP_DIR.subVectors(rock.position, this.mesh.position);
+      toRock.y = 0;
+      const distance = toRock.length();
+      if (distance > 1e-5) {
+        toRock.multiplyScalar(1 / distance);
+        this.mesh.rotation.y = Math.atan2(toRock.x, toRock.z);
+        this.mesh.position.addScaledVector(toRock, Math.min(Math.max(0, distance - 2.15), 5.2 * delta));
+      }
+      if (distance <= 2.35) {
+        this.bossPattern = 'ROCK_THROW';
+        this.bossAttackPhase = 'TELEGRAPH';
+        this.bossPhaseTimer = 0.78;
+        this.bossAttackDirection.subVectors(playerPos, this.mesh.position);
+        this.bossAttackDirection.y = 0;
+        this.safeNormalize(this.bossAttackDirection);
+        this.bossImpactPoint.copy(playerPos);
+        this.showBossTelegraph();
+        this.debugBossEvent('ROCK_GRAB_TELEGRAPH', { rock: rock.name });
+      } else if (this.bossPhaseTimer <= 0) {
+        this.restoreBossRock();
+        this.bossAttackPhase = 'READY';
+        this.state = 'CHASE';
+      }
+      return;
+    }
+
     this.bossPhaseTimer -= delta;
     if (this.bossAttackPhase === 'TELEGRAPH') {
       if (this.bossPattern === 'CLAW') this.raiseBossClaws(0.85);
+      if (this.bossPattern === 'ROCK_THROW') this.updateBossRockHeld(delta);
       if (this.bossPhaseTimer <= 0) {
         this.bossAttackPhase = 'EXECUTE';
         if (this.bossPattern === 'VOLLEY') {
@@ -1543,7 +1619,7 @@ export class EnemyController {
           this.bossVolleyShotTimer = 0;
           this.bossVolleyFinishTimer = -1;
         }
-        this.bossPhaseTimer = this.bossPattern === 'CHARGE' ? 0.58 : this.bossPattern === 'VOLLEY' ? 0 : 0.36;
+        this.bossPhaseTimer = this.bossPattern === 'CHARGE' ? 0.58 : this.bossPattern === 'VOLLEY' ? 0 : this.bossPattern === 'ROCK_THROW' ? 0.48 : 0.36;
         this.hideBossTelegraph();
       }
       return;
@@ -1558,11 +1634,14 @@ export class EnemyController {
         this.checkBossAttackHit(playerPos, 3.7, true);
       } else if (this.bossPattern === 'VOLLEY') {
         this.updateBossVolley(delta, playerPos);
+      } else if (this.bossPattern === 'ROCK_THROW') {
+        this.updateBossRockHeld(delta);
       } else if (this.mesh.position.distanceTo(playerPos) <= 3.6 && this.bossImpactPoint.distanceTo(playerPos) <= 3.6) {
         this.applyBossAttackHit();
       }
 
       if (this.bossPattern !== 'VOLLEY' && this.bossPhaseTimer <= 0) {
+        if (this.bossPattern === 'ROCK_THROW') this.launchBossRock(playerPos);
         this.bossAttackPhase = 'RECOVERY';
         this.bossPhaseTimer = 2.55;
         this.state = 'STUNNED';
@@ -1649,6 +1728,75 @@ export class EnemyController {
     }
   }
 
+  private updateBossRockHeld(delta: number): void {
+    const rock = this.bossRockTarget;
+    if (!rock || this.bossRockInFlight) return;
+    // Keep the lifted boulder at the claw line in world space while the
+    // existing hard-surface arm pivots perform the grab and wind-up.
+    const hand = this.bossRockStart.copy(this.mesh.position)
+      .addScaledVector(this.bossAttackDirection, 1.25);
+    hand.y += 1.65;
+    rock.position.lerp(hand, 1 - Math.exp(-7.5 * delta));
+    rock.rotation.x += delta * 1.4;
+    rock.rotation.z += delta * 0.8;
+  }
+
+  private launchBossRock(playerPos: THREE.Vector3): void {
+    const rock = this.bossRockTarget;
+    if (!rock || this.bossRockInFlight) return;
+    rock.position.y += 0.12;
+    this.bossRockVelocity.subVectors(playerPos, rock.position);
+    this.bossRockVelocity.y += 2.2;
+    this.safeNormalize(this.bossRockVelocity);
+    this.bossRockVelocity.multiplyScalar(12.5);
+    this.bossRockFlightLife = 2.2;
+    this.bossRockInFlight = true;
+    this.bossAttackHitApplied = false;
+    this.debugBossEvent('ARENA_ROCK_THROWN', { rock: rock.name });
+  }
+
+  private updateBossThrownRock(delta: number, playerPos: THREE.Vector3): void {
+    const rock = this.bossRockTarget;
+    if (!rock || !this.bossRockInFlight) return;
+    this.bossRockStart.copy(rock.position);
+    this.bossRockVelocity.y -= 8.5 * delta;
+    this.bossRockEnd.copy(this.bossRockStart).addScaledVector(this.bossRockVelocity, delta);
+    this.bossRockSegment.subVectors(this.bossRockEnd, this.bossRockStart);
+    this.bossRockToPlayer.subVectors(playerPos, this.bossRockStart);
+    const lengthSq = this.bossRockSegment.lengthSq();
+    const t = lengthSq > 1e-8
+      ? THREE.MathUtils.clamp(this.bossRockToPlayer.dot(this.bossRockSegment) / lengthSq, 0, 1)
+      : 0;
+    this.bossRockClosest.copy(this.bossRockStart).addScaledVector(this.bossRockSegment, t);
+    const hit = !this.bossAttackHitApplied && this.bossRockClosest.distanceToSquared(playerPos) < 1.0;
+    rock.position.copy(this.bossRockEnd);
+    rock.rotation.x += delta * 6.0;
+    rock.rotation.z += delta * 4.3;
+    this.bossRockFlightLife -= delta;
+    if (hit) {
+      this.bossAttackHitApplied = true;
+      this.onAttackPlayer?.(10);
+      this.debugBossEvent('ARENA_ROCK_HIT', { damage: 10 });
+    }
+    if (hit || this.bossRockFlightLife <= 0 || rock.position.y <= this.bossRockHome.y) {
+      this.restoreBossRock();
+    }
+  }
+
+  private restoreBossRock(): void {
+    const rock = this.bossRockTarget;
+    if (rock) {
+      rock.position.copy(this.bossRockHome);
+      const homeRotation = rock.userData.homeRotation;
+      if (homeRotation instanceof THREE.Euler) rock.rotation.copy(homeRotation);
+      rock.visible = true;
+    }
+    this.bossRockTarget = null;
+    this.bossRockInFlight = false;
+    this.bossRockFlightLife = 0;
+    this.bossRockVelocity.set(0, 0, 0);
+  }
+
   private clearBossProjectiles(): void {
     for (const projectile of this.bossProjectiles) {
       if (projectile.ownerId !== this.id) continue;
@@ -1680,7 +1828,7 @@ export class EnemyController {
       this.bossChargeLane.rotation.y = Math.atan2(this.bossAttackDirection.x, this.bossAttackDirection.z);
       return;
     }
-    const center = this.bossPattern === 'SLAM' || this.bossPattern === 'VOLLEY'
+    const center = this.bossPattern === 'SLAM' || this.bossPattern === 'VOLLEY' || this.bossPattern === 'ROCK_THROW'
       ? this.bossImpactPoint
       : this.mesh.position.clone().addScaledVector(this.bossAttackDirection, 2.2);
     this.bossWarningFill.position.set(center.x, 0.28, center.z);
@@ -1781,7 +1929,9 @@ export class EnemyController {
         let targetX = arm.restX + gait * (pursuing ? 0.24 : 0.035);
         let targetZ = arm.restZ + Math.sin(this.proceduralTime * 0.7 + arm.phase) * (pursuing ? 0.045 : 0.012);
         if (phase === 'ALERT') { targetX = arm.restX - 0.28; targetZ = arm.restZ + side * 0.12; }
+        else if (phase === 'ATTACK_PREP' && this.bossPattern === 'ROCK_THROW') { targetX = arm.restX - 0.9; targetZ = arm.restZ - side * 0.22; }
         else if (phase === 'ATTACK_PREP') { targetX = arm.restX - 0.82; targetZ = arm.restZ + side * 0.2; }
+        else if (phase === 'ATTACK' && this.bossPattern === 'ROCK_THROW') { targetX = arm.restX + 1.15; targetZ = arm.restZ + side * 0.24; }
         else if (phase === 'ATTACK') { targetX = arm.restX + (side < 0 ? 0.95 : -0.65); targetZ = arm.restZ - side * 0.16; }
         else if (phase === 'RECOVERY') { targetX = arm.restX + 0.2; targetZ = arm.restZ + side * 0.08; }
         else if (phase === 'HIT_REACTION') { targetX = arm.restX + side * 0.72; targetZ = arm.restZ + side * 0.3; }

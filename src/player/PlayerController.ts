@@ -9,6 +9,12 @@ import { type WeaponType, WEAPON_DEFINITIONS } from './WeaponConfig';
 
 export const PLAYER_NAME = 'LISAR';
 
+const BASE_WALK_SPEED = 5.2;
+const BASE_SPRINT_SPEED = 9.5;
+const LOCOMOTION_SPEED_SCALE = 1.25;
+const HORIZONTAL_ACCELERATION = 46;
+const HORIZONTAL_BRAKING = 58;
+
 export class PlayerController {
   /** Pickups may extend the current stock; keep the cap centralized for balance tuning. */
   public static readonly MAX_LIVES = 99;
@@ -19,8 +25,8 @@ export class PlayerController {
 
   public velocity = new THREE.Vector3();
   public isGrounded = true;
-  public moveSpeed = 5.2;
-  public runSpeed = 9.5;
+  public moveSpeed = BASE_WALK_SPEED * LOCOMOTION_SPEED_SCALE;
+  public runSpeed = BASE_SPRINT_SPEED * LOCOMOTION_SPEED_SCALE;
   public jumpForce = 8.0;
   public gravity = -20.0;
   /** Tracks the top of the current airborne arc so short jumps don't use the
@@ -73,6 +79,26 @@ export class PlayerController {
   public onHealthChange?: (hp: number, maxHp: number) => void;
   public onManaChange?: (mp: number, maxMp: number) => void;
   public onStaminaChange?: (value: number, maxValue: number, visible: boolean) => void;
+
+  /** Actual horizontal sprint speed, normalized for the gameplay camera effect. */
+  public getSprintCameraIntensity(): number {
+    if (!this.sprintingThisFrame || !this.isGrounded) return 0;
+    return THREE.MathUtils.clamp(Math.hypot(this.velocity.x, this.velocity.z) / this.runSpeed, 0, 1);
+  }
+
+  private approachHorizontalVelocity(targetX: number, targetZ: number, maxChange: number): void {
+    const diffX = targetX - this.velocity.x;
+    const diffZ = targetZ - this.velocity.z;
+    const distance = Math.hypot(diffX, diffZ);
+    if (distance <= maxChange || distance < 1e-5) {
+      this.velocity.x = targetX;
+      this.velocity.z = targetZ;
+      return;
+    }
+    const blend = maxChange / distance;
+    this.velocity.x += diffX * blend;
+    this.velocity.z += diffZ * blend;
+  }
 
   // ── EXTENSIBLE WEAPON INVENTORY SYSTEM ──────────────────────────────────
   public ownedWeapons: Set<WeaponType> = new Set();
@@ -681,6 +707,7 @@ export class PlayerController {
   public update(delta: number, input: InputManager, cameraController: CameraController, animationDelta = delta): void {
     this.updateSnakeAlert(delta);
     if (this.isDying) {
+      cameraController.setSprintIntensity(0, false);
       this.isControlsLocked = true;
       this.isMovementLocked = true;
       this.velocity.set(0, 0, 0);
@@ -755,6 +782,7 @@ export class PlayerController {
     }
 
     if (this.isControlsLocked) {
+      cameraController.setSprintIntensity(0, false);
       this.animationController.update(animationDelta);
       return;
     }
@@ -944,8 +972,8 @@ export class PlayerController {
     if (isMoving) this.interruptHitReactionForCommand(input);
 
     if (isMoving) {
-      this.velocity.x = moveDir.x * currentSpeed;
-      this.velocity.z = moveDir.z * currentSpeed;
+      const accel = HORIZONTAL_ACCELERATION * delta;
+      this.approachHorizontalVelocity(moveDir.x * currentSpeed, moveDir.z * currentSpeed, accel);
 
       // Smooth Rotation to facing direction
       const targetRotation = Math.atan2(moveDir.x, moveDir.z);
@@ -955,14 +983,13 @@ export class PlayerController {
       while (diff > Math.PI) diff -= Math.PI * 2;
       this.mesh.rotation.y += diff * Math.min(1.0, delta * 15.0);
     } else {
-      if (this.isGrounded) {
-        this.velocity.x = 0;
-        this.velocity.z = 0;
-      } else {
+      if (this.isGrounded) this.approachHorizontalVelocity(0, 0, HORIZONTAL_BRAKING * delta);
+      else {
         this.velocity.x *= 0.85;
         this.velocity.z *= 0.85;
       }
     }
+    cameraController.setSprintIntensity(this.getSprintCameraIntensity(), true);
 
     // 4. Wall Collision — Raycast in movement direction before applying position
     const horizontalVel = new THREE.Vector3(this.velocity.x, 0, this.velocity.z);
@@ -1242,7 +1269,7 @@ export class PlayerController {
     const canStep = isMoving && this.isGrounded && !this.isAttacking && !this.isMovementLocked;
     if (canStep) {
       this.footstepClock += Math.min(delta, 0.1);
-      const stepPeriod = isSprinting ? 0.34 : 0.49;
+      const stepPeriod = isSprinting ? 0.272 : 0.392;
       if (this.footstepClock >= stepPeriod) {
         this.footstepClock %= stepPeriod;
         const audioManager = (window as any).gameInstance?.audioManager;

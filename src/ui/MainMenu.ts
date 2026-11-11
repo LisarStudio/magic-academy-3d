@@ -862,8 +862,6 @@ export class MainMenu {
     const canStart = this.startVideoReady;
     this.continueButton.disabled = !canContinue || !canStart;
     this.newGameButton.disabled = !canStart;
-    this.continueButton.classList.toggle('menu-button-primary', canContinue);
-    this.newGameButton.classList.toggle('menu-button-primary', !canContinue);
     const loadingStatus = document.getElementById('menu-loading-status');
     if (loadingStatus) {
       loadingStatus.textContent = !this.startVideoReady ? 'Preparando la transición…' : '';

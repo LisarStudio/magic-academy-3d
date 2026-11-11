@@ -43,6 +43,15 @@ export class AnimationController {
   private characterGroup: THREE.Group | null = null;
   private proceduralTime = 0;
   private isProcedural = false;
+  private fallbackArmBones: Array<{
+    bone: THREE.Bone;
+    child: THREE.Bone;
+    bindRotation: THREE.Quaternion;
+    childDirection: THREE.Vector3;
+    side: -1 | 1;
+  }> = [];
+  private fallbackPoseApplied = false;
+  private fallbackPoseWarningLogged = false;
 
   // Armed/Unarmed state
   public isArmed = false;
@@ -60,6 +69,8 @@ export class AnimationController {
   } | null = null;
 
   constructor(modelOrGroup: THREE.Object3D, clips: THREE.AnimationClip[] = []) {
+    this.characterRoot = modelOrGroup;
+    this.captureFallbackIdleBones(modelOrGroup);
     if (clips && clips.length > 0) {
       this.initAnimations(modelOrGroup, clips);
     } else {
@@ -67,10 +78,80 @@ export class AnimationController {
       if (modelOrGroup instanceof THREE.Group) {
         this.characterGroup = modelOrGroup;
       }
+      this.applyFallbackIdlePose();
     }
   }
 
   private characterRoot: THREE.Object3D | null = null;
+
+  /** Capture the imported bind rotations so a missing/broken idle clip can
+   * never expose the GLB's authored T-pose during startup or after a reset. */
+  private captureFallbackIdleBones(root: THREE.Object3D): void {
+    root.updateMatrixWorld(true);
+    root.traverse((child) => {
+      const bone = child as THREE.Bone;
+      if (!bone.isBone) return;
+      const nextBone = bone.children.find((candidate) => (candidate as THREE.Bone).isBone) as THREE.Bone | undefined;
+      if (!nextBone) return;
+      const normalized = bone.name.toLowerCase().replace(/[^a-z]/g, '');
+      if (normalized.endsWith('leftarm')) {
+        this.fallbackArmBones.push({ bone, child: nextBone, bindRotation: bone.quaternion.clone(), childDirection: nextBone.position.clone().normalize(), side: -1 });
+      } else if (normalized.endsWith('rightarm')) {
+        this.fallbackArmBones.push({ bone, child: nextBone, bindRotation: bone.quaternion.clone(), childDirection: nextBone.position.clone().normalize(), side: 1 });
+      }
+    });
+  }
+
+  private applyFallbackIdlePose(): void {
+    if (this.fallbackPoseApplied || this.fallbackArmBones.length === 0) return;
+    // Derive the rotation from the rig's actual bone/child direction instead
+    // of assuming an axis. This GLB's arm segments use local Y, so a guessed
+    // local Z rotation can leave the arms nearly horizontal (or raise them).
+    const worldDown = new THREE.Vector3(0, -1, 0);
+    const parentWorldRotation = new THREE.Quaternion();
+    const bindSegmentDirection = new THREE.Vector3();
+    const outward = new THREE.Vector3();
+    const desiredWorldDirection = new THREE.Vector3();
+    const desiredParentDirection = new THREE.Vector3();
+    const deltaInParentSpace = new THREE.Quaternion();
+    for (const { bone, bindRotation, childDirection, side } of this.fallbackArmBones) {
+      if (!bone.parent) continue;
+      bone.parent.getWorldQuaternion(parentWorldRotation);
+      bindSegmentDirection.copy(childDirection).applyQuaternion(bindRotation).normalize();
+      outward.copy(bindSegmentDirection).applyQuaternion(parentWorldRotation).setY(0).normalize();
+      if (outward.lengthSq() < 0.001) outward.set(side, 0, 0).applyQuaternion(parentWorldRotation).setY(0).normalize();
+      desiredWorldDirection.copy(worldDown).addScaledVector(outward, 0.34).normalize();
+      desiredParentDirection.copy(desiredWorldDirection).applyQuaternion(parentWorldRotation.clone().invert()).normalize();
+      deltaInParentSpace.setFromUnitVectors(bindSegmentDirection, desiredParentDirection);
+      bone.quaternion.copy(bindRotation).premultiply(deltaInParentSpace);
+    }
+    this.fallbackPoseApplied = true;
+    if (!this.fallbackPoseWarningLogged) {
+      this.fallbackPoseWarningLogged = true;
+      console.warn('[AnimCtrl] Applied relaxed rig-pose fallback to prevent a bind/T-pose during idle.');
+    }
+  }
+
+  private restoreFallbackBindPose(): void {
+    if (!this.fallbackPoseApplied) return;
+    for (const { bone, bindRotation } of this.fallbackArmBones) bone.quaternion.copy(bindRotation);
+    this.fallbackPoseApplied = false;
+  }
+
+  private hasTPoseArms(): boolean {
+    if (this.fallbackArmBones.length < 2) return false;
+    const start = new THREE.Vector3();
+    const end = new THREE.Vector3();
+    let horizontalArms = 0;
+    for (const { bone, child } of this.fallbackArmBones) {
+      bone.getWorldPosition(start);
+      child.getWorldPosition(end);
+      end.sub(start);
+      const length = end.length();
+      if (length > 1e-5 && Math.abs(end.y / length) < 0.32) horizontalArms++;
+    }
+    return horizontalArms >= 2;
+  }
 
   private initAnimations(root: THREE.Object3D, clips: THREE.AnimationClip[]): void {
     this.characterRoot = root;
@@ -594,7 +675,9 @@ export class AnimationController {
     }
     this.idleCyclePhase = null;
 
-    const movementTimeScale = newState === 'Sprint' ? 1.22 : 1;
+    // The same authored stride now matches the proportional +25% locomotion
+    // tuning. Sprint keeps its original cadence advantage over normal travel.
+    const movementTimeScale = newState === 'Sprint' ? 1.525 : (newState === 'Run' || newState === 'Walk') ? 1.25 : 1;
 
     // Keep sprint cadence responsive even when movement state stays the same.
     if (this.currentState === newState && this.currentAction && this.currentAction.isRunning()) {
@@ -645,12 +728,18 @@ export class AnimationController {
   }
 
   private playIdleClip(name: string, phase: 'base' | 'variation', fadeDuration: number): void {
-    const next = this.allActions.get(name);
+    // Some delivered animation packs contain only one usable idle variant.
+    // The character must never stay in the imported bind/T-pose when the
+    // matching armed/unarmed clip is absent.
+    const alternateIdle = name === 'Idle_Unarmed' ? 'Idle_Armed' : 'Idle_Unarmed';
+    const next = this.allActions.get(name) ?? this.allActions.get(alternateIdle);
     if (!next || !this.mixer) {
       this.idleCyclePhase = null;
       this.currentState = 'Idle';
+      this.applyFallbackIdlePose();
       return;
     }
+    this.restoreFallbackBindPose();
     if (this.currentAction && this.currentAction !== next) this.currentAction.crossFadeTo(next, fadeDuration, false);
     if (phase === 'base') {
       this.idleCyclesUntilDecision = 2 + Math.floor(Math.random() * 3);
@@ -669,6 +758,10 @@ export class AnimationController {
 
   public update(delta: number): void {
     if (this.mixer) {
+      // If the selected idle clip binds but still leaves its arms in the GLB
+      // bind pose, restore that baseline before evaluation and re-pose them
+      // after the mixer. This catches valid-looking but visually unusable clips.
+      if (this.fallbackPoseApplied) this.restoreFallbackBindPose();
       // Remove the previous additive gaze before the mixer applies this frame's pose.
       if (this.headBone) this.headBone.quaternion.multiply(this.appliedHeadGaze.clone().invert());
       if (this.neckBone) this.neckBone.quaternion.multiply(this.appliedNeckGaze.clone().invert());
@@ -676,6 +769,10 @@ export class AnimationController {
       this.appliedNeckGaze.identity();
       this.mixer.update(delta);
       this.updateHeadGaze(delta);
+      if (this.currentState === 'Idle' && !this.isPlayingOneShot &&
+          (!this.currentAction || this.currentAction.getClip().name.startsWith('Idle_')) && this.hasTPoseArms()) {
+        this.applyFallbackIdlePose();
+      }
       if (this.oneShotAction && !this.oneShotMarkerFired && this.oneShotMarkerTime >= 0 && this.oneShotAction.time >= this.oneShotMarkerTime) {
         this.oneShotMarkerFired = true;
         this.oneShotOnMarker?.();

@@ -7,7 +7,7 @@ export type ProgressKeyId =
   | 'key3_platform'
   | 'key4_curiosity'
   | 'key5_pots'
-  | 'key6_gargoyles';
+  | 'key6_qi_celestial';
 
 export interface KeyAssetDefinition {
   name: string;
@@ -40,12 +40,12 @@ export const KEY_ASSETS: Partial<Record<ProgressKeyId, KeyAssetDefinition>> = {
     magicColor: 0x62dfff,
   },
   key3_platform: {
-    // Preserve the existing third-key ID and HUD slot for the Qi key.
-    name: 'Llave del Qi Celestial',
+    // Preserve the original fixed world pickup and its dedicated HUD art.
+    name: 'Llave de la Naturaleza',
     slotIndex: 4,
-    modelUrl: `${root}/models/llave_qi_celestial.glb`,
-    iconUrl: `${root}/icons/llave_qi_celestial.png`,
-    magicColor: 0x62dfff,
+    modelUrl: `${root}/models/llave_de_la_naturaleza.glb`,
+    iconUrl: `${root}/icons/llave_naturaleza.png`,
+    magicColor: 0x79e6a3,
   },
   key4_curiosity: {
     name: 'Llave de la Curiosidad',
@@ -54,12 +54,12 @@ export const KEY_ASSETS: Partial<Record<ProgressKeyId, KeyAssetDefinition>> = {
     iconUrl: `${root}/icons/llave_misterio_hud.png`,
     magicColor: 0xc49aff,
   },
-  key6_gargoyles: {
-    name: 'Llave del Secreto',
+  key6_qi_celestial: {
+    name: 'Llave del Qi Celestial',
     slotIndex: 3,
-    modelUrl: `${root}/models/llave_de_la_fortaleaza.glb`,
-    iconUrl: `${root}/icons/llave_fortaleza_hud.png`,
-    magicColor: 0xffbd70,
+    modelUrl: `${root}/models/llave_qi_celestial.glb`,
+    iconUrl: `${root}/icons/llave_qi_celestial.png`,
+    magicColor: 0xffc54e,
   },
   key5_pots: {
     name: 'Llave de Destrucción (Gemas)',

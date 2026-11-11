@@ -34,6 +34,30 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 /* ── Game Canvas ───────────────────────────────────────────── */
 #game-canvas { width: 100%; height: 100%; display: block; }
 
+/* Lightweight sprint cue: clear center, faint peripheral streaks, HUD untouched. */
+#sprint-speed-effect {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0;
+  will-change: opacity;
+  background:
+    radial-gradient(ellipse at center, transparent 47%, rgba(100, 157, 222, .12) 79%, rgba(8, 20, 43, .24) 100%),
+    repeating-conic-gradient(from 0deg at 50% 50%, transparent 0deg 7.7deg, rgba(174, 211, 255, .13) 7.9deg 8.02deg, transparent 8.2deg 15deg);
+  -webkit-mask-image: radial-gradient(ellipse at center, transparent 38%, #000 100%);
+  mask-image: radial-gradient(ellipse at center, transparent 38%, #000 100%);
+  contain: strict;
+}
+
+@media (pointer: coarse) {
+  #sprint-speed-effect {
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(100, 157, 222, .1) 82%, rgba(8, 20, 43, .19) 100%);
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+
 /* ── UI Overlay ────────────────────────────────────────────── */
 #ui-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
 
@@ -1061,7 +1085,7 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
   transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
   touch-action: manipulation;
 }
-.menu-button:hover, .menu-button:focus-visible, .menu-button-primary {
+.menu-button:hover, .menu-button:focus-visible {
   border-color: #fff2a7;
   color: #fff8da;
   background: linear-gradient(180deg, #ffdc52, #f49a13);
@@ -1072,7 +1096,6 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 .menu-button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 .menu-button:disabled { opacity: .6; cursor: default; filter: saturate(.45); transform: none; }
 .menu-icon { flex: 0 0 46px; color: #ffd957; font-size: 1.25em; text-align: center; -webkit-text-stroke: 1px #74301b; filter: drop-shadow(0 2px 0 #572012); }
-.menu-button-primary .menu-icon { color: #fff0a0; }
 .menu-footer { position: absolute; left: clamp(24px, 3.5vw, 60px); bottom: 3.3%; display: grid; color: #fff1d5; text-shadow: 0 2px 3px #000; }
 .studio-name { color: #ffda6c; font: 900 clamp(16px, 1.7vw, 24px) "Trebuchet MS", sans-serif; letter-spacing: 1px; }
 .menu-footer #project-version { padding-left: 23px; font-size: 14px; }

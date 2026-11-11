@@ -125,6 +125,10 @@ export class AssetManager {
           }
           return true;
         });
+        if (retargeted.tracks.length === 0) {
+          console.warn(`[AssetManager] Retargeted '${clipName}' from ${url} has no compatible bone tracks.`);
+          return null;
+        }
 
         for (const track of retargeted.tracks) {
           // SkeletonUtils generates tracks named ".bones[mixamorig:Hips].quaternion"
@@ -133,6 +137,33 @@ export class AssetManager {
           if (match) {
             track.name = `${match[1]}.${match[2]}`;
           }
+        }
+
+        // RetargetClip may return non-empty tracks whose bone paths do not
+        // exist on this GLB. Such a clip appears "loaded" but drives no pose,
+        // leaving the character in its bind/T-pose. Keep only tracks that can
+        // bind to a real target bone and reject a clip with no valid bindings.
+        const targetBoneNames = new Set(targetBones.map((bone) => bone.name));
+        retargeted.tracks = retargeted.tracks.filter((track) => {
+          const separator = track.name.lastIndexOf('.');
+          const nodeName = separator >= 0 ? track.name.slice(0, separator) : '';
+          return targetBoneNames.has(nodeName);
+        });
+        if (clipName.startsWith('Idle_')) {
+          const animatedNames = retargeted.tracks.map((track) => {
+            const separator = track.name.lastIndexOf('.');
+            return (separator >= 0 ? track.name.slice(0, separator) : '').toLowerCase().replace(/[^a-z]/g, '');
+          });
+          const hasLeftArmPose = animatedNames.some((name) => name.endsWith('leftarm') || name.endsWith('leftforearm'));
+          const hasRightArmPose = animatedNames.some((name) => name.endsWith('rightarm') || name.endsWith('rightforearm'));
+          if (!hasLeftArmPose || !hasRightArmPose) {
+            console.warn(`[AssetManager] Rejected '${clipName}' from ${url}: it does not animate both arms, so it would leave Wukong in a T-pose.`);
+            return null;
+          }
+        }
+        if (retargeted.tracks.length === 0) {
+          console.warn(`[AssetManager] Retargeted '${clipName}' from ${url} has no tracks bound to the Wukong rig.`);
+          return null;
         }
 
         console.log(
@@ -424,7 +455,11 @@ export class AssetManager {
         // iddle_2.fbx is the calm second idle supplied for the gameplay loop.
         // Keep the first iddle.fbx as its decorative kick variation; the
         // separate wukong_kick.fbx remains exclusively the player attack.
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle_2.fbx?v=20261025-idle2', 'Idle_Unarmed', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle_2.fbx?v=20261025-idle2', 'Idle_Unarmed', playerModel, translationScaleFactor)
+          .then(async (clip) => clip || await this.loadAndRetargetClip(
+            import.meta.env.BASE_URL + 'assets/characters/wukong/iddle.fbx?v=startup-idle-fallback',
+            'Idle_Unarmed', playerModel!, translationScaleFactor
+          )),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Running.fbx', 'Run_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Jumping.fbx', 'Jump_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong_no_wood_double_jumpFront Flip.fbx?v=7', 'Wukong_NoWood_DoubleJump', playerModel, translationScaleFactor),

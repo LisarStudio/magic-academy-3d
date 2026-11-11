@@ -46,10 +46,26 @@ export class CameraController {
   private static readonly TERRAIN_SAMPLE_STEP = 0.24;
   private terrainHeightAt: ((x: number, z: number) => number) | null = null;
   private readonly defaultNearPlane: number;
+  private readonly gameplayFov: number;
+  private sprintIntensity = 0;
+  private requestedSprintIntensity = 0;
+  private readonly sprintEffectElement = document.getElementById('sprint-speed-effect');
 
   constructor(camera: THREE.PerspectiveCamera) {
     this.camera = camera;
     this.defaultNearPlane = camera.near;
+    this.gameplayFov = camera.fov;
+  }
+
+  /** Drives the lightweight peripheral speed treatment from real sprint velocity. */
+  public setSprintIntensity(intensity: number, gameplayCameraActive = true): void {
+    this.requestedSprintIntensity = gameplayCameraActive
+      ? THREE.MathUtils.clamp(Number.isFinite(intensity) ? intensity : 0, 0, 1)
+      : 0;
+    if (!gameplayCameraActive) {
+      this.sprintIntensity = 0;
+      if (this.sprintEffectElement) this.sprintEffectElement.style.opacity = '0';
+    }
   }
 
   public setTarget(target: THREE.Object3D): void {
@@ -57,7 +73,7 @@ export class CameraController {
     if (this.target) {
       this.currentLookAt.copy(this.target.position);
       this.currentLookAt.y += this.heightOffset;
-      this.updatePosition(1.0, null);
+      this.updatePosition(1.0);
     }
   }
 
@@ -248,7 +264,7 @@ export class CameraController {
     }
 
     // ── 3. Position + collision ───────────────────────────────────────────────
-    this.updatePosition(delta, input);
+    this.updatePosition(delta);
   }
 
   // Static preallocated vectors for zero-allocation performance
@@ -263,7 +279,7 @@ export class CameraController {
   private static readonly TEMP_FINAL_OFFSET = new THREE.Vector3();
   private static readonly CAMERA_RAY_OFFSETS = Array.from({ length: 5 }, () => new THREE.Vector3());
 
-  private updatePosition(delta: number, input: InputManager | null): void {
+  private updatePosition(delta: number): void {
     if (!this.target) return;
 
     CameraController.TEMP_FOCUS.copy(this.target.position);
@@ -281,12 +297,23 @@ export class CameraController {
     );
 
     // ── Fast Collision avoidance ────────────────────────────────────────────────
-    let targetDist = this.distance;
+    const normalGameplayCamera = this.overviewRemaining <= 0 && !this.scriptedPan;
+    const targetSprint = normalGameplayCamera ? this.requestedSprintIntensity : 0;
+    this.sprintIntensity = normalGameplayCamera
+      ? THREE.MathUtils.damp(this.sprintIntensity, targetSprint, 9.5, delta)
+      : 0;
+    if (Math.abs(this.sprintIntensity - targetSprint) < 0.004) this.sprintIntensity = targetSprint;
+    if (this.sprintEffectElement) {
+      this.sprintEffectElement.style.opacity = (0.2 * this.sprintIntensity * this.sprintIntensity).toFixed(3);
+    }
+
+    const sprintDistance = this.distance * (1 - 0.06 * (normalGameplayCamera ? this.sprintIntensity : 0));
+    let targetDist = sprintDistance;
     if (this.collisionObjects.length > 0 || this.terrainHeightAt) {
       targetDist = this.getSafeBoomDistance(
         this.currentLookAt,
         CameraController.TEMP_DIR,
-        this.distance,
+        sprintDistance,
         CameraController.TEMP_RIGHT.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)),
       );
     }
@@ -322,14 +349,11 @@ export class CameraController {
     }
 
     // ── Dynamic FOV (Only update matrix when FOV changes) ────────────────────
-    const isRunning = input
-      ? (input.isRunning && (input.moveForward || input.moveBackward || input.moveLeft || input.moveRight))
-      : false;
     const targetFov = this.overviewRemaining > 0
       ? (window.innerWidth < window.innerHeight ? 70 : 64)
-      : isRunning ? 65 : 60;
+      : this.gameplayFov + (normalGameplayCamera ? 5 * this.sprintIntensity : 0);
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
-      this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, targetFov, Math.min(1.0, delta * 6.0));
+      this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 9.5, delta);
       this.camera.updateProjectionMatrix();
     }
 

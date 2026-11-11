@@ -197,7 +197,14 @@ export class Game {
   private async prepareGameplay(): Promise<void> {
     if (this.gameplayPrepared) return;
     // 1. Load Player Model (GLB or Procedural Fallback)
+    const playerLoadStartedAt = performance.now();
     const playerData = await this.assetManager.loadPlayerModel();
+    console.info('[Startup] Wukong ready', {
+      durationMs: +(performance.now() - playerLoadStartedAt).toFixed(1),
+      clips: playerData.clips.length,
+      idleAvailable: playerData.clips.some((clip) => clip.name === 'Idle_Unarmed' || clip.name === 'Idle_Armed'),
+      runAvailable: playerData.clips.some((clip) => clip.name === 'Run_Unarmed' || clip.name === 'Run_Armed'),
+    });
     this.sceneManager.scene.add(playerData.model);
 
     // 2. Setup AnimationController & PlayerController
@@ -292,6 +299,26 @@ export class Game {
 
     // Focus camera on target AFTER the level is initialized and player is spawned at Checkpoint 0!
     this.cameraController.setTarget(this.player.mesh);
+    this.cameraController.snapBehindTarget(true);
+
+    // Prepare the first playable camera view while the loading overlay is
+    // still up. Previously the first interactive render compiled the temple,
+    // ground, sky and character material programs all at once, freezing the
+    // opening frame on slower mobile and integrated GPUs.
+    const firstViewCompileStartedAt = performance.now();
+    try {
+      await this.sceneManager.renderer.compileAsync(
+        this.sceneManager.scene,
+        this.sceneManager.camera,
+        this.sceneManager.scene,
+      );
+      console.info('[Startup] First-view shaders prepared', {
+        durationMs: +(performance.now() - firstViewCompileStartedAt).toFixed(1),
+        programs: this.sceneManager.renderer.info.programs?.length ?? null,
+      });
+    } catch (error) {
+      console.warn('[Startup] First-view shader preparation failed; the game will continue with renderer fallback.', error);
+    }
 
     // The chest pickup mesh is intentionally detached/hidden until the reward
     // cinematic. Compiling only the live scene therefore misses its material
@@ -907,6 +934,12 @@ export class Game {
     }
     this.updateAdaptiveResolution(elapsed);
     this.hud.mobileControls?.setGameplayEnabled(this.menuState === 'Playing' && !this.isPaused);
+    if (this.isPaused || this.menuState !== 'Playing' || document.hidden) {
+      // The render loop starts before gameplay preparation creates the camera.
+      // A direct call here throws on the very first frame, aborting the RAF
+      // chain and leaving the first rendered gameplay image frozen on screen.
+      this.cameraController?.setSprintIntensity(0, false);
+    }
 
     if (!this.isPaused && !document.hidden) {
       this.update(delta, animationDelta, elapsed);
@@ -986,6 +1019,7 @@ export class Game {
     this.inputManager.beginFrame();
     // Update Game Components
     if (this.gameOverActive) {
+      this.cameraController.setSprintIntensity(0, false);
       this.player.update(delta, this.inputManager, this.cameraController, animationDelta);
       this.gameOverElapsed += delta;
       const center = this.player.mesh.position.clone().add(new THREE.Vector3(0, 1, 0));
@@ -994,11 +1028,18 @@ export class Game {
       this.sceneManager.camera.lookAt(center);
       if (this.gameOverSpot) this.gameOverSpot.position.set(center.x, center.y + 8, center.z + 1);
     } else if (this.cinematicCamera.isActive()) {
+      this.cameraController.setSprintIntensity(0, false);
       this.cinematicCamera.update(delta);
       // Still update player animations during cinematics
       this.player.update(delta, this.inputManager, this.cameraController, animationDelta);
     } else {
       this.player.update(delta, this.inputManager, this.cameraController, animationDelta);
+      const specialCameraActive = this.player.isControlsLocked || this.player.isMovementLocked ||
+        this.hud.isDialogueOpen();
+      this.cameraController.setSprintIntensity(
+        this.player.getSprintCameraIntensity(),
+        !specialCameraActive,
+      );
       this.cameraController.update(delta, this.inputManager);
     }
     this.hud.updateStaminaAnchor(this.player.mesh, this.sceneManager.camera, this.sceneManager.renderer.domElement);
@@ -1204,13 +1245,11 @@ export class Game {
       if (typeof data.checkpointId === 'number') this.checkpointManager.setActiveCheckpoint(data.checkpointId);
       if (data.collectedKeys && typeof data.collectedKeys === 'object') {
         const migratedKeys = { ...data.collectedKeys };
-        if (migratedKeys.key4_gargoyles === true) migratedKeys.key6_gargoyles = true;
+        // Gargoyle lighting is a side activity, not one of the six key rewards.
+        // Qi has its own sixth slot; migrate its temporary seventh-slot save ID.
+        if (migratedKeys.key7_qi_celestial === true) migratedKeys.key6_qi_celestial = true;
+        delete migratedKeys.key6_gargoyles;
         delete migratedKeys.key4_gargoyles;
-        // The Qi reward occupies the existing third-key slot. Migrate saves
-        // from the temporary seven-slot build without retaining a seventh key.
-        if (migratedKeys.key7_qi_celestial === true && migratedKeys.key3_platform !== true) {
-          migratedKeys.key3_platform = true;
-        }
         delete migratedKeys.key7_qi_celestial;
         this.level01.restoreCollectedKeys(migratedKeys);
       }
