@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="gold" x1="23" y1="20" x2="99" y2="108" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff1a3"/><stop offset=".3" stop-color="#ffc73d"/><stop offset=".68" stop-color="#d88917"/><stop offset="1" stop-color="#fff0a0"/>
+    </linearGradient>
+    <radialGradient id="qi" cx="0" cy="0" r="1" gradientTransform="matrix(0 20 -20 0 42 36)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#c9ffff"/><stop offset=".42" stop-color="#40d9ee"/><stop offset="1" stop-color="#1681bf"/>
+    </radialGradient>
+    <filter id="glow" x="7" y="5" width="114" height="118" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="3" result="blur"/><feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+  <g filter="url(#glow)" stroke="url(#gold)" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="42" cy="36" r="22" stroke-width="8"/>
+    <path d="M57 52 98 93v11H85V94H73V82H61L52 73" stroke-width="9"/>
+    <path d="m28 32 14-13 14 13-14 13-14-13Z" fill="url(#qi)" stroke-width="4"/>
+    <path d="M41 57c-8 7-9 14-3 20 5 6 6 12 2 19m5-39c8 7 9 14 3 20-5 6-6 12-2 19" stroke-width="3.5"/>
+    <path d="m42 91 8 13-8 13-8-13 8-13Z" fill="#ffcc4a" stroke-width="3"/>
+    <path d="M19 62 13 66m61-47 4-7m18 17 8-4" stroke-width="3"/>
+  </g>
+</svg>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="140" height="280" viewBox="0 0 140 280" fill="none">
+  <defs><linearGradient id="body" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#b51b0b"/><stop offset=".5" stop-color="#ff4b11"/><stop offset="1" stop-color="#9d1708"/></linearGradient><linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#fff0a1"/><stop offset=".42" stop-color="#ffb52c"/><stop offset="1" stop-color="#9d4a0b"/></linearGradient><radialGradient id="glow"><stop stop-color="#ffbc35" stop-opacity=".4"/><stop offset="1" stop-color="#ff6213" stop-opacity="0"/></radialGradient><filter id="soft" x="-80%" y="-60%" width="260%" height="220%"><feGaussianBlur stdDeviation="9"/></filter></defs>
+  <ellipse cx="70" cy="104" rx="65" ry="74" fill="url(#glow)" filter="url(#soft)"/>
+  <path d="M70 0v31m-18 0h36l8 10H44z" stroke="url(#gold)" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M43 42q27-13 54 0l12 14q16 41 0 81l-13 16q-26 13-52 0l-13-16q-16-40 0-81z" fill="url(#body)" stroke="url(#gold)" stroke-width="6"/>
+  <path d="M42 46q28 13 56 0M33 60q37 19 74 0M26 80q44 18 88 0M22 104h96M26 128q44-18 88 0M33 146q37-19 74 0M42 157q28-13 56 0" stroke="#ffc348" stroke-width="3" stroke-opacity=".88"/>
+  <path d="M48 49q22 55 0 103m44-103q-22 55 0 103M70 40v118" stroke="#ffdc70" stroke-width="3" stroke-opacity=".68"/>
+  <path d="M36 42h68M34 159h72" stroke="url(#gold)" stroke-width="7"/><path d="M56 162h28l-5 15H61z" fill="url(#gold)" stroke="#71330a" stroke-width="3"/>
+  <path d="M70 177v33m-12-18 12 18 12-18m-12 18v13" stroke="url(#gold)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M61 214v60m9-60v62m9-62v60m-18-49 9 51 9-51" stroke="#c92b11" stroke-width="4"/><path d="M53 216h34" stroke="#ffd052" stroke-width="4"/>
+</svg>

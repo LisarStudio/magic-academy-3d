@@ -9,13 +9,13 @@
     <title>La leyenda de Wukong — Lisar Studio</title>
     <link rel="preload" as="image" href="./assets/ui/hud-vida-imperial.png?v=0.0.37" fetchpriority="high" />
     <link rel="preload" as="image" href="./assets/ui/hud-baculo-vida.png?v=0.0.37" />
-    <link rel="icon" type="image/svg+xml" href="/magic-academy-3d/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/magic-academy-3d/assets/index-B3MxutX-.js"></script>
-    <link rel="modulepreload" crossorigin href="/magic-academy-3d/assets/three-vendor-By6RnL2H.js">
-    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-CM3Rd2cx.css">
+    <script type="module" crossorigin src="/magic-academy-3d/assets/index-BLKaRzQY.js"></script>
+    <link rel="modulepreload" crossorigin href="/magic-academy-3d/assets/three-vendor-C0Lo9UDZ.js">
+    <link rel="stylesheet" crossorigin href="/magic-academy-3d/assets/index-D7wFqgC0.css">
   </head>
   <body>
     <div id="app">
@@ -116,14 +116,18 @@
 
         <!-- Collectibles & Pause HUD Top Right -->
         <div id="hud-top-right" class="hud-panel hidden">
-          <div id="coin-counter-container" class="hud-item card-counter" style="display: flex; align-items: center;">
-            <div class="icon-coin">🪙</div>
-            <span id="coin-count" style="margin-left: 8px; font-weight: bold; color: gold; text-shadow: 1px 1px 2px black;">0 / 50</span>
+          <div id="coin-counter-container" class="hud-item card-counter">
+            <div class="coin-counter-row">
+              <img class="icon-coin" src="./assets/ui/lisarcoin-hud.png?v=coin-hud-v2" alt="Lisar Coin" width="19" height="19" decoding="async">
+              <span id="coin-count">0 / 50</span>
             <!-- Gekko quest-complete indicator: shown only when coins >= 50 -->
             <div id="gekko-quest-complete" class="gekko-quest-badge hidden" style="margin-left: 10px; display: inline-flex; align-items: center; background: rgba(0,0,0,0.6); padding: 4px 8px; border-radius: 10px; border: 1px solid gold;">
               <span class="gekko-badge-icon" style="font-size: 14px; margin-right: 4px;">🦎</span>
               <span class="gekko-badge-text" style="font-size: 11px; color: #fff; font-weight: bold;">¡Ve a ver a Gekko!</span>
             </div>
+            </div>
+            <div id="stamina-meter" class="stamina-meter" aria-label="Resistencia para correr" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" aria-hidden="true"><div id="stamina-meter-fill" class="stamina-meter-fill"></div></div>
+            <div id="staff-charge-meter" class="staff-charge-meter" aria-label="Carga del golpe con el báculo" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-hidden="true"><span>GOLPE CARGADO</span><div class="staff-charge-track"><div id="staff-charge-fill"></div></div></div>
           </div>
           <button id="btn-mobile-pause" class="mobile-pause-btn" aria-label="Pausa">⏸ PAUSA</button>
         </div>
@@ -218,6 +222,10 @@
           <div>ESTADO: <span id="debug-state">IDLE</span></div>
           <div>ANIM: <span id="debug-anim">Idle</span></div>
           <div>CHECKPOINT: <span id="debug-checkpoint">0</span></div>
+          <div class="debug-build-info">BUILD: <span id="debug-build-version"></span></div>
+          <div class="debug-build-info">UTC: <span id="debug-build-time"></span></div>
+          <div class="debug-build-info">COMMIT: <span id="debug-build-commit"></span></div>
+          <div class="debug-build-info">ENTORNO: <span id="debug-build-env"></span></div>
         </div>
 
         <!-- Level Complete Screen -->
@@ -255,68 +263,99 @@
           </div>
         </div>
 
-        <!-- Pause Screen with Equipment Tab -->
-        <div id="pause-screen" class="modal-screen hidden">
-          <div class="modal-card pause-card">
-            <!-- Header Tabs -->
-            <div class="pause-tabs-header">
-              <button id="tab-btn-pause" class="pause-tab-btn active">⏸ PAUSA</button>
-              <button id="tab-btn-equipment" class="pause-tab-btn">⚔️ EQUIPAMIENTO</button>
+        <!-- Imperial pause interface. Keep the equipment tab IDs for EquipmentViewer integration. -->
+        <div id="pause-screen" class="modal-screen pause-screen hidden" aria-label="Menú de pausa">
+          <section class="pause-card pause-imperial" role="dialog" aria-modal="true" aria-labelledby="pause-heading">
+            <img class="pause-roof-trim" src="./assets/ui/pause-kit/roof_trim.svg" alt="" aria-hidden="true">
+            <div class="pause-logo-plaque" aria-hidden="true"></div>
+            <img class="pause-logo" src="./assets/ui/01_logo_wukong_reino_celestial.png?v=pause-logo-v2" alt="Wukong — Los sellos del Reino Celestial">
+            <img class="pause-lantern pause-lantern-left" src="./assets/ui/pause-kit/lantern.svg" alt="" aria-hidden="true">
+            <img class="pause-lantern pause-lantern-right" src="./assets/ui/pause-kit/lantern.svg" alt="" aria-hidden="true">
+            <img class="pause-cloud pause-cloud-left" src="./assets/ui/pause-kit/cloud_corner.svg" alt="" aria-hidden="true">
+            <img class="pause-cloud pause-cloud-right" src="./assets/ui/pause-kit/cloud_corner.svg" alt="" aria-hidden="true">
+            <div class="pause-heading-wrap">
+              <img src="./assets/ui/pause-kit/parchment_pause.svg" alt="" aria-hidden="true">
+              <h1 id="pause-heading">PAUSA</h1>
             </div>
 
-            <!-- Tab 1: Pause / Options -->
-            <div id="pause-tab-content-pause" class="pause-tab-content">
-              <h2 class="pause-title" style="margin-top: 10px;">OPCIONES DE JUEGO</h2>
-              <p class="pause-subtitle">Juego Pausado — Ajusta los volúmenes o presiona CONTINUAR / P / ENTER</p>
-              
-              <div class="volume-sliders-container">
-                <div class="slider-group">
-                  <div class="slider-header">
-                    <span class="slider-label">🎵 VOLUMEN MÚSICA</span>
-                    <span id="music-vol-text" class="slider-value">50%</span>
-                  </div>
-                  <input type="range" id="slider-music" class="volume-slider" min="0" max="100" value="50" />
-                </div>
-                <div class="slider-group">
-                  <div class="slider-header">
-                    <span class="slider-label">🔊 VOLUMEN FX</span>
-                    <span id="fx-vol-text" class="slider-value">80%</span>
-                  </div>
-                  <input type="range" id="slider-fx" class="volume-slider" min="0" max="100" value="80" />
-                </div>
-              </div>
-
-              <div class="modal-actions" style="flex-direction: column; gap: 12px; margin-top: 24px;">
-                <button id="btn-resume" class="btn-magic primary large" style="width: 100%;">CONTINUAR</button>
-                <div style="display: flex; gap: 12px; width: 100%;">
-                  <button id="btn-save-game" class="btn-magic" style="flex: 1; background: rgba(0, 180, 216, 0.3); border-color: #00b4d8;">💾 GUARDAR PARTIDA</button>
-                  <button id="btn-load-game" class="btn-magic" style="flex: 1; background: rgba(72, 191, 132, 0.3); border-color: #48bf84;">📂 CARGAR PARTIDA</button>
-                </div>
-              </div>
+            <div class="pause-tabs-header pause-tabs-legacy" aria-hidden="true">
+              <button id="tab-btn-pause" class="pause-tab-btn active" type="button" tabindex="-1">PAUSA</button>
+              <button id="tab-btn-equipment" class="pause-tab-btn" type="button" tabindex="-1">EQUIPAMIENTO</button>
             </div>
 
-            <!-- Tab 2: Equipment / Character 360 Viewer -->
-            <div id="pause-tab-content-equipment" class="pause-tab-content hidden">
-              <div class="equipment-layout">
-                <!-- 3D Character 360 Viewport -->
-                <div class="equipment-3d-viewport">
-                  <canvas id="equipment-canvas" width="280" height="320"></canvas>
-                  <div class="equipment-drag-hint">👆 Arrastra para rotar 360°</div>
+            <div class="pause-layout">
+              <nav class="pause-navigation" aria-label="Acciones de pausa">
+                <button id="btn-resume" class="pause-action pause-action-primary" type="button"><svg class="pause-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="M9 5v22l19-11z"/></svg><span>Continuar</span></button>
+                <button id="btn-pause-equipment" class="pause-action" type="button" aria-pressed="false"><svg class="pause-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="m7 23 14-14 5 5L12 28l-6 1zM18 12l4 4M6 23l5 5"/></svg><span>Equipamiento</span></button>
+                <button id="btn-pause-options" class="pause-action" type="button" aria-pressed="false"><svg class="pause-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="M13 3h6l1 4 3 1 3-2 4 5-3 3v4l3 3-4 5-4-2-3 1-1 4h-6l-1-4-3-1-4 2-4-5 3-3v-4l-3-3 4-5 4 2 3-1z"/><circle cx="16" cy="16" r="5"/></svg><span>Opciones</span></button>
+                <button id="btn-save-game" class="pause-action" type="button" aria-pressed="false"><svg class="pause-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 3h19l5 5v21H3V3zM9 3v9h14V3M9 29V18h14v11M12 6h6v4h-6z"/></svg><span>Guardar partida</span></button>
+                <button id="btn-load-game" class="pause-action" type="button" aria-pressed="false"><svg class="pause-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="M3 8h11l3 4h12v16H3zM3 8V4h10l3 4"/></svg><span>Cargar partida</span></button>
+                <button id="btn-pause-main-menu" class="pause-action" type="button"><svg class="pause-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="M19 5h9v22h-9M16 10l7 6-7 6M23 16H4"/></svg><span>Volver al men&uacute;</span></button>
+              </nav>
+
+              <div class="pause-divider" aria-hidden="true"><img src="./assets/ui/pause-kit/divider.svg" alt=""></div>
+
+              <section class="pause-options-panel" aria-label="Contenido del menú de pausa" aria-live="polite">
+                <div id="pause-tab-content-home" class="pause-tab-content pause-home-panel">
+                  <span class="pause-panel-kicker">LA AVENTURA CONTINÚA</span>
+                  <h2>El reino espera</h2>
+                  <p>Tu viaje está en pausa. Elige una opción para continuar.</p>
+                  <div class="pause-home-seal" aria-hidden="true"></div>
                 </div>
 
-                <!-- Weapons & Equipment Inventory -->
-                <div class="equipment-details-panel">
-                  <div class="equipment-section-title">ARMAS DEL HÉROE</div>
-                  <div id="equipment-weapon-list" class="equipment-weapon-list">
-                    <!-- Populated dynamically by EquipmentViewer -->
+                <div id="pause-tab-content-pause" class="pause-tab-content hidden">
+                  <h2>Opciones de juego</h2>
+                  <div class="pause-slider-row">
+                    <label for="slider-music"><svg class="pause-audio-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="M18 5v19a5 5 0 1 1-3-4.6V9l13-3v14a5 5 0 1 1-3-4.6V4z"/></svg><span>Volumen M&uacute;sica</span><output id="music-vol-text" for="slider-music">50%</output></label>
+                    <div class="pause-slider-control"><input type="range" id="slider-music" min="0" max="100" value="50"><span class="pause-slider-knob" aria-hidden="true"></span></div>
                   </div>
-                  <div id="staff-upgrade-panel" class="staff-upgrade-panel"></div>
-                  <button id="btn-resume-equip" class="btn-magic primary" style="width: 100%; margin-top: 14px;">VOLVER AL JUEGO</button>
+                  <div class="pause-slider-row">
+                    <label for="slider-fx"><svg class="pause-audio-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="M3 12h6l8-7v22l-8-7H3zM22 11q7 5 0 10M25 6q12 10 0 20"/></svg><span>Volumen FX</span><output id="fx-vol-text" for="slider-fx">80%</output></label>
+                    <div class="pause-slider-control"><input type="range" id="slider-fx" min="0" max="100" value="80"><span class="pause-slider-knob" aria-hidden="true"></span></div>
+                  </div>
                 </div>
-              </div>
+
+                <div id="pause-tab-content-equipment" class="pause-tab-content hidden">
+                  <div class="equipment-layout">
+                    <div class="equipment-3d-viewport">
+                      <canvas id="equipment-canvas" width="280" height="320"></canvas>
+                      <div class="equipment-drag-hint">Arrastra para rotar</div>
+                    </div>
+                    <div class="equipment-details-panel">
+                      <div class="equipment-section-title">ARMAS DEL HÉROE</div>
+                      <div id="equipment-weapon-list" class="equipment-weapon-list"></div>
+                      <div id="staff-upgrade-panel" class="staff-upgrade-panel"></div>
+                      <button id="btn-resume-equip" class="pause-action pause-action-primary" type="button">Volver al juego</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="pause-tab-content-context" class="pause-tab-content pause-context-panel hidden" role="status" aria-live="polite">
+                  <span class="pause-panel-kicker">ARCHIVOS DEL REINO</span>
+                  <h2 id="pause-context-title">Progreso de la aventura</h2>
+                  <p id="pause-context-message">El estado de tu partida aparecerá aquí.</p>
+                  <div class="pause-context-mark" aria-hidden="true">✦</div>
+                </div>
+              </section>
             </div>
 
-          </div>
+            <div class="pause-landscape" aria-hidden="true"></div>
+            <footer class="pause-footer" aria-label="Controles del menú">
+              <span class="pause-keyboard-shortcut"><kbd>P</kbd> Pausar / Reanudar</span>
+              <span class="pause-keyboard-shortcut"><kbd>Enter</kbd> Confirmar</span>
+              <span class="pause-touch-shortcut">Usa los botones para navegar · Continuar reanuda la aventura</span>
+            </footer>
+
+            <div id="pause-return-confirm" class="pause-confirm hidden" role="alertdialog" aria-modal="true" aria-labelledby="pause-confirm-title">
+              <div class="pause-confirm-card">
+                <h2 id="pause-confirm-title">¿Volver al menú principal?</h2>
+                <p>Tu progreso sin guardar podría perderse.</p>
+                <button id="btn-pause-save-and-menu" class="pause-action pause-action-primary" type="button">Guardar y volver al menú</button>
+                <button id="btn-pause-discard-and-menu" class="pause-action" type="button">Volver sin guardar</button>
+                <button id="btn-pause-cancel-menu" class="pause-action" type="button">Seguir jugando</button>
+              </div>
+            </div>
+          </section>
         </div>
 
         <!-- Pointer Lock / Start Screen -->
@@ -354,7 +393,7 @@
               </nav>
               <p id="menu-loading-status" class="menu-loading-status" aria-live="polite">Preparando el nivel…</p>
             </div>
-            <footer class="menu-footer"><span class="studio-name">☁ LISAR STUDIO ☁</span><span id="project-version">Versión 0.0.0</span></footer>
+            <footer class="menu-footer"><span class="studio-name">☁ LISAR STUDIO ☁</span><span id="project-version">Edición Reino Celestial</span></footer>
             <p class="menu-hint"><kbd>↑</kbd><kbd>↓</kbd> Seleccionar <kbd>Enter</kbd> Confirmar</p>
           </div>
 
@@ -419,3 +458,4 @@
     </div>
   </body>
 </html>
+
