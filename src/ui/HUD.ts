@@ -997,15 +997,39 @@ export class HUD {
   }
 
   public fadeScreenOut(durationMs: number = 1000): Promise<void> {
-    this.screenFadeEl.style.transition = `opacity ${durationMs}ms ease-in-out`;
-    this.screenFadeEl.classList.remove('hidden');
-    return new Promise(resolve => setTimeout(resolve, durationMs));
+    const duration = Math.max(0, durationMs);
+    const element = this.screenFadeEl;
+    element.classList.remove('hidden');
+    element.style.display = 'block';
+    element.style.visibility = 'visible';
+    element.style.transition = 'none';
+    element.style.opacity = '0';
+    // Commit a transparent start frame; the hidden class also sets display:none.
+    void element.offsetWidth;
+    element.style.transition = `opacity ${duration}ms ease-in-out`;
+    element.style.opacity = '1';
+    return new Promise(resolve => setTimeout(resolve, duration));
   }
 
   public fadeScreenIn(durationMs: number = 1000): Promise<void> {
-    this.screenFadeEl.style.transition = `opacity ${durationMs}ms ease-in-out`;
-    this.screenFadeEl.classList.add('hidden');
-    return new Promise(resolve => setTimeout(resolve, durationMs));
+    const duration = Math.max(0, durationMs);
+    const element = this.screenFadeEl;
+    element.classList.remove('hidden');
+    element.style.display = 'block';
+    element.style.visibility = 'visible';
+    element.style.transition = 'none';
+    element.style.opacity = '1';
+    void element.offsetWidth;
+    element.style.transition = `opacity ${duration}ms ease-in-out`;
+    element.style.opacity = '0';
+    return new Promise(resolve => setTimeout(() => {
+      element.classList.add('hidden');
+      element.style.removeProperty('display');
+      element.style.removeProperty('visibility');
+      element.style.removeProperty('opacity');
+      element.style.removeProperty('transition');
+      resolve();
+    }, duration));
   }
 
   /**

@@ -100,6 +100,7 @@ export class LevelToyStory {
   private readonly treeSwayEuler = new THREE.Euler();
   private grassSectors: THREE.InstancedMesh[] = [];
   private terrainGroundMaterial: THREE.MeshStandardMaterial | null = null;
+  private worldTerrainMesh: THREE.Mesh | null = null;
   /** World-space center lines and safe widths for every authored stone route. */
   private vegetationPathMasks: Array<{ points: THREE.Vector2[]; halfWidth: number }> = [];
   private grassLoadStarted = false;
@@ -2493,6 +2494,7 @@ export class LevelToyStory {
     worldFloor.position.set(0, 0, 0);
     worldFloor.receiveShadow = true;
     scene.add(worldFloor);
+    this.worldTerrainMesh = worldFloor;
     this.createBridgePond();
     // PlayerController uses this same terrain-height function when no built
     // surface is hit. Raycasting the render mesh (8,192 triangles) on every
@@ -3325,6 +3327,14 @@ export class LevelToyStory {
     this.curiosityCryptMouth.add(asset);
     this.cryptPortalMaterial = material;
     this.portalAsset = asset;
+    // The portal GLB may arrive after the deferred full-scene warmup. Compile
+    // only this small entrance group before the switch is used, avoiding a
+    // first-use shader hitch during the crypt reveal.
+    void this.sceneManager.renderer.compileAsync(
+      this.curiosityCryptMouth,
+      this.sceneManager.camera,
+      this.sceneManager.scene
+    ).catch((error) => console.warn('[CelestialPortal] Deferred portal shader warmup failed.', error));
 
     // Asegurar que el material sea visible desde ambos lados (frente y atrás)
     if (this.cryptPortalMaterial) {
@@ -3444,10 +3454,16 @@ export class LevelToyStory {
     // the underground chamber rather than replacing them with flat black stone.
     const caveWallMat = stoneMat.clone() as THREE.MeshStandardMaterial;
     caveWallMat.color.multiply(new THREE.Color(0.72, 0.78, 0.92));
+    caveWallMat.emissive.setHex(0x101d38);
+    caveWallMat.emissiveIntensity = 0.34;
     caveWallMat.roughness = 0.94;
     caveWallMat.metalness = 0.02;
     const caveCeilingMat = new THREE.MeshStandardMaterial({ color: 0x292a31, roughness: 0.98, flatShading: true, side: THREE.DoubleSide });
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(29.5, 0.4, 27.5), stoneMat);
+    const cryptFloorMat = caveWallMat.clone();
+    cryptFloorMat.color.multiplyScalar(1.12);
+    cryptFloorMat.emissive.setHex(0x101a31);
+    cryptFloorMat.emissiveIntensity = 0.3;
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(29.5, 0.4, 27.5), cryptFloorMat);
     floor.name = 'curiosity_chamber_floor';
     floor.position.set(-22.25, this.curiosityCryptFloorY - 0.2, castleCenterZ);
     floor.receiveShadow = true;
@@ -3459,7 +3475,7 @@ export class LevelToyStory {
     const roof = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 16, 0, Math.PI * 2, 0, Math.PI / 2), caveCeilingMat);
     roof.name = 'curiosity_crypt_rock_ceiling';
     roof.position.set(-22.25, -6.0, castleCenterZ);
-    roof.scale.set(17.5, 5.6, 16.0);
+    roof.scale.set(17.5, 8.2, 16.0);
     roof.receiveShadow = true;
     scene.add(roof);
     this.levelColliders.push(roof);
@@ -3511,7 +3527,7 @@ export class LevelToyStory {
       const glow = new THREE.Mesh(new THREE.OctahedronGeometry(0.28, 0), new THREE.MeshBasicMaterial({ color: i === 1 ? 0x64d9d2 : 0xffbb66, toneMapped: false }));
       glow.position.copy(position);
       scene.add(glow);
-      const light = new THREE.PointLight(i === 1 ? 0x57cfc9 : 0xffb35d, 3.2, 12, 2);
+      const light = new THREE.PointLight(i === 1 ? 0x57cfc9 : 0xffb35d, 4.2, 16, 2);
       light.position.copy(position);
       light.castShadow = false;
       scene.add(light);
@@ -3520,6 +3536,57 @@ export class LevelToyStory {
     const floorMark = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.08, 1.6), new THREE.MeshStandardMaterial({ color: 0xb78a4b, roughness: 0.7 }));
     floorMark.position.set(-22.5, -5.86, castleCenterZ - 13.28);
     scene.add(floorMark);
+
+    // Circular labyrinth seal inspired by the supplied crypt emblem. A single
+    // small canvas texture keeps it self-contained and inexpensive to render.
+    const sealCanvas = document.createElement('canvas');
+    sealCanvas.width = sealCanvas.height = 512;
+    const sealContext = sealCanvas.getContext('2d');
+    if (sealContext) {
+      const cx = 256, cy = 256;
+      const stone = sealContext.createRadialGradient(cx, cy, 45, cx, cy, 242);
+      stone.addColorStop(0, '#1a2d49');
+      stone.addColorStop(0.76, '#10203a');
+      stone.addColorStop(1, '#081426');
+      sealContext.fillStyle = stone;
+      sealContext.beginPath(); sealContext.arc(cx, cy, 238, 0, Math.PI * 2); sealContext.fill();
+      sealContext.strokeStyle = '#d6aa5d'; sealContext.lineWidth = 13;
+      sealContext.beginPath(); sealContext.arc(cx, cy, 230, 0, Math.PI * 2); sealContext.stroke();
+      sealContext.strokeStyle = '#6d512e'; sealContext.lineWidth = 8;
+      sealContext.beginPath(); sealContext.arc(cx, cy, 198, 0, Math.PI * 2); sealContext.stroke();
+      sealContext.strokeStyle = '#d3a85d'; sealContext.lineWidth = 18;
+      sealContext.lineCap = 'square'; sealContext.lineJoin = 'bevel';
+      const paths = [
+        [[256,70],[256,168],[148,168],[148,112],[218,112],[218,138],[178,138]],
+        [[256,70],[256,168],[364,168],[364,112],[294,112],[294,138],[334,138]],
+        [[70,256],[168,256],[168,364],[112,364],[112,294],[138,294],[138,334]],
+        [[442,256],[344,256],[344,364],[400,364],[400,294],[374,294],[374,334]],
+        [[256,442],[256,344],[148,344],[148,400],[218,400],[218,374],[178,374]],
+        [[256,442],[256,344],[364,344],[364,400],[294,400],[294,374],[334,374]],
+        [[182,218],[330,218],[330,294],[182,294],[182,256],[294,256],[294,276],[218,276]],
+      ];
+      for (const points of paths) {
+        sealContext.beginPath();
+        points.forEach(([x, y], index) => index ? sealContext.lineTo(x, y) : sealContext.moveTo(x, y));
+        sealContext.stroke();
+      }
+      sealContext.strokeStyle = 'rgba(255,220,154,.42)'; sealContext.lineWidth = 3;
+      [[95,105,140,150],[365,90,400,127],[105,375,145,410],[370,365,411,402],[247,182,274,200]].forEach(([x1,y1,x2,y2]) => {
+        sealContext.beginPath(); sealContext.moveTo(x1,y1); sealContext.lineTo(x2,y2); sealContext.stroke();
+      });
+    }
+    const sealTexture = new THREE.CanvasTexture(sealCanvas);
+    sealTexture.colorSpace = THREE.SRGBColorSpace;
+    const seal = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 4.2), new THREE.MeshBasicMaterial({
+      map: sealTexture, transparent: true, toneMapped: false, side: THREE.DoubleSide,
+    }));
+    seal.name = 'curiosity_crypt_ancestral_labyrinth_seal';
+    seal.rotation.y = Math.PI / 2;
+    seal.position.set(-36.58, -3.8, castleCenterZ);
+    seal.renderOrder = 2;
+    seal.castShadow = false;
+    seal.receiveShadow = false;
+    scene.add(seal);
     [new THREE.Vector3(-15.0, -2.8, castleCenterZ), new THREE.Vector3(-29.5, -2.8, castleCenterZ)].forEach((position) => {
       const light = new THREE.PointLight(0xffb45e, 1.7, 9, 2);
       light.position.copy(position);
@@ -5131,9 +5198,9 @@ export class LevelToyStory {
     this.enemies.push(patrol1, patrol2, patrol3, patrol4, patrol5, lavaGuard1, lavaGuard2, ...this.cryptGuardians, this.bossEnemy);
 
     this.enemies.forEach(e => {
-      // The boss loader scales the supplied crab.glb from its measured height
-      // to 3x Wukong. Normal enemies keep the compact shared-template scale.
-      e.loadModel();
+      // Enlarge ordinary crabs by 60% while retaining the separately
+      // normalized boss asset at its established 3x Wukong scale.
+      e.loadModel(e.id === 'crab_boss' ? 1 : 1.6);
       e.setScene(scene); // Give each enemy direct scene access for death VFX
       scene.add(e.mesh);
       this.spellSystem.registerEnemy(e);
@@ -5349,6 +5416,7 @@ export class LevelToyStory {
           );
           this.audioManager.playHitImpact();
           this.audioManager.playPortalActivate();
+          (window as any).gameInstance?.saveGame(false);
           this.subtitleSystem.show('Mecanismo Secreto', '¡El mecanismo del pabellón ha abierto una cámara secreta al otro lado del reino!');
         }
       }
@@ -6193,6 +6261,10 @@ export class LevelToyStory {
       // repeated polygons.
       for (let i = 0; i < this.grassSectors.length; i++) {
         const sector = this.grassSectors[i];
+        if (this.isInsideCuriosityCrypt) {
+          sector.visible = false;
+          continue;
+        }
         const center = sector.userData.grassCenter as THREE.Vector2;
         const dx = playerPos.x - center.x;
         const dz = playerPos.z - center.y;
@@ -6257,7 +6329,7 @@ export class LevelToyStory {
       this.staffChest.mesh.position.distanceTo(playerPos) < 2.2 &&
       !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying;
     const openStaffChest = chestInRange && this.inputManager.consumeInteractPress();
-    const cryptGuardiansDefeated = this.cryptGuardians.length > 0 && this.cryptGuardians.every((enemy) => enemy.state === 'DEAD');
+    const cryptGuardiansDefeated = this.cryptGuardians.every((enemy) => enemy.state === 'DEAD');
     if (cryptGuardiansDefeated && !this.cryptGuardiansCleared) {
       this.cryptGuardiansCleared = true;
       this.curiosityChest.isUnlocked = true;
@@ -6708,13 +6780,23 @@ export class LevelToyStory {
     let screenIsFadedOut = false;
     try {
       if (hud) {
-        await hud.fadeScreenOut(100);
+        await hud.fadeScreenOut(90);
         screenIsFadedOut = true;
       }
       if (entering) {
         // Switch the ground resolver before moving under the terrain. Otherwise
         // the next physics frame can snap Wukong back to the temple surface.
         this.isInsideCuriosityCrypt = true;
+        // The outdoor terrain and its instanced grass used to remain drawn
+        // above the underground room, occluding its guardians, altar, and
+        // light. The crypt has its own floor and domed roof, so hide only those
+        // outdoor ground meshes while inside and restore them on exit.
+        if (this.worldTerrainMesh) this.worldTerrainMesh.visible = false;
+        this.grassSectors.forEach((sector) => { sector.visible = false; });
+        this.grassCullElapsed = 0;
+        for (const guardian of this.cryptGuardians) {
+          if (guardian.state !== 'DEAD') guardian.mesh.visible = true;
+        }
         // Land on the authored underground floor immediately. Mark the player
         // grounded as part of the teleport so the outdoor terrain resolver
         // cannot interpret the first frame as a fall through to the temple.
@@ -6726,6 +6808,8 @@ export class LevelToyStory {
       } else {
         this.player.mesh.position.set(this.curiosityCryptSurface.x, this.curiosityCryptSurface.y + 0.08, this.curiosityCryptSurface.z + 3.0);
         this.isInsideCuriosityCrypt = false;
+        if (this.worldTerrainMesh) this.worldTerrainMesh.visible = true;
+        this.grassCullElapsed = 0;
         this.player.isGrounded = false;
         this.player.mesh.updateMatrixWorld(true);
       }
@@ -6733,7 +6817,7 @@ export class LevelToyStory {
       this.player.velocity.set(0, 0, 0);
       cameraController?.snapBehindTarget();
       if (hud) {
-        await hud.fadeScreenIn(140);
+        await hud.fadeScreenIn(110);
         screenIsFadedOut = false;
       }
       this.subtitleSystem.show(
