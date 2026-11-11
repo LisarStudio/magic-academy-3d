@@ -27,6 +27,10 @@ export class HUD {
   private hpBarFillEl: HTMLElement;
   private mpBarFillEl: HTMLElement;
   private coinCounterEl: HTMLElement | null = null;
+  private staminaMeterEl: HTMLElement | null = null;
+  private staminaMeterFillEl: HTMLElement | null = null;
+  private staffChargeMeterEl: HTMLElement | null = null;
+  private staffChargeFillEl: HTMLElement | null = null;
   private collectedKeysEl: HTMLElement | null = null;
   private collectedKeyIds = new Set<string>();
   private manekiNekoSlotEl: HTMLElement | null = null;
@@ -119,6 +123,10 @@ export class HUD {
     this.fxVolTextEl = document.getElementById('fx-vol-text');
 
     this.coinCounterEl = document.getElementById('coin-count');
+    this.staminaMeterEl = document.getElementById('stamina-meter');
+    this.staminaMeterFillEl = document.getElementById('stamina-meter-fill');
+    this.staffChargeMeterEl = document.getElementById('staff-charge-meter');
+    this.staffChargeFillEl = document.getElementById('staff-charge-fill');
     this.collectedKeysEl = document.getElementById('hud-collected-keys');
     this.setCollectedKeys([], false);
     this.manekiNekoSlotEl = document.getElementById('hud-maneki-neko');
@@ -176,6 +184,7 @@ export class HUD {
 
     this.initAudioSliders();
     this.initPauseButton();
+    this.initPauseKeyboardNavigation();
     this.createObjectiveMiniIcon();
   }
 
@@ -256,6 +265,9 @@ export class HUD {
         if (this.musicVolTextEl) this.musicVolTextEl.textContent = `${val}%`;
         const audioMgr = (window as any).gameInstance?.audioManager;
         if (audioMgr) audioMgr.setMusicVolume(val / 100);
+        this.updatePauseSliderKnob(this.sliderMusicEl!, val);
+        const game = (window as any).gameInstance;
+        if (game) game.updatePauseAudioPreferences(val / 100, Number(this.sliderFxEl?.value ?? 80) / 100);
       });
     }
 
@@ -265,8 +277,15 @@ export class HUD {
         if (this.fxVolTextEl) this.fxVolTextEl.textContent = `${val}%`;
         const audioMgr = (window as any).gameInstance?.audioManager;
         if (audioMgr) audioMgr.setSFXVolume(val / 100);
+        this.updatePauseSliderKnob(this.sliderFxEl!, val);
+        const game = (window as any).gameInstance;
+        if (game) game.updatePauseAudioPreferences(Number(this.sliderMusicEl?.value ?? 50) / 100, val / 100);
       });
     }
+  }
+
+  private updatePauseSliderKnob(slider: HTMLInputElement, value: number): void {
+    slider.parentElement?.style.setProperty('--slider-progress', `${Math.max(0, Math.min(100, value))}%`);
   }
 
   private initPauseButton(): void {
@@ -281,12 +300,50 @@ export class HUD {
     }
   }
 
+  private initPauseKeyboardNavigation(): void {
+    window.addEventListener('keydown', (event) => {
+      if (this.pauseScreenEl.classList.contains('hidden')) return;
+      const target = event.target;
+      if (target instanceof HTMLInputElement && target.type === 'range') return;
+      if (event.code !== 'ArrowDown' && event.code !== 'ArrowUp') return;
+
+      const confirmation = document.getElementById('pause-return-confirm');
+      const inConfirmation = !!confirmation && !confirmation.classList.contains('hidden');
+      const actions = Array.from((inConfirmation ? confirmation : this.pauseScreenEl)
+        .querySelectorAll<HTMLButtonElement>(inConfirmation ? '.pause-confirm-card button' : '.pause-navigation button'))
+        .filter((button) => !button.disabled);
+      if (!actions.length) return;
+
+      event.preventDefault();
+      const current = actions.indexOf(document.activeElement as HTMLButtonElement);
+      const step = event.code === 'ArrowDown' ? 1 : -1;
+      actions[(current + step + actions.length) % actions.length]?.focus({ preventScroll: true });
+    });
+  }
+
   public showPauseMenu(visible: boolean): void {
     if (visible) {
       this.pauseScreenEl.classList.remove('hidden');
+      const audio = (window as any).gameInstance?.audioManager;
+      const music = this.sliderMusicEl;
+      const effects = this.sliderFxEl;
+      if (music && audio) {
+        const value = Math.round(audio.getMusicVolume() * 100);
+        music.value = String(value);
+        if (this.musicVolTextEl) this.musicVolTextEl.textContent = `${value}%`;
+        this.updatePauseSliderKnob(music, value);
+      }
+      if (effects && audio) {
+        const value = Math.round(audio.getSFXVolume() * 100);
+        effects.value = String(value);
+        if (this.fxVolTextEl) this.fxVolTextEl.textContent = `${value}%`;
+        this.updatePauseSliderKnob(effects, value);
+      }
       this.equipmentViewer?.onPauseOpened();
+      window.requestAnimationFrame(() => document.getElementById('btn-resume')?.focus({ preventScroll: true }));
     } else {
       this.pauseScreenEl.classList.add('hidden');
+      document.getElementById('pause-return-confirm')?.classList.add('hidden');
       this.equipmentViewer?.onPauseClosed();
     }
   }
@@ -627,6 +684,7 @@ export class HUD {
 
   public setCoinCount(count: number): void {
     if (count === this.lastCoins) return;
+    const pickedUp = this.lastCoins >= 0 && count > this.lastCoins;
     this.lastCoins = count;
 
     if (this.coinCounterEl) {
@@ -635,6 +693,12 @@ export class HUD {
       if (container) {
         container.style.removeProperty('display');
         container.classList.remove('hidden');
+      }
+      if (pickedUp && container) {
+        container.classList.remove('coin-pickup-pop');
+        void container.offsetWidth;
+        container.classList.add('coin-pickup-pop');
+        window.setTimeout(() => container.classList.remove('coin-pickup-pop'), 380);
       }
     }
     // Show Gekko quest-complete badge when the player reaches 50 coins
@@ -645,6 +709,32 @@ export class HUD {
         this.gekkoQuestBadgeEl.classList.add('hidden');
       }
     }
+  }
+
+  public setStamina(value: number, maxValue: number, visible: boolean): void {
+    const meter = this.staminaMeterEl;
+    const fill = this.staminaMeterFillEl;
+    if (!meter || !fill) return;
+    const max = Math.max(1, maxValue);
+    const safeValue = Math.max(0, Math.min(max, value));
+    const ratio = safeValue / max;
+    meter.classList.toggle('is-visible', visible);
+    meter.classList.toggle('is-low', ratio <= 0.25);
+    meter.setAttribute('aria-valuenow', String(Math.round(safeValue)));
+    meter.setAttribute('aria-hidden', String(!visible));
+    fill.style.width = `${ratio * 100}%`;
+  }
+
+  public setStaffCharge(visible: boolean, ratio: number): void {
+    const meter = this.staffChargeMeterEl;
+    const fill = this.staffChargeFillEl;
+    if (!meter || !fill) return;
+    const progress = Math.max(0, Math.min(1, ratio));
+    meter.classList.toggle('is-visible', visible);
+    meter.classList.toggle('is-ready', visible && progress >= 1);
+    meter.setAttribute('aria-valuenow', String(Math.round(progress * 100)));
+    meter.setAttribute('aria-hidden', String(!visible));
+    fill.style.width = `${progress * 100}%`;
   }
 
   public setCollectedKeys(ids: string[], animateNewlyAcquired = true): void {

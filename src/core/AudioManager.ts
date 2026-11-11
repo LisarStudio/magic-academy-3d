@@ -419,10 +419,14 @@ export class AudioManager {
     this.applyMusicVolume();
   }
 
+  public getMusicVolume(): number { return this.musicVolume; }
+
   public setSFXVolume(volume: number): void {
     this.sfxVolume = Math.max(0, Math.min(1.0, volume));
     this.voiceVolume = this.sfxVolume;
   }
+
+  public getSFXVolume(): number { return this.sfxVolume; }
 
   public playMenuSelect(): void {
     if (this.sfxVolume <= 0.001) return;

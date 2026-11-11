@@ -5,6 +5,8 @@ export class InputManager {
   public isPointerLocked = false;
   
   public onLeftClick: (() => void) | null = null;
+  public onAttackPress: (() => void) | null = null;
+  public onAttackRelease: (() => void) | null = null;
   public onKick: (() => void) | null = null;
   public onJumpPress: (() => void) | null = null;
   public onInteract: (() => void) | null = null;
@@ -23,6 +25,7 @@ export class InputManager {
   private interactionFramePressed = false;
   private interactionConsumed = false;
   private canvas: HTMLCanvasElement;
+  private leftAttackPointerDown = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -128,8 +131,19 @@ export class InputManager {
 
       if (e.button === 0) { // Left Click
         this.onPlayerCommand?.();
-        if (this.onLeftClick) this.onLeftClick();
+        this.leftAttackPointerDown = true;
+        this.onAttackPress?.();
       }
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (e.button !== 0 || !this.leftAttackPointerDown) return;
+      this.leftAttackPointerDown = false;
+      this.onAttackRelease?.();
+    });
+    window.addEventListener('blur', () => {
+      if (!this.leftAttackPointerDown) return;
+      this.leftAttackPointerDown = false;
+      this.onAttackRelease?.();
     });
   }
 
@@ -175,11 +189,20 @@ export class InputManager {
   public triggerAttack(): void {
     if (this.canAttack && !this.canAttack()) return;
     this.onPlayerCommand?.();
-    if (this.onLeftClick) {
-      this.onLeftClick();
-    } else if (this.onKick) {
-      this.onKick();
-    }
+    this.onAttackPress?.();
+    this.onAttackRelease?.();
+    if (!this.onAttackPress && this.onLeftClick) this.onLeftClick();
+    else if (!this.onAttackPress && this.onKick) this.onKick();
+  }
+
+  public triggerAttackPress(): void {
+    if (this.canAttack && !this.canAttack()) return;
+    this.onPlayerCommand?.();
+    this.onAttackPress?.();
+  }
+
+  public triggerAttackRelease(): void {
+    this.onAttackRelease?.();
   }
 
   public triggerJump(): void {

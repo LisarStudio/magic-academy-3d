@@ -17,6 +17,7 @@ interface MainMenuCallbacks {
   onTransitionComplete: (mode: StartMode) => Promise<void> | void;
   onPreferences: (preferences: MenuPreferences) => void;
   onSelect: () => void;
+  onReturnToMenu?: () => void;
 }
 
 const SAVE_KEY = 'lisar_savegame';
@@ -87,13 +88,46 @@ export class MainMenu {
     this.bindEvents();
     this.startIntroButton.addEventListener('click', () => void this.playIntro(true));
     this.refreshContinueButton();
-    document.getElementById('project-version')!.textContent = `Versión ${__APP_VERSION__}`;
-    document.getElementById('project-version')!.title = `Commit ${__BUILD_COMMIT__}\nBuild ${__BUILD_ID__}\n${__BUILD_TIME_UTC__} UTC`;
+    document.getElementById('project-version')!.textContent = `Edición Reino Celestial · v${__APP_VERSION__.split('+')[0]}`;
+    document.getElementById('project-version')!.title = `Versión técnica ${__APP_VERSION__}\nCommit ${__BUILD_COMMIT__}\nBuild ${__BUILD_ID__}\n${__BUILD_TIME_UTC__} UTC`;
   }
 
   private setState(state: MenuState): void {
     this.state = state;
     this.callbacks.onStateChange(state);
+  }
+
+  /** Return to the existing animated main menu without reloading the page. */
+  public async returnToMainMenu(): Promise<void> {
+    this.transitionStarted = false;
+    this.introExitPending = false;
+    this.introVideo.pause();
+    this.introVideo.classList.remove('is-visible');
+    this.startVideo.pause();
+    this.startVideo.classList.remove('is-visible');
+    this.dialog.classList.add('hidden');
+    this.loadingPanel.classList.add('hidden');
+    this.mainMenu.classList.remove('hidden');
+    this.mainMenu.classList.remove('is-leaving');
+    document.getElementById('start-screen')?.classList.remove('hidden');
+    const backdrop = document.getElementById('cinematic-backdrop');
+    backdrop?.classList.remove('hidden', 'is-ending');
+    backdrop?.classList.add('is-menu-idle');
+    if (backdrop) backdrop.style.background = '';
+    this.loadOfficialMenuLogo();
+    this.setState('MenuIdle');
+    this.refreshContinueButton();
+    this.callbacks.onReturnToMenu?.();
+    this.idleVideo.currentTime = 0;
+    try {
+      await this.idleVideo.play();
+      await this.waitForVideoFrame(this.idleVideo);
+      this.idleVideo.classList.add('is-visible');
+    } catch (error) {
+      console.warn('[MainMenu] Idle menu video could not resume after returning from gameplay.', error);
+      // Keep the main menu usable even when mobile Safari defers video playback.
+      this.idleVideo.classList.remove('is-visible');
+    }
   }
 
   public setLoadingProgress(loaded: number, total: number, asset?: string): void {
@@ -908,5 +942,12 @@ export class MainMenu {
   private persistPreferences(): void {
     this.callbacks.onPreferences(this.preferences);
     try { localStorage.setItem(PREFERENCES_KEY, JSON.stringify(this.preferences)); } catch { /* Preferences still apply for this session. */ }
+  }
+
+  public updateAudioPreferences(music: number, effects: number): void {
+    this.preferences.music = this.clamp(music, this.preferences.music);
+    this.preferences.effects = this.clamp(effects, this.preferences.effects);
+    this.persistPreferences();
+    this.syncPreferenceControls();
   }
 }

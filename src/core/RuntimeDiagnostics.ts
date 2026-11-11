@@ -36,6 +36,9 @@ export class RuntimeDiagnostics {
   private contextLost = false;
   private readonly previousSession: unknown;
   private longTaskObserver: PerformanceObserver | null = null;
+  private persistScheduled = false;
+  private persistIdleId: number | null = null;
+  private persistTimeoutId: number | null = null;
   private readonly storageKey = 'wukong-runtime-diagnostics-v1';
 
   public constructor() {
@@ -61,6 +64,7 @@ export class RuntimeDiagnostics {
     document.addEventListener('visibilitychange', () => this.record('visibility', document.visibilityState));
     window.addEventListener('pagehide', (event) => {
       this.record('pagehide', `persisted=${event.persisted}`);
+      this.cancelScheduledPersist();
       this.persist();
     });
   }
@@ -113,7 +117,10 @@ export class RuntimeDiagnostics {
     });
     this.sampleSequence++;
     if (this.samples.length > this.maxSamples) this.samples.shift();
-    if (this.sampleSequence % 2 === 0) this.persist();
+    // sessionStorage is synchronous. Serializing the rolling frame history in
+    // the render loop every ten seconds can itself create the hitch we are
+    // measuring, so persist only during an idle slice (pagehide still flushes).
+    if (this.sampleSequence % 2 === 0) this.schedulePersist();
   }
 
   public snapshot(): object {
@@ -154,7 +161,32 @@ export class RuntimeDiagnostics {
   private record(type: string, detail?: string): void {
     this.events.push({ atSeconds: this.elapsedSeconds(), type, detail });
     if (this.events.length > this.maxEvents) this.events.shift();
-    if (type === 'window.error' || type === 'unhandledrejection' || type.startsWith('webglcontext')) this.persist();
+    if (type === 'window.error' || type === 'unhandledrejection' || type.startsWith('webglcontext')) this.schedulePersist();
+  }
+
+  private schedulePersist(): void {
+    if (this.persistScheduled) return;
+    this.persistScheduled = true;
+    const flush = (): void => {
+      this.persistScheduled = false;
+      this.persistIdleId = null;
+      this.persistTimeoutId = null;
+      this.persist();
+    };
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    };
+    if (idleWindow.requestIdleCallback) this.persistIdleId = idleWindow.requestIdleCallback(flush, { timeout: 5000 });
+    else this.persistTimeoutId = window.setTimeout(flush, 1200);
+  }
+
+  private cancelScheduledPersist(): void {
+    const idleWindow = window as Window & { cancelIdleCallback?: (id: number) => void };
+    if (this.persistIdleId !== null) idleWindow.cancelIdleCallback?.(this.persistIdleId);
+    if (this.persistTimeoutId !== null) window.clearTimeout(this.persistTimeoutId);
+    this.persistScheduled = false;
+    this.persistIdleId = null;
+    this.persistTimeoutId = null;
   }
 
   private elapsedSeconds(): number { return Math.max(0, (performance.now() - this.startedAt) / 1000); }

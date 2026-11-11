@@ -148,22 +148,11 @@ export class ChestCinematic {
     if (!staff || !handMount?.parent) return Promise.resolve();
     this.stopStaffBob();
 
-    // Parent the pickup to the exact hand bone used by the equipped 3D weapon.
-    // A world-space destination becomes stale while TakeItem continues moving
-    // the arm; following the bone keeps the prop in the hand for every frame.
-    // Object3D.attach preserves its current chest-space transform on transfer.
-    const handBone = handMount.parent;
+    // Keep the pickup in scene space while it flies to the hand. Reparenting
+    // through the Mixamo armature's tiny helper transforms can create a visible
+    // jump/shear and make the staff appear far from Wukong.
     this.deps.scene.updateMatrixWorld(true);
     player.mesh.updateMatrixWorld(true);
-    handBone.updateWorldMatrix(true, false);
-    handBone.attach(staff);
-
-    // handMount is the actual grip socket under this same bone. Its local
-    // transform is the target; account for the pickup child being authored at
-    // 0.62 and the equipped hand model at 0.82, without reusing HUD artwork.
-    const targetPosition = handMount.position.clone();
-    const targetQuaternion = handMount.quaternion.clone();
-    const targetScale = handMount.scale.clone().multiplyScalar(0.82 / 0.62);
     const fromPosition = staff.position.clone();
     const fromQuaternion = staff.quaternion.clone();
     const fromScale = staff.scale.clone();
@@ -174,14 +163,20 @@ export class ChestCinematic {
       const animate = (now: number) => {
         const t = Math.min(1, (now - started) / duration);
         const eased = t * t * (3 - 2 * t);
+        this.deps.scene.updateMatrixWorld(true);
+        player.mesh.updateMatrixWorld(true);
+        const targetPosition = handMount.getWorldPosition(new THREE.Vector3());
+        const targetQuaternion = handMount.getWorldQuaternion(new THREE.Quaternion());
+        // The chest prop uses 0.62 scale and the equipped hand model 0.82.
+        const targetScale = handMount.getWorldScale(new THREE.Vector3()).multiplyScalar(0.82 / 0.62);
         staff.position.lerpVectors(fromPosition, targetPosition, eased);
         staff.quaternion.slerpQuaternions(fromQuaternion, targetQuaternion, eased);
         staff.scale.lerpVectors(fromScale, targetScale, eased);
         if (t < 1) {
           requestAnimationFrame(animate);
         } else {
-          // End at the real 3D hand socket. It now tracks the animated hand;
-          // the cinematic swaps to the independent back socket at clip end.
+          // Match the animated hand in world space for this final frame. The
+          // existing back socket remains untouched after the pickup completes.
           staff.position.copy(targetPosition);
           staff.quaternion.copy(targetQuaternion);
           staff.scale.copy(targetScale);

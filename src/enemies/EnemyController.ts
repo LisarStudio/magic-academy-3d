@@ -3,8 +3,8 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 // ALIVE → PATROL/CHASE/ATTACK → FLIPPED/STUNNED → DYING → DEAD
 // STUNNED and FLIPPED both accept damage (not immune).
-// Only DYING and DEAD block damage — that's the crash guard.
-export type EnemyState = 'IDLE' | 'PATROL' | 'CHASE' | 'ATTACK' | 'STUNNED' | 'FLIPPED' | 'DYING' | 'DEAD';
+// DYING, DISSOLVING, DEAD and DEFEATED block damage — that's the crash guard.
+export type EnemyState = 'IDLE' | 'PATROL' | 'CHASE' | 'ATTACK' | 'STUNNED' | 'FLIPPED' | 'DYING' | 'DISSOLVING' | 'DEAD' | 'DEFEATED';
 
 export class EnemyController {
   public mesh: THREE.Group;
@@ -16,6 +16,12 @@ export class EnemyController {
   public isPaused = false;
   public arenaCenter: THREE.Vector3 | null = null;
   public arenaRadius = 15.0;
+  /** Crypt-only grounding: the chamber floor is below the outdoor terrain plane. */
+  public groundHeightOverride: number | null = null;
+  /** Optional validated walkable surfaces; prevents ceiling/roof hits for crypt enemies. */
+  public groundSnapSurfaces: THREE.Object3D[] | null = null;
+  /** Optional planar bounds for enemies that must remain inside a room. */
+  public movementBounds: THREE.Box2 | null = null;
 
   public patrolWaypoints: THREE.Vector3[] = [];
   private currentWaypointIndex = 0;
@@ -33,13 +39,16 @@ export class EnemyController {
   private attackCooldown = 0;
   private readonly meshMaterialEmissionBases = new Map<THREE.MeshStandardMaterial, { color: THREE.Color; intensity: number }>();
   private readonly bossRedEmissionMaterials: Array<{ material: THREE.MeshStandardMaterial; baseIntensity: number }> = [];
-  private readonly bossOwnedMaterials = new Set<THREE.MeshStandardMaterial>();
+  private readonly bossOwnedMaterials = new Set<THREE.Material>();
   private bossEyeWindup = 0;
+  private bossHitReactionTimer = 0;
+  private bossAlertTimer = 0;
+  private bossCombatPoseState: 'IDLE' | 'ALERT' | 'CHASE' | 'ATTACK_PREP' | 'ATTACK' | 'RECOVERY' | 'HIT_REACTION' | 'DEATH' = 'IDLE';
   private bossEyeGlow: THREE.Mesh | null = null;
   private bossEyeLight: THREE.PointLight | null = null;
   private bossGeneratedGeometry: THREE.BufferGeometry[] = [];
   private bossLegPivots: Array<{ pivot: THREE.Group; phase: number; restX: number }> = [];
-  private bossArmPivots: Array<{ pivot: THREE.Group; phase: number; restX: number }> = [];
+  private bossArmPivots: Array<{ pivot: THREE.Group; phase: number; restX: number; restZ: number; side?: number }> = [];
 
   // Death VFX state
   private dyingTimer = 0;
@@ -47,6 +56,17 @@ export class EnemyController {
   private deathVfxSpawned = false;
   private dyingScaleStart = 1.0;
   private scene: THREE.Scene | null = null; // Set externally for VFX
+  private bossDeathElapsed = 0;
+  private bossDeathDissolveElapsed = 0;
+  private bossDeathStartRotation = new THREE.Euler();
+  private bossDeathStartModelY = 0;
+  private bossFadeMaterials: Array<{ material: THREE.Material; opacity: number; transparent: boolean; depthWrite: boolean }> = [];
+  private bossDeathParticles: THREE.Points | null = null;
+  private bossDeathParticleOrigins: THREE.Vector3[] = [];
+  private bossDeathParticleVelocities: THREE.Vector3[] = [];
+  private static readonly BOSS_DEATH_FALL_DURATION = 0.82;
+  private static readonly BOSS_DEATH_DISSOLVE_DURATION = 1.25;
+  private static readonly BOSS_DEATH_PARTICLE_COUNT = 12;
 
   // Boss Battle variables
   private bossPatternIndex = 0;
@@ -64,13 +84,14 @@ export class EnemyController {
   private bossWarningRing: THREE.Mesh | null = null;
   private bossChargeLane: THREE.Group | null = null;
   private bossProjectileGroup: THREE.Group | null = null;
-  private readonly bossProjectiles: Array<{ mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; active: boolean }> = [];
+  private readonly bossProjectiles: Array<{ ownerId: string; mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; active: boolean }> = [];
   private bossVolleyShotsRemaining = 0;
   private bossVolleyShotTimer = 0;
   private bossVolleyFinishTimer = 0;
   private bossClaws: THREE.Object3D[] = [];
   private bossClawRestRotations = new Map<THREE.Object3D, THREE.Euler>();
   private bossModelBaseY = 0;
+  private readonly bossModelBaseRotation = new THREE.Euler();
   private readonly bossHurtboxLocal = new THREE.Box3();
   private readonly bossHurtboxFromLocal = new THREE.Vector3();
   private readonly bossHurtboxToLocal = new THREE.Vector3();
@@ -136,11 +157,11 @@ export class EnemyController {
   }
 
   public get hasBossHurtbox(): boolean {
-    return this.id === 'crab_boss' && !!this.crabModel && !this.bossHurtboxLocal.isEmpty();
+    return this.id === 'crab_boss' && this.isAlive() && !!this.crabModel && !this.bossHurtboxLocal.isEmpty();
   }
 
   public isAlive(): boolean {
-    return this.state !== 'DYING' && this.state !== 'DEAD' && !this.isDead && this.health > 0;
+    return this.state !== 'DYING' && this.state !== 'DISSOLVING' && this.state !== 'DEAD' && this.state !== 'DEFEATED' && !this.isDead && this.health > 0;
   }
 
   public getPosition(): THREE.Vector3 {
@@ -161,7 +182,7 @@ export class EnemyController {
 
   /** Segment test for fast spell projectiles against the boss model bounds. */
   public intersectsBossHurtbox(fromWorld: THREE.Vector3, toWorld: THREE.Vector3, padding = 0.18): boolean {
-    if (this.id !== 'crab_boss' || !this.crabModel || this.bossHurtboxLocal.isEmpty()) return false;
+    if (this.id !== 'crab_boss' || !this.isAlive() || !this.crabModel || this.bossHurtboxLocal.isEmpty()) return false;
     this.mesh.updateMatrixWorld(true);
     this.bossHurtboxWorldToLocal.copy(this.mesh.matrixWorld).invert();
     this.bossHurtboxFromLocal.copy(fromWorld);
@@ -221,6 +242,7 @@ export class EnemyController {
     // Reused low-poly projectile meshes; no per-shot geometry/material creation.
     this.bossProjectileGroup = new THREE.Group();
     this.bossProjectileGroup.name = 'crab_boss_volley_projectiles';
+    this.bossProjectileGroup.userData.ownerId = this.id;
     const projectileGeometry = new THREE.SphereGeometry(0.38, 12, 10);
     const projectileMaterial = new THREE.MeshStandardMaterial({
       color: 0xff3300,
@@ -235,7 +257,8 @@ export class EnemyController {
       mesh.visible = false;
       mesh.frustumCulled = true;
       this.bossProjectileGroup.add(mesh);
-      this.bossProjectiles.push({ mesh, velocity: new THREE.Vector3(), life: 0, active: false });
+      mesh.userData.ownerId = this.id;
+      this.bossProjectiles.push({ ownerId: this.id, mesh, velocity: new THREE.Vector3(), life: 0, active: false });
     }
     this.bossTelegraphRoot.add(this.bossProjectileGroup);
     scene.add(this.bossTelegraphRoot);
@@ -349,6 +372,7 @@ export class EnemyController {
       this.crabModel = model;
       this.mesh.add(model);
       this.bossModelBaseY = model.position.y;
+      this.bossModelBaseRotation.copy(model.rotation);
       if (this.id === 'crab_boss') {
         model.updateMatrixWorld(true);
         this.mesh.updateMatrixWorld(true);
@@ -402,9 +426,7 @@ export class EnemyController {
               if (!local) {
                 local = source.clone();
                 bossMaterialCopies.set(source, local);
-                if ((local as THREE.MeshStandardMaterial).isMeshStandardMaterial) {
-                  this.bossOwnedMaterials.add(local as THREE.MeshStandardMaterial);
-                }
+                this.bossOwnedMaterials.add(local);
               }
               return local;
             })
@@ -446,6 +468,8 @@ export class EnemyController {
         model.add(light);
         this.bossEyeLight = light;
         }
+        this.cacheBossDissolveMaterials(model);
+        this.createBossDeathParticles();
       }
 
       this.initCombatSwordIcon();
@@ -545,7 +569,7 @@ export class EnemyController {
       pivot.name = `nezha_x_leg_pivot_${side < 0 ? 'left' : 'right'}`;
       pivot.position.set(side * 0.52, 2.55, 0.02);
       model.add(pivot);
-      const entry = { pivot, phase: index * Math.PI, restX: pivot.rotation.x };
+      const entry = { pivot, phase: index * Math.PI, restX: pivot.rotation.x, restZ: pivot.rotation.z };
       this.bossLegPivots.push(entry);
       return entry;
     });
@@ -590,7 +614,7 @@ export class EnemyController {
         part.castShadow = armSource.castShadow;
         part.receiveShadow = armSource.receiveShadow;
         pivot.add(part);
-        const entry = { pivot, phase: side * Math.PI, restX: pivot.rotation.x };
+        const entry = { pivot, phase: side * Math.PI, restX: pivot.rotation.x, restZ: pivot.rotation.z, side };
         this.bossArmPivots.push(entry);
         this.bossClaws.push(pivot);
         this.bossClawRestRotations.set(pivot, pivot.rotation.clone());
@@ -755,7 +779,7 @@ export class EnemyController {
   // ─────────────────────────────────────────────────────────────────
   public takeHit(fromPos?: THREE.Vector3, damageAmount: number = 1): void {
     // Only block if already dying or dead
-    if (this.state === 'DYING' || this.state === 'DEAD') return;
+    if (this.state === 'DYING' || this.state === 'DISSOLVING' || this.state === 'DEAD' || this.state === 'DEFEATED') return;
 
     if (this.id === 'crab_boss') {
       if (!this.isBossVulnerable) {
@@ -774,6 +798,7 @@ export class EnemyController {
         this.safeNormalize(EnemyController.TEMP_DIR);
         this.mesh.position.addScaledVector(EnemyController.TEMP_DIR, 0.6);
       }
+      this.bossHitReactionTimer = 0.42;
 
       if (this.health <= 0) {
         this.triggerDeath();
@@ -811,9 +836,11 @@ export class EnemyController {
   // triggerDeath — called ONCE, idempotent via DYING guard
   // ─────────────────────────────────────────────────────────────────
   private triggerDeath(): void {
-    if (this.state === 'DYING' || this.state === 'DEAD') return; // Double-fire guard
+    if (this.state === 'DYING' || this.state === 'DISSOLVING' || this.state === 'DEAD' || this.state === 'DEFEATED') return; // Double-fire guard
 
     this.state = 'DYING';
+    this.bossCombatPoseState = 'DEATH';
+    this.bossHitReactionTimer = 0;
     this.isDead = true;
     this.hitFlashTimer = 0;
     this.dyingTimer = this.dyingDuration;
@@ -823,15 +850,34 @@ export class EnemyController {
 
     // Disable AI immediately
     this.knockbackVelocity.set(0, 0, 0);
-    this.onAttackPlayer = undefined;
+    if (this.id !== 'crab_boss') this.onAttackPlayer = undefined;
 
-    // Fire death callback ONCE, then nullify
+    if (this.id === 'crab_boss') {
+      // Stop all boss-owned attacks before the next simulation/update pass.
+      this.bossDeathElapsed = 0;
+      this.bossDeathDissolveElapsed = 0;
+      this.bossDeathStartRotation.copy(this.mesh.rotation);
+      this.bossDeathStartModelY = this.crabModel?.position.y ?? this.bossModelBaseY;
+      this.bossAttackPhase = 'READY';
+      this.bossAttackCooldown = 0;
+      this.bossPhaseTimer = 0;
+      this.bossAttackHitApplied = true;
+      this.bossVolleyShotsRemaining = 0;
+      this.bossVolleyShotTimer = 0;
+      this.bossVolleyFinishTimer = 0;
+      this.clearBossProjectiles();
+      this.bossEyeWindup = 0;
+      if (this.bossEyeGlow) (this.bossEyeGlow.material as THREE.MeshBasicMaterial).opacity = 0;
+      if (this.bossEyeLight) this.bossEyeLight.intensity = 0;
+      if (this.bossDeathParticles) this.bossDeathParticles.visible = false;
+    }
+
+    // Invoke the callback once for this life; the state guard prevents repeats.
     const cb = this.onDeath;
-    this.onDeath = undefined;
     console.log(`[Enemy ${this.id}] DYING — triggering death sequence`);
 
-    // Small upward impulse for "pop" feel
-    this.mesh.position.y += 0.05;
+    // Keep the boss planted at its final hit position for a stable fall pose.
+    if (this.id !== 'crab_boss') this.mesh.position.y += 0.05;
 
     cb?.(this);
   }
@@ -982,10 +1028,147 @@ export class EnemyController {
 
   private groundRaycaster = new THREE.Raycaster();
 
+  private cacheBossDissolveMaterials(model: THREE.Object3D): void {
+    this.bossFadeMaterials = [];
+    const seen = new Set<THREE.Material>();
+    model.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        if (seen.has(material)) continue;
+        seen.add(material);
+        this.bossFadeMaterials.push({
+          material,
+          opacity: material.opacity,
+          transparent: material.transparent,
+          depthWrite: material.depthWrite,
+        });
+      }
+    });
+  }
+
+  private createBossDeathParticles(): void {
+    this.bossDeathParticleOrigins = [];
+    this.bossDeathParticleVelocities = [];
+    const bounds = this.bossHurtboxLocal;
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3());
+    const positions = new Float32Array(EnemyController.BOSS_DEATH_PARTICLE_COUNT * 3);
+    for (let i = 0; i < EnemyController.BOSS_DEATH_PARTICLE_COUNT; i++) {
+      const origin = new THREE.Vector3(
+        center.x + (Math.random() - 0.5) * size.x * 0.82,
+        bounds.min.y + Math.random() * Math.max(0.5, size.y),
+        center.z + (Math.random() - 0.5) * size.z * 0.82,
+      );
+      this.bossDeathParticleOrigins.push(origin);
+      this.bossDeathParticleVelocities.push(new THREE.Vector3(
+        (Math.random() - 0.5) * 1.3,
+        0.45 + Math.random() * 1.15,
+        (Math.random() - 0.5) * 1.3,
+      ));
+      positions.set([origin.x, origin.y, origin.z], i * 3);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const material = new THREE.PointsMaterial({
+      color: 0xff8a24,
+      size: 0.12,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      toneMapped: false,
+      sizeAttenuation: true,
+      blending: THREE.AdditiveBlending,
+    });
+    const particles = new THREE.Points(geometry, material);
+    particles.name = 'nezha_x_dissolve_energy_particles';
+    particles.visible = false;
+    particles.frustumCulled = false;
+    this.mesh.add(particles);
+    this.bossDeathParticles = particles;
+  }
+
+  private beginBossDissolve(): void {
+    this.state = 'DISSOLVING';
+    this.bossDeathDissolveElapsed = 0;
+    this.deathVfxSpawned = true;
+    for (const entry of this.bossFadeMaterials) {
+      if (!entry.material.transparent) {
+        entry.material.transparent = true;
+        entry.material.needsUpdate = true;
+      }
+      entry.material.depthWrite = false;
+    }
+    if (this.bossDeathParticles) {
+      this.bossDeathParticles.visible = true;
+      (this.bossDeathParticles.material as THREE.PointsMaterial).opacity = 0.9;
+    }
+    this.debugBossEvent('DISSOLVING_STARTED', { durationSeconds: EnemyController.BOSS_DEATH_DISSOLVE_DURATION });
+  }
+
+  private updateBossDeathSequence(delta: number): void {
+    if (this.state === 'DYING') {
+      this.bossDeathElapsed += delta;
+      const t = THREE.MathUtils.smoothstep(this.bossDeathElapsed / EnemyController.BOSS_DEATH_FALL_DURATION, 0, 1);
+      this.mesh.rotation.x = THREE.MathUtils.lerp(this.bossDeathStartRotation.x, this.bossDeathStartRotation.x - 0.16, t);
+      this.mesh.rotation.y = this.bossDeathStartRotation.y;
+      this.mesh.rotation.z = THREE.MathUtils.lerp(this.bossDeathStartRotation.z, this.bossDeathStartRotation.z + 0.72, t);
+      if (this.crabModel) {
+        this.crabModel.position.y = THREE.MathUtils.lerp(this.bossDeathStartModelY, this.bossModelBaseY - 0.26, t);
+      }
+      for (const arm of this.bossArmPivots) arm.pivot.rotation.x = THREE.MathUtils.lerp(arm.restX, arm.restX + 0.85, t);
+      for (const leg of this.bossLegPivots) leg.pivot.rotation.x = THREE.MathUtils.lerp(leg.restX, leg.restX + (leg.phase === 0 ? 0.28 : -0.22), t);
+      if (this.bossDeathElapsed >= EnemyController.BOSS_DEATH_FALL_DURATION) {
+        this.beginBossDissolve();
+      }
+      return;
+    }
+
+    if (this.state !== 'DISSOLVING') return;
+    this.bossDeathDissolveElapsed += delta;
+    const t = THREE.MathUtils.clamp(this.bossDeathDissolveElapsed / EnemyController.BOSS_DEATH_DISSOLVE_DURATION, 0, 1);
+    const alpha = 1 - t;
+    for (const entry of this.bossFadeMaterials) entry.material.opacity = entry.opacity * alpha;
+    if (this.bossDeathParticles) {
+      const attribute = this.bossDeathParticles.geometry.getAttribute('position') as THREE.BufferAttribute;
+      for (let i = 0; i < this.bossDeathParticleOrigins.length; i++) {
+        const origin = this.bossDeathParticleOrigins[i]!;
+        const velocity = this.bossDeathParticleVelocities[i]!;
+        const age = this.bossDeathDissolveElapsed;
+        attribute.setXYZ(i,
+          origin.x + velocity.x * age,
+          origin.y + velocity.y * age + 0.28 * age * age,
+          origin.z + velocity.z * age,
+        );
+      }
+      attribute.needsUpdate = true;
+      (this.bossDeathParticles.material as THREE.PointsMaterial).opacity = 0.9 * alpha;
+    }
+    if (t >= 1) {
+      this.mesh.visible = false;
+      if (this.bossDeathParticles) this.bossDeathParticles.visible = false;
+      this.state = 'DEFEATED';
+      this.isDead = true;
+      this.debugBossEvent('DEFEATED', { alpha: 0, projectilesActive: this.bossProjectiles.some((entry) => entry.ownerId === this.id && entry.active) });
+    }
+  }
+
+  private restoreBossDissolveMaterials(): void {
+    for (const entry of this.bossFadeMaterials) {
+      entry.material.opacity = entry.opacity;
+      entry.material.depthWrite = entry.depthWrite;
+      if (entry.material.transparent !== entry.transparent) {
+        entry.material.transparent = entry.transparent;
+        entry.material.needsUpdate = true;
+      }
+    }
+  }
+
   public update(delta: number, playerPos: THREE.Vector3, colliders?: THREE.Object3D[]): void {
     if (this.isPaused) return;
     // Fully dead and sequence done — skip
-    if (this.state === 'DEAD') return;
+    if (this.state === 'DEAD' || this.state === 'DEFEATED') return;
 
     if (this.id === 'crab_boss' && this.bossDebugEnabled) {
       if (this.state !== this.debugLastBossState || this.bossAttackPhase !== this.debugLastBossPhase) {
@@ -995,11 +1178,16 @@ export class EnemyController {
       }
     }
 
+    if (this.id === 'crab_boss' && (this.state === 'DYING' || this.state === 'DISSOLVING')) {
+      this.updateBossDeathSequence(delta);
+      return;
+    }
+
     this.proceduralTime += delta * 6;
     this.updateBossEyeEmission(delta);
     if (this.id === 'crab_boss') this.updateBossProjectiles(delta, playerPos);
 
-    // ── DYING sequence ──
+    // ── Standard enemy DYING sequence ──
     if (this.state === 'DYING') {
       // Spawn VFX on first frame of dying
       if (!this.deathVfxSpawned) {
@@ -1009,23 +1197,6 @@ export class EnemyController {
       }
 
       this.dyingTimer -= delta;
-
-      if (this.id === 'crab_boss') {
-        // Boss Defeat Pose: slumps defeated onto the arena floor, perfectly grounded
-        this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, 0, delta * 8.0);
-        this.mesh.position.y = 0.2;
-        if (this.crabModel) {
-          this.crabModel.position.y = THREE.MathUtils.lerp(this.crabModel.position.y, this.bossModelBaseY - 0.35, delta * 4.0);
-        }
-        this.raiseBossClaws(-0.6);
-        this.mesh.visible = true; // Remained present for cinematic!
-        if (this.dyingTimer <= 0) {
-          this.state = 'DEAD';
-          this.isDead = true;
-          console.log(`[BOSS] Death sequence completed — lying defeated on floor`);
-        }
-        return;
-      }
 
       // Regular crabs: squash, spin, shrink safely
       const t = Math.max(0, this.dyingTimer / this.dyingDuration); // 1→0
@@ -1089,14 +1260,16 @@ export class EnemyController {
     };
 
     const levelInst = (window as any).gameInstance?.level01;
-    let targetGroundY = levelInst ? levelInst.getTerrainHeight(this.mesh.position.x, this.mesh.position.z) : 0.0;
+    let targetGroundY = this.groundHeightOverride ??
+      (levelInst ? levelInst.getTerrainHeight(this.mesh.position.x, this.mesh.position.z) : 0.0);
 
     // Distance Culling Optimization: Only raycast colliders if enemy is within 35m of player
-    if (distToPlayer <= 35.0 && colliders && colliders.length > 0) {
+    const groundCandidates = this.groundSnapSurfaces ?? colliders;
+    if (distToPlayer <= 35.0 && groundCandidates && groundCandidates.length > 0) {
       EnemyController.TEMP_ORIGIN.set(this.mesh.position.x, this.mesh.position.y + 1.2, this.mesh.position.z);
       this.groundRaycaster.set(EnemyController.TEMP_ORIGIN, EnemyController.TEMP_DOWN);
       this.groundRaycaster.far = 4.0;
-      const rawHits = this.groundRaycaster.intersectObjects(colliders, true);
+      const rawHits = this.groundRaycaster.intersectObjects(groundCandidates, true);
       for (const hit of rawHits) {
         if (isSelfChild(hit.object)) continue;
         if (!hit.face) continue;
@@ -1222,6 +1395,7 @@ export class EnemyController {
       case 'IDLE':
       case 'PATROL':
         if (distToPlayer <= this.detectionRadius) {
+          if (this.id === 'crab_boss') this.bossAlertTimer = 0.34;
           this.state = 'CHASE';
         } else {
           this.patrolBehavior(delta);
@@ -1277,19 +1451,44 @@ export class EnemyController {
         break;
     }
 
+    if (this.movementBounds) {
+      this.mesh.position.x = THREE.MathUtils.clamp(this.mesh.position.x, this.movementBounds.min.x, this.movementBounds.max.x);
+      this.mesh.position.z = THREE.MathUtils.clamp(this.mesh.position.z, this.movementBounds.min.y, this.movementBounds.max.y);
+    }
+
+    if (this.id === 'crab_boss') this.animateBossTell(delta);
     this.animateLegs(delta);
-    if (this.id === 'crab_boss') this.animateBossTell();
   }
 
   public resetBossEncounter(): void {
-    if (this.id !== 'crab_boss' || !this.arenaCenter || this.state === 'DYING' || this.state === 'DEAD') return;
+    if (this.id !== 'crab_boss' || !this.arenaCenter) return;
     this.health = this.maxHealth;
     this.isDead = false;
     this.state = 'IDLE';
     this.mesh.visible = true;
     this.mesh.position.copy(this.arenaCenter);
+    this.mesh.scale.setScalar(1);
     this.mesh.rotation.set(0, 0, 0);
+    if (this.crabModel) {
+      this.crabModel.visible = true;
+      this.crabModel.position.y = this.bossModelBaseY;
+      this.crabModel.rotation.set(0, 0, 0);
+    }
+    this.restoreBossDissolveMaterials();
+    this.bossDeathElapsed = 0;
+    this.bossDeathDissolveElapsed = 0;
+    this.deathVfxSpawned = false;
+    if (this.bossDeathParticles) {
+      const positions = this.bossDeathParticles.geometry.getAttribute('position') as THREE.BufferAttribute;
+      this.bossDeathParticleOrigins.forEach((origin, index) => positions.setXYZ(index, origin.x, origin.y, origin.z));
+      positions.needsUpdate = true;
+      this.bossDeathParticles.visible = false;
+      (this.bossDeathParticles.material as THREE.PointsMaterial).opacity = 0;
+    }
     this.bossPatternIndex = 0;
+    this.bossCombatPoseState = 'IDLE';
+    this.bossHitReactionTimer = 0;
+    this.bossAlertTimer = 0;
     this.bossAttackPhase = 'READY';
     this.bossPhaseTimer = 0;
     this.bossAttackCooldown = 0;
@@ -1394,7 +1593,7 @@ export class EnemyController {
       this.bossVolleyShotTimer -= delta;
       if (this.bossVolleyShotTimer > 0) return;
 
-      const projectile = this.bossProjectiles.find((entry) => !entry.active);
+      const projectile = this.bossProjectiles.find((entry) => entry.ownerId === this.id && !entry.active);
       if (!projectile) {
         // Pool saturation should never trap the boss in ATTACK.
         this.bossVolleyShotsRemaining = 0;
@@ -1425,7 +1624,7 @@ export class EnemyController {
 
   private updateBossProjectiles(delta: number, playerPos: THREE.Vector3): void {
     for (const projectile of this.bossProjectiles) {
-      if (!projectile.active) continue;
+      if (projectile.ownerId !== this.id || !projectile.active) continue;
       const start = EnemyController.BOSS_PROJECTILE_START.copy(projectile.mesh.position);
       const end = EnemyController.BOSS_PROJECTILE_END.copy(start).addScaledVector(projectile.velocity, delta);
       const segment = EnemyController.BOSS_PROJECTILE_SEGMENT.subVectors(end, start);
@@ -1452,8 +1651,10 @@ export class EnemyController {
 
   private clearBossProjectiles(): void {
     for (const projectile of this.bossProjectiles) {
+      if (projectile.ownerId !== this.id) continue;
       projectile.active = false;
       projectile.life = 0;
+      projectile.velocity.set(0, 0, 0);
       projectile.mesh.visible = false;
     }
   }
@@ -1529,12 +1730,36 @@ export class EnemyController {
     if (this.bossEyeLight) this.bossEyeLight.intensity = this.bossEyeWindup * (1.1 + softPulse * 1.6);
   }
 
-  private animateBossTell(): void {
+  private animateBossTell(delta: number): void {
     if (!this.crabModel || this.state === 'DYING' || this.state === 'DEAD') return;
-    const lift = this.bossAttackPhase === 'TELEGRAPH' && this.bossPattern === 'CLAW' ? 0.18 : 0;
+    this.bossHitReactionTimer = Math.max(0, this.bossHitReactionTimer - delta);
+    this.bossAlertTimer = Math.max(0, this.bossAlertTimer - delta);
+    const attacking = this.state === 'ATTACK';
+    const recovering = this.state === 'STUNNED' || this.bossAttackPhase === 'RECOVERY';
     const pursuing = this.state === 'CHASE' || this.state === 'PATROL';
-    const gaitBob = pursuing ? Math.abs(Math.sin(this.proceduralTime * 1.35)) * 0.035 : 0;
-    this.crabModel.position.y = this.bossModelBaseY + lift + gaitBob;
+    const pose = this.bossHitReactionTimer > 0 ? 'HIT_REACTION'
+      : attacking && this.bossAttackPhase === 'TELEGRAPH' ? 'ATTACK_PREP'
+      : attacking && this.bossAttackPhase === 'EXECUTE' ? 'ATTACK'
+      : recovering ? 'RECOVERY'
+      : this.bossAlertTimer > 0 ? 'ALERT'
+      : pursuing ? 'CHASE' : 'IDLE';
+    this.bossCombatPoseState = pose;
+
+    // The supplied boss GLB is a hard-surface part rig rather than a skinned
+    // animation rig. Pose its existing model and appendage pivots by combat
+    // phase so tells, movement, impact and recovery read as one state machine.
+    const lift = pose === 'ATTACK_PREP' && this.bossPattern === 'CLAW' ? 0.2 : 0;
+    const gaitBob = pursuing ? Math.abs(Math.sin(this.proceduralTime * 1.35)) * 0.045 : 0;
+    const idleBreath = pose === 'IDLE' ? Math.sin(this.proceduralTime * 0.72) * 0.025 : 0;
+    const hitDip = pose === 'HIT_REACTION' ? -0.13 : 0;
+    const poseLift = pose === 'ATTACK_PREP' ? 0.08 : pose === 'RECOVERY' ? -0.08 : 0;
+    this.crabModel.position.y = this.bossModelBaseY + lift + gaitBob + idleBreath + hitDip + poseLift;
+    const pitch = pose === 'ATTACK_PREP' ? -0.14 : pose === 'ATTACK' ? 0.25
+      : pose === 'RECOVERY' ? 0.18 : pose === 'HIT_REACTION' ? -0.25
+      : pose === 'ALERT' ? -0.09 : pose === 'CHASE' ? 0.035 : Math.sin(this.proceduralTime * 0.72) * 0.012;
+    const roll = pose === 'HIT_REACTION' ? 0.12 * Math.sin(this.proceduralTime * 22) : 0;
+    this.crabModel.rotation.x = THREE.MathUtils.damp(this.crabModel.rotation.x, this.bossModelBaseRotation.x + pitch, 10, delta);
+    this.crabModel.rotation.z = THREE.MathUtils.damp(this.crabModel.rotation.z, this.bossModelBaseRotation.z + roll, 9, delta);
   }
 
   private animateLegs(delta: number): void {
@@ -1549,13 +1774,19 @@ export class EnemyController {
       // The original GLB combines each hand and arm into one mesh. We split
       // its mirrored sides at load and pivot them at the shoulders so the
       // pursuit reads as a playful, reaching robot rather than a rigid sign.
-      const canGesture = this.bossAttackPhase === 'READY' && this.state !== 'ATTACK' && this.state !== 'STUNNED';
       for (const arm of this.bossArmPivots) {
-        if (!canGesture) continue; // Windup/recovery poses own the arm pivots.
-        const amplitude = pursuing ? 0.18 : 0.045;
-        const target = arm.restX + Math.sin(this.proceduralTime * (pursuing ? 1.15 : 0.55) + arm.phase) * amplitude;
-        arm.pivot.rotation.x = THREE.MathUtils.damp(arm.pivot.rotation.x, target, 7, delta);
-        arm.pivot.rotation.z = Math.sin(this.proceduralTime * 0.7 + arm.phase) * (pursuing ? 0.035 : 0.012);
+        const side = arm.side ?? (Math.sin(arm.phase) < 0 ? -1 : 1);
+        const phase = this.bossCombatPoseState;
+        const gait = Math.sin(this.proceduralTime * (pursuing ? 1.8 : 0.55) + arm.phase);
+        let targetX = arm.restX + gait * (pursuing ? 0.24 : 0.035);
+        let targetZ = arm.restZ + Math.sin(this.proceduralTime * 0.7 + arm.phase) * (pursuing ? 0.045 : 0.012);
+        if (phase === 'ALERT') { targetX = arm.restX - 0.28; targetZ = arm.restZ + side * 0.12; }
+        else if (phase === 'ATTACK_PREP') { targetX = arm.restX - 0.82; targetZ = arm.restZ + side * 0.2; }
+        else if (phase === 'ATTACK') { targetX = arm.restX + (side < 0 ? 0.95 : -0.65); targetZ = arm.restZ - side * 0.16; }
+        else if (phase === 'RECOVERY') { targetX = arm.restX + 0.2; targetZ = arm.restZ + side * 0.08; }
+        else if (phase === 'HIT_REACTION') { targetX = arm.restX + side * 0.72; targetZ = arm.restZ + side * 0.3; }
+        arm.pivot.rotation.x = THREE.MathUtils.damp(arm.pivot.rotation.x, targetX, phase === 'ATTACK' ? 20 : 9, delta);
+        arm.pivot.rotation.z = THREE.MathUtils.damp(arm.pivot.rotation.z, targetZ, 10, delta);
       }
       return;
     }
@@ -1607,7 +1838,11 @@ export class EnemyController {
 
     // Enforce terrain grounding height per-frame for enemy feet
     const level = (window as any).gameInstance?.level01;
-    if (level && level.getTerrainHeight) {
+    if (this.groundHeightOverride !== null) {
+      // Do not let the outdoor terrain resolver lift underground enemies onto
+      // the surface while they chase Wukong.
+      this.mesh.position.y = this.groundHeightOverride;
+    } else if (level && level.getTerrainHeight) {
       const terrainY = level.getTerrainHeight(this.mesh.position.x, this.mesh.position.z);
       if (this.id === 'crab_boss') {
         this.mesh.position.y = terrainY + 0.1;
@@ -1625,6 +1860,11 @@ export class EnemyController {
     this.bossOwnedMaterials.clear();
     this.bossEyeGlow?.geometry.dispose();
     (this.bossEyeGlow?.material as THREE.Material | undefined)?.dispose();
+    this.bossDeathParticles?.geometry.dispose();
+    (this.bossDeathParticles?.material as THREE.Material | undefined)?.dispose();
+    this.bossDeathParticles = null;
+    this.bossDeathParticleOrigins.length = 0;
+    this.bossDeathParticleVelocities.length = 0;
     for (const geometry of this.bossGeneratedGeometry) geometry.dispose();
     this.bossGeneratedGeometry.length = 0;
     this.bossLegPivots.length = 0;

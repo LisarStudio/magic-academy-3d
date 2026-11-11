@@ -17,7 +17,7 @@ import type { LevelToyStory } from '../levels/LevelToyStory';
 import { EquipmentViewer } from '../ui/EquipmentViewer';
 import { MobileTouchControls } from '../ui/MobileTouchControls';
 import { MainMenu, type MenuState, type StartMode } from '../ui/MainMenu';
-import { isLowPowerDevice, renderPixelRatio } from './DevicePerformance';
+import { isLowPowerDevice, isMobileDevice, renderPixelRatio } from './DevicePerformance';
 import { RuntimeDiagnostics } from './RuntimeDiagnostics';
 
 export class Game {
@@ -49,8 +49,9 @@ export class Game {
   private renderQuality = 1;
   private gameplayPrepared = false;
   private gameplayPreparation: Promise<void> | null = null;
-  private gameplayWarmupScheduled = false;
-  private optionalPlayerAnimationsScheduled = false;
+  private optionalSupportClipsScheduled = false;
+  private pendingSaveTimer: number | null = null;
+  private pendingSaveUsesIdleCallback = false;
   private frameTimeAverageMs = 16.67;
   private renderScale = 1;
   private performanceSampleElapsed = 0;
@@ -62,11 +63,19 @@ export class Game {
   private gameOverElapsed = 0;
   private gameOverSpot: THREE.SpotLight | null = null;
   private gameOverTarget = new THREE.Object3D();
+  private attackInputHeld = false;
+  private staffChargeStartedAt = 0;
+  private staffChargeActive = false;
+  private pendingStaffDamageMultiplier = 1;
 
   constructor(canvas: HTMLCanvasElement) {
     this.sceneManager = new SceneManager(canvas);
     this.diagnostics = new RuntimeDiagnostics();
     this.diagnostics.attachRenderer(canvas);
+    window.addEventListener('pagehide', () => {
+      if (this.pendingSaveTimer === null || !this.gameplayPrepared) return;
+      this.saveGameNow(false);
+    });
     canvas.addEventListener('webglcontextlost', () => {
       this.loopFrameScheduled = false;
     });
@@ -84,6 +93,10 @@ export class Game {
     this.assetManager = new AssetManager();
     this.hud = new HUD();
     this.subtitleSystem = new SubtitleSystem();
+    document.getElementById('debug-build-version')!.textContent = `Reino Celestial · v${__APP_VERSION__.split('+')[0]}`;
+    document.getElementById('debug-build-time')!.textContent = __BUILD_TIME_UTC__;
+    document.getElementById('debug-build-commit')!.textContent = __BUILD_COMMIT__;
+    document.getElementById('debug-build-env')!.textContent = import.meta.env.DEV ? 'desarrollo' : 'producción';
 
     this.mainMenu = new MainMenu({
       onStateChange: (state) => {
@@ -120,7 +133,8 @@ export class Game {
         this.applyRenderResolution();
         this.sceneManager.renderer.setSize(window.innerWidth, window.innerHeight);
       },
-      onSelect: () => this.audioManager.playMenuSelect()
+      onSelect: () => this.audioManager.playMenuSelect(),
+      onReturnToMenu: () => { void this.audioManager.startIntroMusic(); }
     });
     this.assetManager.onProgress = (loaded, total, url) => this.mainMenu.setInGameLoadingProgress(loaded, total, url, 'Cargando a Wukong');
 
@@ -192,6 +206,8 @@ export class Game {
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
     this.player.onLivesChange = (lives) => this.hud.setLives(lives);
+    this.player.onStaminaChange = (value, max, visible) => this.hud.setStamina(value, max, visible);
+    this.hud.setStamina(this.player.stamina, 100, false);
     this.player.onGameOver = () => this.enterGameOver();
     this.inputManager.onPlayerCommand = () => this.player?.interruptHitReactionForCommand(this.inputManager);
     // Interactions are valid during an attack animation. The HUD prompt and
@@ -200,6 +216,9 @@ export class Game {
     this.inputManager.canInteract = () => this.menuState === 'Playing' && !this.isPaused && !!this.player &&
       !this.player.isControlsLocked && !this.player.isMovementLocked;
     this.inputManager.canAttack = () => this.canUseGameplayActions();
+
+    this.inputManager.onAttackPress = () => this.beginAttackInput();
+    this.inputManager.onAttackRelease = () => this.finishAttackInput();
 
     // Register the defeat spotlight before scene shader preparation. Adding a
     // new light at the moment of death changes Three.js light defines and can
@@ -249,6 +268,11 @@ export class Game {
     // frame for another multi-megabyte FBX download and retarget pass.
     await this.level01.init();
 
+    // Optional traversal/continue clips are not required to enter the world:
+    // the essential run/jump/idle clips are already part of loadPlayerModel.
+    // Loading five FBX files serially here kept the loading screen up even
+    // though the player could already move. Prepare them later in idle time.
+
     // Focus camera on target AFTER the level is initialized and player is spawned at Checkpoint 0!
     this.cameraController.setTarget(this.player.mesh);
 
@@ -272,8 +296,9 @@ export class Game {
       staffWarmup?.removeFromParent();
     }
 
-    // Full-scene and crypt shaders are compiled asynchronously during browser
-    // idle time after the first playable frame (see scheduleGameplayWarmup).
+    // Avoid compiling the entire world after gameplay becomes interactive.
+    // The browser/GPU may still be busy with rendering and input, so even an
+    // idle callback can cause a visible hitch on mobile and integrated GPUs.
 
     // 6. Bind Player & HUD Status Callbacks
     this.player.onHealthChange = (hp, maxHp) => this.hud.setHealth(hp, maxHp);
@@ -288,10 +313,27 @@ export class Game {
 
     // Bind Pause Menu Save / Load buttons
     document.getElementById('btn-save-game')?.addEventListener('click', () => {
-      this.saveGame();
+      const screen = document.getElementById('pause-screen');
+      if (screen) screen.dataset.contextAction = 'save';
+      this.showPausePanel('context');
+      try {
+        this.saveGameNow(false);
+        this.setPauseContext('Partida guardada', 'Tu progreso se guardó en este dispositivo.');
+        this.subtitleSystem.show('Guardado', '¡Partida guardada exitosamente!');
+      } catch (error) {
+        console.error('[SaveSystem] Pause-menu save failed:', error);
+        this.setPauseContext('No se pudo guardar', 'El almacenamiento local no pudo guardar la partida.');
+      }
     });
     document.getElementById('btn-load-game')?.addEventListener('click', () => {
-      this.loadGame();
+      const screen = document.getElementById('pause-screen');
+      if (screen) screen.dataset.contextAction = 'load';
+      this.showPausePanel('context');
+      const loaded = this.loadGame();
+      this.setPauseContext(
+        loaded ? 'Partida cargada' : 'No hay una partida disponible',
+        loaded ? 'Se restauró el progreso guardado.' : 'Guarda una partida durante esta aventura para poder cargarla aquí.',
+      );
     });
 
     // 7. Bind Input Actions
@@ -343,7 +385,7 @@ export class Game {
                 if (dot > 0.15 || dist < 1.8 || enemy.id === 'crab_boss') {
                   console.log(`[Game] Physical Staff Hit on '${enemy.id}'!`);
                   try {
-                    enemy.takeHit(playerPos, this.level01.getStaffDamage(1));
+                    enemy.takeHit(playerPos, this.level01.getStaffDamage(1) * this.pendingStaffDamageMultiplier);
                     this.audioManager.playHitImpact();
                     this.spellSystem.createImpactParticles(enemyPos.clone().add(new THREE.Vector3(0, 0.5, 0)), 0xffd700);
                   } catch (err) {
@@ -366,13 +408,14 @@ export class Game {
               }
             }
           });
-          this.level01.damageTreeSnakes(playerPos, forwardDir, 2.8, 1);
+          this.level01.damageTreeSnakes(playerPos, forwardDir, 2.8, this.pendingStaffDamageMultiplier);
         },
         // OnComplete callback — animation finished, return staff to back cleanly and fade aura off
         () => {
           this.player.attachStaffToBack();
           this.player.stopAttackAura();
           this.player.isAttacking = false;
+          this.pendingStaffDamageMultiplier = 1;
         }
       );
     };
@@ -534,42 +577,6 @@ export class Game {
     return this.gameplayPreparation!;
   }
 
-  /** Compile remaining scene variants only when the browser has spare time.
-   * Synchronous full-scene renderer.compile() used to block the main thread
-   * during startup, producing the long freeze before the first playable frame. */
-  private scheduleGameplayWarmup(): void {
-    if (this.gameplayWarmupScheduled || !this.gameplayPrepared || !this.level01) return;
-    this.gameplayWarmupScheduled = true;
-
-    const warm = async (): Promise<void> => {
-      try {
-        await this.sceneManager.renderer.compileAsync(
-          this.sceneManager.scene,
-          this.sceneManager.camera
-        );
-      } catch (error) {
-        console.warn('[Game] Deferred scene shader warmup failed; materials will compile on demand.', error);
-      }
-      try {
-        await this.level01.precompileCuriosityCrypt(
-          this.sceneManager.renderer,
-          this.sceneManager.camera
-        );
-      } catch (error) {
-        console.warn('[Game] Deferred crypt shader warmup failed; the crypt remains available.', error);
-      }
-    };
-
-    const idleWindow = window as Window & {
-      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
-    };
-    if (idleWindow.requestIdleCallback) {
-      idleWindow.requestIdleCallback(() => { void warm(); }, { timeout: 12000 });
-    } else {
-      window.setTimeout(() => { void warm(); }, 3000);
-    }
-  }
-
   private initUIListeners(): void {
     const btnReplay = document.getElementById('btn-replay');
     const btnContinue = document.getElementById('btn-victory-continue');
@@ -578,8 +585,43 @@ export class Game {
     document.getElementById('btn-life-continue')?.addEventListener('click', () => this.continueAfterGameOver());
     document.getElementById('btn-life-abandon')?.addEventListener('click', () => this.abandonAfterGameOver());
     this.inputManager.onPauseToggle = () => {
-      if (this.menuState === 'Playing') this.togglePause();
+      if (this.menuState !== 'Playing') return;
+      const returnConfirmation = document.getElementById('pause-return-confirm');
+      if (this.isPaused && returnConfirmation && !returnConfirmation.classList.contains('hidden')) {
+        returnConfirmation.classList.add('hidden');
+        document.getElementById('btn-pause-main-menu')?.focus();
+        return;
+      }
+      this.togglePause();
     };
+
+    document.getElementById('btn-pause-options')?.addEventListener('click', () => {
+      this.showPausePanel('options');
+    });
+    document.getElementById('btn-pause-equipment')?.addEventListener('click', () => {
+      this.showPausePanel('equipment');
+    });
+    const returnConfirmation = document.getElementById('pause-return-confirm');
+    const returnToMenuButton = document.getElementById('btn-pause-main-menu');
+    returnToMenuButton?.addEventListener('click', () => {
+      returnConfirmation?.classList.remove('hidden');
+      document.getElementById('btn-pause-save-and-menu')?.focus();
+    });
+    document.getElementById('btn-pause-cancel-menu')?.addEventListener('click', () => {
+      returnConfirmation?.classList.add('hidden');
+      returnToMenuButton?.focus();
+    });
+    const leaveForMainMenu = (): void => {
+      this.isPaused = false;
+      this.inputManager.resetInputs();
+      this.hud.showPauseMenu(false);
+      void this.mainMenu.returnToMainMenu();
+    };
+    document.getElementById('btn-pause-save-and-menu')?.addEventListener('click', () => {
+      this.saveGameNow(false);
+      leaveForMainMenu();
+    });
+    document.getElementById('btn-pause-discard-and-menu')?.addEventListener('click', leaveForMainMenu);
 
     btnReplay?.addEventListener('click', () => {
       window.location.reload();
@@ -650,35 +692,20 @@ export class Game {
         void this.level01.loadGrassInBackground();
       }
     }, 9000);
-    // Continue/decorative traversal clips are not needed for the first playable
-    // frame. Downloading, parsing and retargeting FBX on the main thread right
-    // after Continue used to produce a long hitch on phones. Start that work
-    // only after the player has had time to move, in an idle window, and keep
-    // its existing one-at-a-time parse behavior.
-    if (!this.optionalPlayerAnimationsScheduled) {
-      this.optionalPlayerAnimationsScheduled = true;
+    // Keep optional FBX parsing out of startup. Each clip loader is sequential
+    // and yields between files; this work starts only after the player has had
+    // time to enter the level, and failures do not affect the playable state.
+    if (!this.optionalSupportClipsScheduled) {
+      this.optionalSupportClipsScheduled = true;
       window.setTimeout(() => {
-        const loadOptionalAnimations = async () => {
-          try {
-            const continueClip = await this.assetManager.loadContinueAnimation(this.player.mesh);
-            if (continueClip?.tracks.length) this.animationController.addClips([continueClip]);
-            if (this.gameOverActive && this.animationController.hasClip('Continue')) {
-              this.animationController.playOneShot('Continue', () => {}, 1);
-            }
-            const clips = await this.assetManager.loadSupplementalPlayerClips(this.player.mesh);
-            this.animationController.addClips(clips);
-            const lateClips = await this.assetManager.loadLatePlayerClips(this.player.mesh);
-            this.animationController.addClips(lateClips);
-          } catch (error) {
-            console.warn('[Game] Some optional Wukong animations could not be prepared:', error);
-          }
+        const loadSupportClips = () => {
+          void this.assetManager.loadGameplaySupportClips(this.player.mesh)
+            .then((clips) => this.animationController.addClips(clips))
+            .catch((error) => console.warn('[Game] Optional support animations could not be prepared.', error));
         };
-        if (idleWindow.requestIdleCallback) {
-          idleWindow.requestIdleCallback(() => { void loadOptionalAnimations(); }, { timeout: 15000 });
-        } else {
-          void loadOptionalAnimations();
-        }
-      }, 20000);
+        if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(loadSupportClips, { timeout: 15000 });
+        else loadSupportClips();
+      }, 12000);
     }
   }
 
@@ -786,7 +813,9 @@ export class Game {
     this.isPaused = nextState;
 
     if (this.isPaused) {
+      this.cancelStaffCharge();
       this.inputManager.resetInputs();
+      this.showPausePanel('home');
       this.hud.showPauseMenu(true);
       if (document.pointerLockElement) {
         document.exitPointerLock();
@@ -798,6 +827,45 @@ export class Game {
         this.inputManager.requestPointerLock();
       }
     }
+  }
+
+  private showPausePanel(panel: 'home' | 'options' | 'equipment' | 'context'): void {
+    const screen = document.getElementById('pause-screen');
+    if (!screen) return;
+    screen.dataset.activePanel = panel;
+    const contents: Record<typeof panel, string> = {
+      home: 'pause-tab-content-home',
+      options: 'pause-tab-content-pause',
+      equipment: 'pause-tab-content-equipment',
+      context: 'pause-tab-content-context',
+    };
+    Object.values(contents).forEach((id) => {
+      document.getElementById(id)?.classList.toggle('hidden', id !== contents[panel]);
+    });
+
+    const selectedButton: Partial<Record<typeof panel, string>> = {
+      options: 'btn-pause-options',
+      equipment: 'btn-pause-equipment',
+      context: screen.dataset.contextAction === 'load' ? 'btn-load-game' : 'btn-save-game',
+    };
+    ['btn-pause-options', 'btn-pause-equipment', 'btn-save-game', 'btn-load-game'].forEach((id) => {
+      document.getElementById(id)?.setAttribute('aria-pressed', String(selectedButton[panel] === id));
+    });
+
+    if (panel === 'options') document.getElementById('tab-btn-pause')?.click();
+    else if (panel === 'equipment') document.getElementById('tab-btn-equipment')?.click();
+    else this.hud.equipmentViewer?.onPauseClosed();
+  }
+
+  private setPauseContext(title: string, message: string): void {
+    const titleElement = document.getElementById('pause-context-title');
+    const messageElement = document.getElementById('pause-context-message');
+    if (titleElement) titleElement.textContent = title;
+    if (messageElement) messageElement.textContent = message;
+  }
+
+  public updatePauseAudioPreferences(music: number, effects: number): void {
+    this.mainMenu.updateAudioPreferences(music, effects);
   }
 
   public showStartupError(error: unknown): void {
@@ -830,7 +898,6 @@ export class Game {
     // Redrawing an empty/covered WebGL scene at 60 Hz competes with video
     // decoding on phones; render continuously only after gameplay begins.
     if (this.menuState === 'Playing' && !document.hidden) {
-      this.scheduleGameplayWarmup();
       this.sceneManager.render();
     }
 
@@ -866,11 +933,15 @@ export class Game {
     this.performanceSampleElapsed = 0;
 
     const lowPowerDevice = isLowPowerDevice();
-    const minRenderScale = lowPowerDevice ? 0.58 : 0.68;
+    const mobileDevice = isMobileDevice();
+    // Avoid the severe blur caused by dropping mobile backing resolution to
+    // 58%. A slightly reduced render scale is preferable to a visibly
+    // pixelated frame; the desktop floor remains more permissive.
+    const minRenderScale = mobileDevice ? 0.88 : (lowPowerDevice ? 0.72 : 0.78);
     if (this.frameTimeAverageMs > 19 && this.renderScale > minRenderScale) {
       this.renderScale = Math.max(minRenderScale, this.renderScale - 0.08);
       this.fastFrameSeconds = 0;
-      this.performanceAdjustCooldown = lowPowerDevice ? 0.9 : 1.5;
+      this.performanceAdjustCooldown = mobileDevice ? 1.25 : 1.5;
       this.applyRenderResolution();
       console.info(`[Performance] Frame time ${this.frameTimeAverageMs.toFixed(1)} ms; lowering render resolution to ${this.renderScale.toFixed(2)}x.`);
     } else if (this.frameTimeAverageMs < 15.5 && this.renderScale < 1) {
@@ -878,7 +949,7 @@ export class Game {
       if (this.fastFrameSeconds >= 5) {
         this.renderScale = Math.min(1, this.renderScale + 0.04);
         this.fastFrameSeconds = 0;
-        this.performanceAdjustCooldown = lowPowerDevice ? 2 : 1.5;
+        this.performanceAdjustCooldown = mobileDevice ? 2 : 1.5;
         this.applyRenderResolution();
       }
     } else {
@@ -910,6 +981,7 @@ export class Game {
       this.player.update(delta, this.inputManager, this.cameraController, animationDelta);
       this.cameraController.update(delta, this.inputManager);
     }
+    this.updateStaffCharge();
 
     // Freeze world simulation while the defeat vignette is active; keep the
     // render/mixer/camera loop alive so Continue remains animated and responsive.
@@ -932,6 +1004,54 @@ export class Game {
     // Render is handled in loop()
   }
 
+  private beginAttackInput(): void {
+    if (!this.canUseGameplayActions() || this.attackInputHeld) return;
+    this.attackInputHeld = true;
+    if (this.player.isArmed() && this.player.staffEquipped && this.player.isGrounded) {
+      this.staffChargeActive = true;
+      this.staffChargeStartedAt = performance.now();
+      this.player.beginStaffCharge();
+      this.hud.setStaffCharge(true, 0);
+    }
+  }
+
+  private finishAttackInput(): void {
+    if (!this.attackInputHeld) return;
+    this.attackInputHeld = false;
+    if (this.staffChargeActive) {
+      const heldSeconds = Math.max(0, (performance.now() - this.staffChargeStartedAt) / 1000);
+      const chargeRatio = THREE.MathUtils.clamp(heldSeconds / 1.5, 0, 1);
+      this.staffChargeActive = false;
+      this.player.endStaffCharge();
+      this.player.setStaffCharge(0);
+      this.hud.setStaffCharge(false, 0);
+      this.pendingStaffDamageMultiplier = heldSeconds < 0.15 ? 1 : 1 + 2 * chargeRatio;
+      if (this.canUseGameplayActions()) this.inputManager.onLeftClick?.();
+      else this.pendingStaffDamageMultiplier = 1;
+      return;
+    }
+    if (this.canUseGameplayActions()) this.inputManager.onLeftClick?.();
+  }
+
+  private updateStaffCharge(): void {
+    if (!this.staffChargeActive || !this.player || this.isPaused || this.menuState !== 'Playing') return;
+    const ratio = THREE.MathUtils.clamp((performance.now() - this.staffChargeStartedAt) / 1500, 0, 1);
+    this.player.setStaffCharge(ratio);
+    this.hud.setStaffCharge(true, ratio);
+  }
+
+  private cancelStaffCharge(): void {
+    this.attackInputHeld = false;
+    this.staffChargeActive = false;
+    this.pendingStaffDamageMultiplier = 1;
+    if (this.player) {
+      this.player.endStaffCharge();
+      this.player.setStaffCharge(0);
+      this.player.stopAttackAura();
+    }
+    this.hud?.setStaffCharge(false, 0);
+  }
+
   private canUseGameplayActions(): boolean {
     return this.menuState === 'Playing' && !this.isPaused && !!this.player &&
       !this.player.isControlsLocked && !this.player.isMovementLocked && !this.player.isAttacking;
@@ -940,6 +1060,48 @@ export class Game {
   public isGameOver(): boolean { return this.gameOverActive; }
 
   public saveGame(showNotification = true): void {
+    // Progress events call saveGame(false) from pickups/mechanisms. Coalesce
+    // those writes outside the interaction frame so JSON serialization and
+    // synchronous localStorage I/O cannot hitch the pickup animation.
+    if (!showNotification) {
+      this.scheduleProgressSave();
+      return;
+    }
+    this.writeSaveGame(showNotification);
+  }
+
+  /** Explicit menu saves flush immediately; automatic progress saves are deferred. */
+  public saveGameNow(showNotification = false): void {
+    if (this.pendingSaveTimer !== null) {
+      const idleWindow = window as Window & { cancelIdleCallback?: (id: number) => void };
+      if (this.pendingSaveUsesIdleCallback) idleWindow.cancelIdleCallback?.(this.pendingSaveTimer);
+      else window.clearTimeout(this.pendingSaveTimer);
+      this.pendingSaveTimer = null;
+    }
+    this.writeSaveGame(showNotification);
+  }
+
+  private scheduleProgressSave(): void {
+    if (this.pendingSaveTimer !== null) return;
+    const flush = (): void => {
+      this.pendingSaveTimer = null;
+      this.writeSaveGame(false);
+    };
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (idleWindow.requestIdleCallback) {
+      this.pendingSaveUsesIdleCallback = true;
+      this.pendingSaveTimer = idleWindow.requestIdleCallback(flush, { timeout: 1800 });
+    } else {
+      this.pendingSaveUsesIdleCallback = false;
+      this.pendingSaveTimer = window.setTimeout(flush, 400);
+    }
+  }
+
+  private writeSaveGame(showNotification: boolean): void {
+    if (!this.gameplayPrepared || !this.player || !this.level01) return;
     const saveData = {
       version: 7,
       levelId: 'magic-academy-3d',
@@ -968,20 +1130,20 @@ export class Game {
         staffFound: this.level01.stateFlags.staffFound,
         gekkoTalked: this.level01.stateFlags.gekkoTalked,
         bossCinematicPlayed: this.level01.stateFlags.bossCinematicPlayed,
-        bossDefeated: this.level01.stateFlags.bossDefeated
+        bossDefeated: this.level01.stateFlags.bossDefeated,
+        introKeysCelebrated: this.level01.stateFlags.introKeysCelebrated
       },
       timestamp: Date.now()
     };
     localStorage.setItem('lisar_savegame', JSON.stringify(saveData));
     if (showNotification) this.subtitleSystem.show('Guardado', '¡Partida guardada exitosamente!');
-    console.log('[SaveSystem] Game saved:', saveData);
   }
 
-  public loadGame(): void {
+  public loadGame(): boolean {
     const raw = localStorage.getItem('lisar_savegame');
     if (!raw) {
       this.subtitleSystem.show('Guardado', 'No se encontró ninguna partida guardada.');
-      return;
+      return false;
     }
     try {
       const data = JSON.parse(raw);
@@ -1023,6 +1185,12 @@ export class Game {
         const migratedKeys = { ...data.collectedKeys };
         if (migratedKeys.key4_gargoyles === true) migratedKeys.key6_gargoyles = true;
         delete migratedKeys.key4_gargoyles;
+        // The Qi reward occupies the existing third-key slot. Migrate saves
+        // from the temporary seven-slot build without retaining a seventh key.
+        if (migratedKeys.key7_qi_celestial === true && migratedKeys.key3_platform !== true) {
+          migratedKeys.key3_platform = true;
+        }
+        delete migratedKeys.key7_qi_celestial;
         this.level01.restoreCollectedKeys(migratedKeys);
       }
       if (data.stateFlags && typeof data.stateFlags === 'object') {
@@ -1050,8 +1218,11 @@ export class Game {
       this.level01.stateFlags.introCompleted = true;
       this.subtitleSystem.show('Cargado', '¡Partida cargada exitosamente!');
       console.log('[SaveSystem] Game loaded:', data);
+      return true;
     } catch (e) {
       console.error('[SaveSystem] Error loading savegame:', e);
+      this.subtitleSystem.show('Guardado', 'No se pudo cargar la partida guardada.');
+      return false;
     }
   }
 }

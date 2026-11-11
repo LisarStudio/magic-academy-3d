@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+﻿import * as THREE from 'three';
 import { isLowPowerDevice, isMobileDevice } from '../core/DevicePerformance';
 import { SceneManager } from '../core/SceneManager';
 import { CameraController } from '../camera/CameraController';
@@ -26,7 +26,6 @@ import { DayNightCycle } from '../world/DayNightCycle';
 import { WorldWindController } from '../world/WorldWindController';
 import { applyGoldenTempleLut } from '../world/GoldenTempleLut';
 import { SkyPanoramaSystem, skyBlendForHour } from '../world/SkyPanoramaSystem';
-import { LampMothSystem } from '../world/LampMothSystem';
 import { ConstellationSystem } from '../world/ConstellationSystem';
 import { VolcanicDragonRun } from './VolcanicDragonRun';
 import { PowerOrbSystem, type StaffUpgradeInfo } from '../collectibles/PowerOrbSystem';
@@ -52,6 +51,20 @@ export class LevelToyStory {
   public dayNightCycle!: DayNightCycle;
 
   public levelColliders: THREE.Object3D[] = [];
+  // Reused, invisible box proxies give the player and orbit camera a physical
+  // boundary at the decorative mountain ring without changing the rock GLB.
+  private readonly horizonRockBlockerGeometry = new THREE.BoxGeometry(1, 1, 1);
+  private readonly horizonRockBlockerMaterial = new THREE.MeshBasicMaterial({
+    colorWrite: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  // Exact walkable outline of world-terrain (160 x 160, centered at z=-40).
+  // Do not extend this polygon into the old western annex: there is no terrain
+  // mesh there, so it let Wukong walk off the field beneath the mountain ring.
+  private readonly worldBoundaryXZ: readonly [number, number][] = [
+    [-80, -120], [80, -120], [80, 40], [-80, 40],
+  ];
   public triggerZones: TriggerZone[] = [];
   public doors: Door[] = [];
   public pots: DestructiblePot[] = [];
@@ -65,10 +78,10 @@ export class LevelToyStory {
   public collectedKeys = {
     key1_gekko: false, // 50 coins quest
     key2_boss: false,  // boss arena
-    key3_platform: false, // legacy ID for the original Nature key
+    key3_platform: false, // existing third-key slot, now awarded as the Qi key in the tree challenge
     key4_curiosity: false,
     key5_pots: false,
-    key6_gargoyles: false
+    key6_gargoyles: false,
   };
   public totalKeysCount = 0;
 
@@ -111,12 +124,16 @@ export class LevelToyStory {
   private structureColliderCandidates: Array<{ root: THREE.Object3D; center: THREE.Vector3; radius: number; active: boolean }> = [];
   private cloudsUniforms: any = null;
   private skyAnchor: THREE.Group | null = null;
+  private horizonPaletteMaterials: THREE.MeshBasicMaterial[] = [];
+  private readonly horizonDayTintScratch = new THREE.Color();
+  private readonly horizonDuskTintScratch = new THREE.Color();
+  private readonly horizonTintScratch = new THREE.Color();
+  private horizonPaletteElapsed = 0;
   private moonMaterial: THREE.MeshBasicMaterial | null = null;
   private starMaterial: THREE.ShaderMaterial | null = null;
   private cryptPortalMaterial: THREE.ShaderMaterial | null = null;
   private cryptEntranceGlow: THREE.PointLight | null = null;
   private arenaMoonFill: THREE.PointLight | null = null;
-  private lampMoths: LampMothSystem | null = null;
   private constellationSystem: ConstellationSystem | null = null;
   private skyPanorama: SkyPanoramaSystem | null = null;
   private skyDebugPanel: HTMLElement | null = null;
@@ -124,7 +141,7 @@ export class LevelToyStory {
   private optionalArchitectureStarted = false;
   private optionalArchitectureLoading = false;
   private optionalHouseFloorCollider: THREE.Mesh | null = null;
-  private optionalHouseUpperFloorCollider: THREE.Mesh | null = null;
+  private optionalHouseLightingGroup: THREE.Group | null = null;
   private readonly highHouseCenter = new THREE.Vector3(38, 0, -92);
   // The GLB has a walkable ground-floor plane at local Y=0.10 and an upper
   // deck at local Y=6.10. Its lowest vertex is Y=-0.0364, so these offsets
@@ -142,6 +159,7 @@ export class LevelToyStory {
   private dragonRun: VolcanicDragonRun | null = null;
   private powerOrbSystem: PowerOrbSystem | null = null;
   private curiosityChest!: TreasureChest;
+  private cryptLightingGroup: THREE.Group | null = null;
   private cryptDust: THREE.Points | null = null;
   private cryptDustBasePositions: Float32Array | null = null;
   private cryptDustPhases: Float32Array | null = null;
@@ -149,6 +167,9 @@ export class LevelToyStory {
   private cryptWalkableSurfaces: THREE.Mesh[] = [];
   private cryptGuardians: EnemyController[] = [];
   private cryptGuardiansCleared = false;
+  private curiosityKeyPreloadStarted = false;
+  private curiosityKeyRetryAt = 0;
+  private curiosityKeyRewardReady = false;
   private lifePickupSource: THREE.Object3D | null = null;
   private lifePickups: Array<{
     id: string; root: THREE.Group; item: THREE.Object3D;
@@ -164,7 +185,9 @@ export class LevelToyStory {
   private hatchTarget = 0;
   // Set the crypt away from the paved route so its reveal never obstructs the
   // approach to the temple or its stair landing.
-  private readonly curiosityCryptSurface = new THREE.Vector3(-75, 0, -110);
+  // Keep the entrance inside the playable boundary. The old x=-75 anchor sat
+  // only 5 m from the western edge, underneath the inward reach of the rocks.
+  private readonly curiosityCryptSurface = new THREE.Vector3(-61, 0, -110);
   private readonly curiosityCryptFloorY = -5.9;
   private readonly npcGazePoint = new THREE.Vector3();
   private readonly gekkoLookTarget = new THREE.Vector3();
@@ -172,10 +195,18 @@ export class LevelToyStory {
   private readonly curiosityCryptReturnPoint = new THREE.Vector3(-10.0, -5.9, -40);
   private isInsideCuriosityCrypt = false;
   private curiosityCryptTransitioning = false;
-  private canopyTrial: { base: THREE.Vector3; top: THREE.Vector3; middle: THREE.Vector3; landing: THREE.Vector3; firstPath: THREE.QuadraticBezierCurve3; secondPath: THREE.QuadraticBezierCurve3 } | null = null;
+  private canopyTrial: {
+    base: THREE.Vector3;
+    top: THREE.Vector3;
+    middle: THREE.Vector3;
+    landing: THREE.Vector3;
+    firstPath: THREE.QuadraticBezierCurve3;
+    secondPath: THREE.QuadraticBezierCurve3;
+    treeBases: THREE.Vector3[];
+    routePoints: THREE.Vector3[];
+    routePaths: THREE.QuadraticBezierCurve3[];
+  } | null = null;
   private canopyTutorialShown = false;
-  private canopyAtTop = false;
-  private canopyAtMid = false;
   private canopyRewardClaimed = false;
   private canopyChest: TreasureChest | null = null;
   private canopyChestOpen = false;
@@ -191,32 +222,34 @@ export class LevelToyStory {
   private canopyTraversalCurve: THREE.QuadraticBezierCurve3 | null = null;
   private canopyTraversalElapsed = 0;
   private canopyTraversalDuration = 1.2;
+  private canopyRouteIndex = -1;
+  private introKeyCelebrationInProgress = false;
   private leverTarget = Math.PI / 4;
   private readonly secretLavaCenter = new THREE.Vector2(66, -105);
   private secretLavaY = -11.2;
 
   public getTerrainHeight(x: number, z: number): number {
-    let naturalHeight = this.getUnmodifiedTerrainHeight(x, z);
-
-    // Keep the lower cabin floor above the hillside instead of letting the
-    // sloped terrain cut through its interior. The measured first-floor slab
-    // is almost level, so blend a small footprint to the terrain height at the
-    // house base and feather the edge over four metres.
-    const houseEdgeDistance = Math.max(
-      Math.abs(x - this.highHouseCenter.x) - 8.2,
-      Math.abs(z - this.highHouseCenter.z) - 10.0,
-    );
-    if (houseEdgeDistance < 4) {
-      const cabinBaseHeight = this.getUnmodifiedTerrainHeight(this.highHouseCenter.x, this.highHouseCenter.z);
-      const slopeBlend = THREE.MathUtils.smoothstep(houseEdgeDistance, 0, 4);
-      naturalHeight = THREE.MathUtils.lerp(cabinBaseHeight, naturalHeight, slopeBlend);
-    }
+    const naturalHeight = this.getUnmodifiedTerrainHeight(x, z);
 
     // Remote eastern volcanic basin: the same terrain function drives the
     // visible surface, foliage placement, and the player ground ray.
     const lavaDistance = Math.hypot(x - 66, z + 105);
     const basinBlend = 1 - THREE.MathUtils.smoothstep(lavaDistance, 15, 36);
-    return THREE.MathUtils.lerp(naturalHeight, -13.2, basinBlend);
+    let finalHeight = THREE.MathUtils.lerp(naturalHeight, -13.2, basinBlend);
+
+    // Apply the cabin footprint after the remote basin blend. The old order
+    // flattened first and then let the volcanic depression re-slope the east
+    // side of the house through its lower floor and post bases.
+    const houseEdgeDistance = Math.max(
+      Math.abs(x - this.highHouseCenter.x) - 8.95,
+      Math.abs(z - this.highHouseCenter.z) - 10.25,
+    );
+    if (houseEdgeDistance < 3.0) {
+      const cabinBaseHeight = this.getUnmodifiedTerrainHeight(this.highHouseCenter.x, this.highHouseCenter.z);
+      const slopeBlend = THREE.MathUtils.smoothstep(houseEdgeDistance, 0, 3.0);
+      finalHeight = THREE.MathUtils.lerp(cabinBaseHeight, finalHeight, slopeBlend);
+    }
+    return finalHeight;
   }
 
   private getUnmodifiedTerrainHeight(x: number, z: number): number {
@@ -290,10 +323,10 @@ export class LevelToyStory {
   public keyDefinitions: Record<string, KeyData> = {
     key1_gekko: { id: 'key1_gekko', name: 'Llave de la Riqueza (Gekko)', color: 0xffc94e, emissiveColor: 0xffb51b, obtained: false, modelUrl: getKeyAsset('key1_gekko')?.modelUrl },
     key2_boss: { id: 'key2_boss', name: 'Llave de la Valentía (Jefe Cangrejo)', color: 0x62dfff, emissiveColor: 0x248ccc, obtained: false, modelUrl: getKeyAsset('key2_boss')?.modelUrl },
-    key3_platform: { id: 'key3_platform', name: 'Llave de la Naturaleza', color: 0x79e6a3, emissiveColor: 0x20a967, obtained: false, modelUrl: getKeyAsset('key3_platform')?.modelUrl },
+    key3_platform: { id: 'key3_platform', name: 'Llave del Qi Celestial', color: 0x62dfff, emissiveColor: 0x2fb8ed, obtained: false, modelUrl: getKeyAsset('key3_platform')?.modelUrl },
     key4_curiosity: { id: 'key4_curiosity', name: 'Llave de la Curiosidad', color: 0xc49aff, emissiveColor: 0x7748bd, obtained: false, modelUrl: getKeyAsset('key4_curiosity')?.modelUrl },
     key6_gargoyles: { id: 'key6_gargoyles', name: 'Llave del Secreto (Gargolas)', color: 0xffbd70, emissiveColor: 0xbf6b2b, obtained: false, modelUrl: getKeyAsset('key6_gargoyles')?.modelUrl },
-    key5_pots: { id: 'key5_pots', name: 'Llave de Destrucción (Gemas)', color: 0xffd700, emissiveColor: 0xffaa00, obtained: false },
+    key5_pots: { id: 'key5_pots', name: 'Llave de Destrucción (Gemas)', color: 0xff493c, emissiveColor: 0xff5533, obtained: false, modelUrl: getKeyAsset('key5_pots')?.modelUrl },
   };
 
   // Visual markers for keys
@@ -309,7 +342,8 @@ export class LevelToyStory {
     gekkoTalked: false,
     bossCinematicPlayed: false,
     bossDefeated: false,
-    levelCompleted: false
+    levelCompleted: false,
+    introKeysCelebrated: false
   };
 
   constructor(
@@ -340,6 +374,7 @@ export class LevelToyStory {
   public async init(): Promise<void> {
     const portalAssetPromise = this.loadCelestialPortalAsset();
     this.buildToyStoryLevelGeometry();
+    this.buildWorldPerimeter();
     this.buildMountainBackdrop();
     this.powerOrbSystem = new PowerOrbSystem(this.sceneManager.scene, (count) => {
       const equipment = (window as any).gameInstance?.hud?.equipmentViewer;
@@ -377,15 +412,6 @@ export class LevelToyStory {
     moonLight.shadow.camera.top = d;
     moonLight.shadow.camera.bottom = -d;
     moonLight.shadow.bias = -0.0003;
-
-    // Warm accent lights for depth & contrast (Castle entrance + Torch warmth)
-    const entranceTorch = new THREE.PointLight(0xffad5c, 2.8, 20);
-    entranceTorch.position.set(0, 3.0, -25.5);
-    scene.add(entranceTorch);
-
-    const entranceTorch2 = new THREE.PointLight(0xffad5c, 2.8, 20);
-    entranceTorch2.position.set(-6, 3.0, -25.5);
-    scene.add(entranceTorch2);
 
     // Subtle Rim Light from rear for separation of Wukong and Castle silhouettes
     const rimLight = new THREE.DirectionalLight(0x55c5e8, 0.9);
@@ -688,9 +714,6 @@ export class LevelToyStory {
     void this.skyPanorama.loadInitial(this.sceneManager.renderer, skyBlendForHour(this.dayNightCycle.hour))
       .catch((error) => console.error('[Sky] Initial panorama could not be prepared; the procedural sky remains active.', error));
     this.createSkyDebugPanel();
-    // Add key visual hints
-    this.spawnKeysInWorld();
-
     // The portal is not needed to move, collect or fight. Load it without
     // blocking the level's playable handoff.
     void portalAssetPromise.then((portalAsset) => {
@@ -952,41 +975,153 @@ export class LevelToyStory {
     }
 
     if (lampResult.status === 'fulfilled') {
-      // Reuse the original two-lantern GLB as three symmetric pairs: the main
-      // entrance, the broad lower eave, and the upper roof corners. Each body
-      // is positioned from a downward ray against the actual temple mesh, so a
-      // missing roof hit skips that lantern instead of leaving it floating.
-      const templeFootprint = this.centralTempleObject?.userData.templeLocalFootprint;
-      const halfW = templeFootprint?.halfW ?? 5.4;
-      const lampLayouts = [
-        { name: 'entry', anchors: [[-halfW * 0.62, -5.35], [halfW * 0.62, -5.35]] as const },
-        { name: 'second-eave', anchors: [[-halfW * 0.92, -6.35], [halfW * 0.92, -6.35]] as const },
-        { name: 'upper-roof', anchors: [[-halfW * 0.48, -3.15], [halfW * 0.48, -3.15]] as const },
-        { name: 'left-side-eave', anchors: [[-halfW * 1.03, -halfW * 0.38], [-halfW * 1.03, halfW * 0.38]] as const },
-        { name: 'right-side-eave', anchors: [[halfW * 1.03, -halfW * 0.38], [halfW * 1.03, halfW * 0.38]] as const },
+      // Reuse the original lantern GLB. Determine the two eave footprints from
+      // upward-facing triangles in the loaded temple mesh (rather than the
+      // smaller collision footprint), then ray-check all eight corner anchors.
+      const temple = this.centralTempleObject;
+      if (temple) temple.updateMatrixWorld(true);
+      const templeBounds = temple ? new THREE.Box3().setFromObject(temple) : null;
+      const localTempleBounds = new THREE.Box3();
+      if (temple) {
+        const worldToTemple = temple.matrixWorld.clone().invert();
+        temple.traverse((object) => {
+          const mesh = object as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+          if (!mesh.geometry.boundingBox) return;
+          const meshToTemple = worldToTemple.clone().multiply(mesh.matrixWorld);
+          localTempleBounds.union(mesh.geometry.boundingBox.clone().applyMatrix4(meshToTemple));
+        });
+      }
+      const templeHeight = localTempleBounds.max.y - localTempleBounds.min.y;
+      const roofBands = [
+        { name: 'lower-eave', minY: localTempleBounds.min.y + templeHeight * 0.29, maxY: localTempleBounds.min.y + templeHeight * 0.51 },
+        { name: 'upper-roof', minY: localTempleBounds.min.y + templeHeight * 0.71, maxY: localTempleBounds.max.y + 0.05 },
       ];
-      const templeBounds = this.centralTempleObject
-        ? new THREE.Box3().setFromObject(this.centralTempleObject)
-        : null;
+      const roofCornerAnchors = new Map<string, THREE.Vector3>();
+      const roofSurfaceBoundsByTier = new Map(roofBands.map((band) => [band.name, new THREE.Box3()]));
+      const down = new THREE.Vector3(0, -1, 0);
+      const up = new THREE.Vector3(0, 1, 0);
+      if (temple && templeBounds && templeHeight > 1) {
+        const worldToTemple = temple.matrixWorld.clone().invert();
+        const raycaster = new THREE.Raycaster();
+        const cornerInsetFractions = [0.92, 0.88, 0.84, 0.80, 0.76];
+        // Walk the original static mesh once and collect the two roof tiers.
+        // Keeping this one-time audit to a single pass avoids a load-time hitch.
+        temple.traverse((object) => {
+          const mesh = object as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          const geometry = mesh.geometry;
+          const position = geometry.getAttribute('position');
+          if (!position) return;
+          const index = geometry.getIndex();
+          const groups = geometry.groups.length
+            ? geometry.groups
+            : [{ start: 0, count: index?.count ?? position.count, materialIndex: 0 }];
+          const meshToTemple = worldToTemple.clone().multiply(mesh.matrixWorld);
+          const a = new THREE.Vector3();
+          const b = new THREE.Vector3();
+          const c = new THREE.Vector3();
+          const edgeAB = new THREE.Vector3();
+          const edgeAC = new THREE.Vector3();
+          const normal = new THREE.Vector3();
+          groups.forEach((group) => {
+            const end = Math.min(group.start + group.count, index?.count ?? position.count);
+            for (let offset = group.start; offset + 2 < end; offset += 3) {
+              const ia = index ? index.getX(offset) : offset;
+              const ib = index ? index.getX(offset + 1) : offset + 1;
+              const ic = index ? index.getX(offset + 2) : offset + 2;
+              a.fromBufferAttribute(position, ia).applyMatrix4(meshToTemple);
+              b.fromBufferAttribute(position, ib).applyMatrix4(meshToTemple);
+              c.fromBufferAttribute(position, ic).applyMatrix4(meshToTemple);
+              const centerY = (a.y + b.y + c.y) / 3;
+              const band = roofBands.find((candidate) => centerY >= candidate.minY && centerY <= candidate.maxY);
+              if (!band) continue;
+              normal.crossVectors(edgeAB.subVectors(b, a), edgeAC.subVectors(c, a)).normalize();
+              if (normal.y < 0.18) continue;
+              roofSurfaceBoundsByTier.get(band.name)?.expandByPoint(a).expandByPoint(b).expandByPoint(c);
+            }
+          });
+        });
+        roofBands.forEach((band) => {
+          const roofSurfaceBounds = roofSurfaceBoundsByTier.get(band.name)!;
+          if (roofSurfaceBounds.isEmpty()) {
+            console.warn(`[LevelToyStory] Could not derive ${band.name} lamp anchors from the original temple roof mesh.`);
+            return;
+          }
+          const centerX = (roofSurfaceBounds.min.x + roofSurfaceBounds.max.x) * 0.5;
+          const centerZ = (roofSurfaceBounds.min.z + roofSurfaceBounds.max.z) * 0.5;
+          const halfX = (roofSurfaceBounds.max.x - roofSurfaceBounds.min.x) * 0.5;
+          const halfZ = (roofSurfaceBounds.max.z - roofSurfaceBounds.min.z) * 0.5;
+          ([-1, 1] as const).forEach((signZ) => ([-1, 1] as const).forEach((signX) => {
+            const key = `${band.name}:${signX}:${signZ}`;
+            for (const inset of cornerInsetFractions) {
+              const localTarget = new THREE.Vector3(centerX + signX * halfX * inset, 0, centerZ + signZ * halfZ * inset);
+              const worldTarget = temple.localToWorld(localTarget.clone());
+              raycaster.set(new THREE.Vector3(worldTarget.x, templeBounds.max.y + 3, worldTarget.z), down);
+              raycaster.far = templeBounds.max.y - templeBounds.min.y + 6;
+              const hit = raycaster.intersectObject(temple, true).find((candidate) => {
+                if (candidate.point.y <= this.getTerrainHeight(candidate.point.x, candidate.point.z) + 3) return false;
+                const localPoint = temple.worldToLocal(candidate.point.clone());
+                const normalY = candidate.face?.normal.clone().transformDirection(candidate.object.matrixWorld).y ?? 0;
+                return localPoint.y >= band.minY && localPoint.y <= band.maxY && normalY > 0.12;
+              });
+              if (!hit) continue;
+              // The downward ray identifies the actual roof footprint. Find
+              // its underside from below so the lantern body hangs in view
+              // beneath the eave instead of being embedded in the roof shell.
+              const startLocalY = band.name === 'lower-eave'
+                ? localTempleBounds.min.y + templeHeight * 0.18
+                : localTempleBounds.min.y + templeHeight * 0.67;
+              const undersideStart = temple.localToWorld(new THREE.Vector3(localTarget.x, startLocalY, localTarget.z));
+              raycaster.set(undersideStart, up);
+              raycaster.far = templeBounds.max.y - undersideStart.y + 1;
+              const undersideHit = raycaster.intersectObject(temple, true).find((candidate) => {
+                const localPoint = temple.worldToLocal(candidate.point.clone());
+                const normalY = candidate.face?.normal.clone().transformDirection(candidate.object.matrixWorld).y ?? 0;
+                return localPoint.y >= band.minY && localPoint.y <= band.maxY && normalY < -0.12;
+              });
+              if (!undersideHit) continue;
+              roofCornerAnchors.set(key, temple.worldToLocal(undersideHit.point.clone()));
+              break;
+            }
+            if (!roofCornerAnchors.has(key)) console.warn(`[LevelToyStory] No verified roof surface for ${key}; its lantern was skipped.`);
+          }));
+        });
+      }
+      const layoutForSide = (tier: string, side: 'front' | 'rear') => ({
+        name: `${tier}-${side}`,
+        anchors: ([-1, 1] as const)
+          .map((signX) => roofCornerAnchors.get(`${tier}:${signX}:${side === 'front' ? -1 : 1}`))
+          .filter((point): point is THREE.Vector3 => !!point)
+          .map((point) => temple!.localToWorld(point.clone())) as THREE.Vector3[],
+      });
+      const lampLayouts = roofBands.flatMap((band) => [
+        layoutForSide(band.name, 'front'),
+        layoutForSide(band.name, 'rear'),
+      ]).filter((layout) => {
+        if (layout.anchors.length === 2) return true;
+        if (layout.anchors.length) console.warn(`[LevelToyStory] Incomplete corner pair for ${layout.name}; both lamps were skipped to preserve symmetry.`);
+        return false;
+      });
       const cordGeometry = new THREE.CylinderGeometry(0.026, 0.026, 1, 8);
       const brassGeometry = new THREE.SphereGeometry(0.075, 8, 6);
       const cordMaterial = new THREE.MeshStandardMaterial({ color: 0x68432d, roughness: 0.88, metalness: 0.08 });
       const anchorMaterial = new THREE.MeshStandardMaterial({ color: 0xb7833c, roughness: 0.38, metalness: 0.64, emissive: 0x4a2605, emissiveIntensity: 0.16 });
       const warmLanternMaterials = new Map<THREE.Material, THREE.Material>();
-      const mothAnchors: THREE.Vector3[] = [];
-      const down = new THREE.Vector3(0, -1, 0);
-      const pairLights: THREE.Vector3[] = [];
+      // Keep every practical source at the measured center of its actual
+      // lantern mesh. The previous pair-center and facade-fill lights sat in
+      // empty space, which read as detached orange blobs on the temple.
+      const lanternLightAnchors: Array<{ node: THREE.Object3D; position: THREE.Vector3 }> = [];
       let placedLanterns = 0;
-      lampLayouts.forEach((layout, layoutIndex) => {
+      lampLayouts.forEach((layout) => {
         if (!this.centralTempleObject || !templeBounds) return;
-        const anchors = layout.anchors.map(([x, z]) => this.centralTempleObject!.localToWorld(
-          new THREE.Vector3(x, 0, z)
-        ));
+        const anchors = layout.anchors;
         const pairCenter = anchors[0].clone().add(anchors[1]).multiplyScalar(0.5);
         const pairRoot = placeAsset(
           lampResult.value.scene,
           `chinese_red_lamp_${layout.name}_pair`,
-          layoutIndex === 2 ? 2.8 : 3.8,
+          3.4,
           pairCenter.x,
           pairCenter.z,
         );
@@ -1002,7 +1137,7 @@ export class LevelToyStory {
               material = source.clone();
               if (material instanceof THREE.MeshStandardMaterial) {
                 material.emissive.set(0xff5b1c);
-                material.emissiveIntensity = 0.38;
+                material.emissiveIntensity = 0.95;
                 this.dayNightCycle?.registerNightEmissiveMaterial(material);
               }
               warmLanternMaterials.set(source, material);
@@ -1039,17 +1174,8 @@ export class LevelToyStory {
             node.updateWorldMatrix(true, true);
             bounds = new THREE.Box3().setFromObject(node);
           }
-          const ray = new THREE.Raycaster(
-            new THREE.Vector3(target.x, templeBounds.max.y + 3, target.z), down, 0, templeBounds.max.y - templeBounds.min.y + 6
-          );
-          const roofHit = ray.intersectObject(this.centralTempleObject!, true)
-            .find((hit) => hit.point.y > this.getTerrainHeight(target.x, target.z) + 3);
-          if (!roofHit) {
-            node.visible = false;
-            console.warn(`[LevelToyStory] No temple roof surface under original lamp anchor ${layout.name}:${index}; skipped.`);
-            return;
-          }
-          const desiredTop = roofHit.point.y - 0.42;
+          // `target` is the verified underside hit for this corner.
+          const desiredTop = target.y - 0.20;
           const lift = desiredTop - bounds.max.y;
           if (node.parent) {
             const currentCenter = bounds.getCenter(new THREE.Vector3());
@@ -1062,7 +1188,7 @@ export class LevelToyStory {
           const placedBounds = new THREE.Box3().setFromObject(node);
           const body = placedBounds.getCenter(new THREE.Vector3());
           const cordStart = new THREE.Vector3(body.x, placedBounds.max.y + 0.015, body.z);
-          const cordEnd = new THREE.Vector3(target.x, roofHit.point.y - 0.025, target.z);
+          const cordEnd = new THREE.Vector3(target.x, target.y - 0.025, target.z);
           const cordVector = cordEnd.clone().sub(cordStart);
           if (cordVector.y <= 0.08) {
             node.visible = false;
@@ -1082,125 +1208,33 @@ export class LevelToyStory {
           ceilingEye.castShadow = false;
           scene.add(ceilingEye);
           pairPositions.push(body.clone());
-          if (layoutIndex === 0) mothAnchors.push(body.clone());
+          lanternLightAnchors.push({ node, position: body.clone() });
           placedLanterns++;
         });
-        if (pairPositions.length === 2) pairLights.push(pairPositions[0].clone().add(pairPositions[1]).multiplyScalar(0.5));
-        else if (!pairPositions.length) pairRoot.removeFromParent();
+        if (!pairPositions.length) pairRoot.removeFromParent();
       });
-      // Five non-shadowing shared fills illuminate ten lanterns; the clock
-      // smoothly dims them with the existing day/night cycle.
-      pairLights.forEach((position) => {
-        const light = new THREE.PointLight(0xffb85f, 1.65, 10, 2);
-        light.position.copy(position);
+      // A no-shadow practical is attached to each verified lantern body. The
+      // short range localizes its effect; removing the free-standing facade
+      // fills/spots and moth glows reduces the previous scene light budget.
+      const mobileLighting = isLowPowerDevice() || (navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches);
+      lanternLightAnchors.forEach(({ node, position }, index) => {
+        const light = new THREE.PointLight(0xffad53, mobileLighting ? 5.5 : 8.5, 6.5, 2);
+        light.name = `central_temple_lantern_practical_${index + 1}`;
+        light.position.copy(node.worldToLocal(position.clone()));
         light.castShadow = false;
-        scene.add(light);
+        node.add(light);
         this.dayNightCycle?.registerNightLight(light);
       });
-      const mobile = navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches;
-      if (mothAnchors.length) this.lampMoths = new LampMothSystem(scene, mothAnchors, mobile);
-      console.info(`[LevelToyStory] Placed ${placedLanterns} original red lanterns at raycast-verified temple roof anchors.`);
+      console.info(`[LevelToyStory] Placed ${placedLanterns} original red lanterns from measured roof geometry; ${roofCornerAnchors.size} corner anchors verified across both eaves.`);
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese red lamp asset.', lampResult.reason);
     }
 
-    // Keep the entrance glow local to the temple so it does not wash the lawn.
-    // The two authored-lantern pairs at the stair sides provide the additional
-    // warm edge light without adding one light per lantern.
-    const warmFill = new THREE.PointLight(0xffbd76, 3.8, 20, 2);
-    warmFill.name = 'central_temple_entrance_warm_fill_no_shadows';
-    const templeFront = this.centralTempleObject
-      ? this.centralTempleObject.localToWorld(new THREE.Vector3(0, 0, -4.4))
-      : new THREE.Vector3(24, 0, -35.6);
-    warmFill.position.set(
-      templeFront.x,
-      this.getTerrainHeight(templeFront.x, templeFront.z) + 6.2,
-      templeFront.z
-    );
-    warmFill.castShadow = false;
-    scene.add(warmFill);
-    this.dayNightCycle?.registerNightLight(warmFill);
-
-    // A single shared, non-shadowing fill reveals the upper timber and windows.
-    // Its anchor is temple-local, so the light follows the original GLB if its
-    // authored transform changes; no geometry, materials, or lamp transforms
-    // are modified here.
-    if (this.centralTempleObject) {
-      const upperEaveFill = new THREE.PointLight(0xffaa60, 2.7, 15, 2);
-      upperEaveFill.name = 'central_temple_upper_eave_warm_fill_no_shadows';
-      upperEaveFill.position.copy(this.centralTempleObject.localToWorld(
-        new THREE.Vector3(0, 11.8, -6.3)
-      ));
-      upperEaveFill.castShadow = false;
-      scene.add(upperEaveFill);
-      this.dayNightCycle?.registerNightLight(upperEaveFill);
-
-      // Paired low fills reveal the entrance columns and carved timber from
-      // both sides. They share a no-shadow setup, follow the actual temple
-      // transform, and fade with the same day/night clock as the lanterns.
-      const mobileLighting = navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches;
-      [-2.85, 2.85].forEach((localX, index) => {
-        const columnFill = new THREE.PointLight(
-          0xffb66b,
-          mobileLighting ? 1.8 : 2.7,
-          mobileLighting ? 9 : 12,
-          2,
-        );
-        columnFill.name = `central_temple_column_warm_fill_${index + 1}_no_shadows`;
-        columnFill.position.copy(this.centralTempleObject!.localToWorld(new THREE.Vector3(localX, 2.8, -4.15)));
-        columnFill.castShadow = false;
-        scene.add(columnFill);
-        this.dayNightCycle?.registerNightLight(columnFill);
-      });
-
-      // Broad architectural spots provide the directional warm/cool contrast
-      // that the small lantern fills cannot produce on this full-size facade.
-      // They are unshadowed and attached to the temple's authored local frame,
-      // so the original mesh, lanterns, and their placement remain untouched.
-      const addTempleSpot = (
-        name: string,
-        localPosition: THREE.Vector3,
-        localTarget: THREE.Vector3,
-        intensity: number,
-        distance: number,
-        angle: number,
-      ) => {
-        const spot = new THREE.SpotLight(0xffb15f, intensity, distance, angle, 0.78, 2);
-        spot.name = name;
-        spot.castShadow = false;
-        spot.position.copy(this.centralTempleObject!.localToWorld(localPosition));
-        spot.target.position.copy(this.centralTempleObject!.localToWorld(localTarget));
-        scene.add(spot, spot.target);
-        this.dayNightCycle?.registerNightLight(spot);
-      };
-      const architecturalMobileLighting = navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches;
-      const lightScale = architecturalMobileLighting ? 0.72 : 1;
-      addTempleSpot(
-        'central_temple_lower_facade_architectural_spot',
-        new THREE.Vector3(-7.0, 10.0, -12.0),
-        new THREE.Vector3(-2.8, 4.2, -5.5),
-        620 * lightScale,
-        30,
-        0.78,
-      );
-      addTempleSpot(
-        'central_temple_entry_architectural_spot',
-        new THREE.Vector3(7.0, 10.0, -12.0),
-        new THREE.Vector3(2.8, 4.2, -5.5),
-        620 * lightScale,
-        30,
-        0.78,
-      );
-      addTempleSpot(
-        'central_temple_upper_eave_architectural_spot',
-        new THREE.Vector3(0, 19.0, -11.5),
-        new THREE.Vector3(0, 13.0, -5.8),
-        480 * lightScale,
-        34,
-        0.72,
-      );
-    }
+    // No free-standing temple fill/spot lights here: the lantern bodies above
+    // are the only local warm sources. The existing moon and ambient lighting
+    // retain the cool night contrast across the rest of the level.
     this.player.setColliders(this.levelColliders);
+    this.player.setWorldBoundary(this.worldBoundaryXZ);
     this.cameraController.setCollisionObjects(this.levelColliders);
     this.cameraController.setTerrainHeightProvider((x, z) => this.getTerrainHeight(x, z));
 
@@ -1233,9 +1267,21 @@ export class LevelToyStory {
     });
 
     if (warmGroup.children.length === 0) return;
+    const compileStartedAt = performance.now();
     try {
-      await renderer.compileAsync(warmGroup, camera, this.sceneManager.scene);
-      console.info(`[CuriosityVault] Precompiled ${warmGroup.children.length} crypt mesh materials during loading.`);
+      // Compile both the hidden-room materials and the exact point-light
+      // variant that becomes active on entry. Flip visibility only within this
+      // synchronous call setup so no rendered frame leaks the lights outdoors.
+      const previousLightVisibility = this.cryptLightingGroup?.visible ?? false;
+      let compilation: Promise<THREE.Object3D>;
+      try {
+        if (this.cryptLightingGroup) this.cryptLightingGroup.visible = true;
+        compilation = renderer.compileAsync(warmGroup, camera, this.sceneManager.scene);
+      } finally {
+        if (this.cryptLightingGroup) this.cryptLightingGroup.visible = previousLightVisibility;
+      }
+      await compilation;
+      console.info(`[CuriosityVaultPerf] Precompiled ${warmGroup.children.length} crypt mesh materials in ${(performance.now() - compileStartedAt).toFixed(1)} ms.`);
     } finally {
       warmGroup.clear();
     }
@@ -2503,6 +2549,58 @@ export class LevelToyStory {
         // Give input, camera and rendering a frame between sector batches.
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     }
+
+    // A randomized fringe of the project's own tall grass softens the hard
+    // terrain/mountain seam. It is one instanced draw and has no collision.
+    const boundaryPolygon = this.worldBoundaryXZ;
+    const boundaryArea = boundaryPolygon.reduce((area, [x, z], index) => {
+      const [nextX, nextZ] = boundaryPolygon[(index + 1) % boundaryPolygon.length]!;
+      return area + x * nextZ - nextX * z;
+    }, 0) * 0.5;
+    const boundaryInwardSign = boundaryArea >= 0 ? 1 : -1;
+    const weedTemplate = templates[2]!;
+    const weedMatrices: THREE.Matrix4[] = [];
+    for (let edge = 0; edge < boundaryPolygon.length; edge++) {
+      const [x0, z0] = boundaryPolygon[edge]!;
+      const [x1, z1] = boundaryPolygon[(edge + 1) % boundaryPolygon.length]!;
+      const dx = x1 - x0;
+      const dz = z1 - z0;
+      const length = Math.hypot(dx, dz) || 1;
+      const inwardX = (-dz / length) * boundaryInwardSign;
+      const inwardZ = (dx / length) * boundaryInwardSign;
+      for (let distance = random() * 0.85; distance < length; distance += 0.85 + random() * 0.8) {
+        const along = THREE.MathUtils.clamp(distance + (random() - 0.5) * 0.8, 0, length);
+        const offset = 0.65 + random() * 3.0;
+        const x = x0 + dx / length * along + inwardX * offset;
+        const z = z0 + dz / length * along + inwardZ * offset;
+        if (x < -80 || x > 80 || z < -120 || z > 40 || excluded(x, z)) continue;
+        const groundY = this.getTerrainHeight(x, z);
+        const slopeX = (this.getTerrainHeight(x + 0.18, z) - this.getTerrainHeight(x - 0.18, z)) / 0.36;
+        const slopeZ = (this.getTerrainHeight(x, z + 0.18) - this.getTerrainHeight(x, z - 0.18)) / 0.36;
+        normal.set(-slopeX, 1, -slopeZ).normalize();
+        slopeRotation.setFromUnitVectors(up, normal);
+        yawRotation.setFromAxisAngle(normal, random() * Math.PI * 2);
+        const scale = 0.85 + random() * 0.7;
+        const heightBoost = 4.2 + random() * 2.8;
+        dummy.position.set(x, groundY + 0.012, z);
+        dummy.quaternion.copy(slopeRotation).multiply(yawRotation);
+        dummy.scale.set(scale, scale * weedTemplate.heightFactor * heightBoost, scale);
+        dummy.updateMatrix();
+        weedMatrices.push(dummy.matrix.clone());
+      }
+    }
+    if (weedMatrices.length) {
+      const boundaryWeeds = new THREE.InstancedMesh(weedTemplate.lodGeometry, weedTemplate.material, weedMatrices.length);
+      boundaryWeeds.name = 'randomized_original_grass_mountain_edge_fringe';
+      boundaryWeeds.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      weedMatrices.forEach((matrix, index) => boundaryWeeds.setMatrixAt(index, matrix));
+      boundaryWeeds.instanceMatrix.needsUpdate = true;
+      boundaryWeeds.castShadow = false;
+      boundaryWeeds.receiveShadow = false;
+      boundaryWeeds.computeBoundingSphere();
+      this.sceneManager.scene.add(boundaryWeeds);
+    }
+
     // Full source meshes are no longer referenced after placement: the runtime
     // uses the Blender-authored LOD, plus its derived distance variants.
     templates.forEach((template) => template.geometry.dispose());
@@ -2831,6 +2929,11 @@ export class LevelToyStory {
             this.levelColliders.push(rockRoot);
           });
 
+          // The same original mossy boulder model forms a distant, non-solid
+          // rocky skyline. Instancing keeps this outside-the-map scenery to
+          // one draw call per source mesh and adds no gameplay colliders.
+          this.addHorizonRockforms(source, sourceBounds, sourceCenter);
+
           // The GLB loads asynchronously, so refresh the already-initialized
           // collision and camera systems once these grounded blockers exist.
           this.player.setColliders(this.levelColliders);
@@ -2955,6 +3058,7 @@ export class LevelToyStory {
     this.cameraController.setCollisionObjects(this.levelColliders);
     this.cameraController.setTerrainHeightProvider((x, z) => this.getTerrainHeight(x, z));
     this.player.setColliders(this.levelColliders);
+    this.player.setWorldBoundary(this.worldBoundaryXZ);
   }
 
   /** A compact, muted creek crossing beneath the bridge, never a broad cyan overlay. */
@@ -3057,44 +3161,430 @@ export class LevelToyStory {
     scene.add(rocks);
   }
 
-  /** Low-poly horizon silhouettes add depth with one draw call and no gameplay collision. */
+  /** Scenic, texture-based 360? horizon. It has no collision and leaves the HDRI independent. */
   private buildMountainBackdrop(): void {
     const scene = this.sceneManager.scene;
-    // One continuous, irregular ridge silhouette replaces the repeated cone
-    // profiles that read as a row of flat triangles. It is visual-only.
-    const ridge = new THREE.Shape();
-    ridge.moveTo(-148, -12);
-    ridge.lineTo(-148, 5);
-    ridge.lineTo(-132, 10);
-    ridge.lineTo(-119, 8);
-    ridge.lineTo(-105, 18);
-    ridge.lineTo(-91, 12);
-    ridge.lineTo(-74, 15);
-    ridge.lineTo(-58, 7);
-    ridge.lineTo(-43, 11);
-    ridge.lineTo(-24, 23);
-    ridge.lineTo(-9, 13);
-    ridge.lineTo(7, 17);
-    ridge.lineTo(24, 8);
-    ridge.lineTo(43, 12);
-    ridge.lineTo(59, 25);
-    ridge.lineTo(74, 15);
-    ridge.lineTo(92, 18);
-    ridge.lineTo(107, 9);
-    ridge.lineTo(123, 14);
-    ridge.lineTo(139, 7);
-    ridge.lineTo(148, 11);
-    ridge.lineTo(148, -12);
-    ridge.closePath();
-    const geometry = new THREE.ShapeGeometry(ridge, 2);
-    const material = new THREE.MeshBasicMaterial({ color: 0x17243d, fog: true, side: THREE.DoubleSide });
-    const mountains = new THREE.Mesh(geometry, material);
-    mountains.name = 'distant_irregular_mountain_ridge';
-    mountains.position.set(0, 0, -137);
-    mountains.frustumCulled = true;
-    mountains.castShadow = false;
-    mountains.receiveShadow = false;
-    scene.add(mountains);
+    const base = import.meta.env.BASE_URL + 'assets/horizon-kit/';
+    const loader = new THREE.TextureLoader();
+    const group = new THREE.Group();
+    group.name = 'wukong_horizon_360_decorative_layers';
+    this.horizonPaletteMaterials = [];
+
+    const loadTexture = (name: string): THREE.Texture => {
+      const texture = loader.load(base + name);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = Math.min(2, this.sceneManager.renderer.capabilities.getMaxAnisotropy());
+      texture.generateMipmaps = true;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      return texture;
+    };
+    const makeMaterial = (file: string, opacity = 1, depthWrite = false): THREE.MeshBasicMaterial => {
+      const material = new THREE.MeshBasicMaterial({
+        map: loadTexture(file), color: 0xffffff, transparent: true,
+        opacity, alphaTest: 0.012, depthTest: true, depthWrite,
+        side: THREE.DoubleSide, fog: true, toneMapped: false,
+      });
+      this.horizonPaletteMaterials.push(material);
+      return material;
+    };
+
+    // The kit provides transparent 2D artwork, not 3D mountain models. Wrap
+    // each authored layer on a world-space cylinder so it remains fixed while
+    // the camera turns. Feathered source edges prevent a visible 360? seam.
+    const addMountainLayer = (file: string, radius: number, height: number, baseY: number, nightTint: number, order: number, opacity: number): void => {
+      const geometry = new THREE.CylinderGeometry(radius, radius, height, 96, 1, true);
+      // Keep the prototype silhouettes subtle; the textured original rocks
+      // supply the visible foreground relief rather than a flat wall.
+      const material = makeMaterial(file, opacity, false);
+      material.userData.horizonNightTint = nightTint;
+      material.userData.horizonDayTint = 0xcbd6e3;
+      material.userData.horizonDuskTint = 0xb99baa;
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = `horizon_${file.replace(/[^a-z0-9]/gi, '_')}`;
+      mesh.position.y = baseY + height * 0.5;
+      mesh.renderOrder = order;
+      mesh.frustumCulled = false;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      group.add(mesh);
+    };
+    // Keep scenic layers outside the complete playable footprint (the canopy
+    // route reaches radius ~148). The old 165/198 radii overlapped that route
+    // and made the crypt-side rocks read as an impassable wall at the entrance.
+    addMountainLayer('01_montanas_lejanas-seamless.png', 310, 130, -4, 0x7188ae, 1, 0.34);
+    addMountainLayer('02_montanas_medias-seamless.png', 265, 150, -8, 0x536c91, 2, 0.32);
+
+    const fog = new THREE.Mesh(
+      new THREE.CylinderGeometry(245, 245, 25, 96, 1, true),
+      makeMaterial('04_niebla_valle.png', 0.72),
+    );
+    fog.name = 'horizon_valley_mist_360';
+    fog.position.y = 22;
+    fog.renderOrder = 3;
+    fog.frustumCulled = false;
+    fog.castShadow = false;
+    fog.receiveShadow = false;
+    group.add(fog);
+    addMountainLayer('03_montanas_cercanas-seamless.png', 220, 160, -12, 0x435d7e, 4, 0.28);
+
+    const addWorldSprite = (file: string, angle: number, radius: number, width: number, height: number, baseY: number, name: string, order: number, opacity = 1): void => {
+      const material = makeMaterial(file, opacity);
+      material.userData.horizonNightTint = 0x7482a4;
+      material.userData.horizonDayTint = 0xd7d5d1;
+      material.userData.horizonDuskTint = 0xd3a5a1;
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
+      mesh.name = name;
+      mesh.position.set(Math.sin(angle) * radius, baseY + height * 0.5, Math.cos(angle) * radius);
+      mesh.rotation.y = angle + Math.PI;
+      mesh.renderOrder = order;
+      mesh.frustumCulled = false;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      group.add(mesh);
+    };
+    // Use the kit's individual skyline assets; never place its HUD concept image in the scene.
+    addWorldSprite('05_pagoda_lejana.png', 0.63, 286, 20, 25, 4, 'horizon_distant_pagoda', 2.5, 0.88);
+    addWorldSprite('06_cascada.png', 3.65, 252, 9, 26, 10, 'horizon_distant_waterfall_west', 3.5, 0.82);
+    addWorldSprite('06_cascada.png', 5.42, 274, 7, 23, 12, 'horizon_distant_waterfall_east', 3.5, 0.72);
+    [0.08, 1.55, 2.95, 4.35, 5.55].forEach((angle, index) => {
+      const scale = [1, 0.82, 1.08, 0.9, 0.96][index];
+      addWorldSprite('07_sakura_lejano.png', angle, 202 + (index % 2) * 7, 10 * scale, 17 * scale, 9, `horizon_sakura_${index + 1}`, 5, 0.86);
+    });
+
+    scene.add(group);
+    this.updateHorizonPalette(this.dayNightCycle?.hour ?? 21);
+  }
+
+  /** Collision perimeter derived from the terrain outline and canopy wing. */
+  private buildWorldPerimeter(): void {
+    const scene = this.sceneManager.scene;
+    const polygon = this.worldBoundaryXZ;
+    const signedArea = polygon.reduce((area, [x, z], index) => {
+      const [nextX, nextZ] = polygon[(index + 1) % polygon.length];
+      return area + x * nextZ - nextX * z;
+    }, 0) * 0.5;
+    const inwardSign = signedArea >= 0 ? 1 : -1;
+    const inset = 1.6;
+    const wallHeight = 38;
+    const wallThickness = 2.2;
+    const debugEnabled = import.meta.env.DEV && new URLSearchParams(window.location.search).get('debugWorldBoundary') === '1';
+    const wallMaterial = debugEnabled
+      ? new THREE.MeshBasicMaterial({ color: 0xff5d35, transparent: true, opacity: 0.14, wireframe: true, depthWrite: false, side: THREE.DoubleSide })
+      : new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide });
+    const debugGroup = debugEnabled ? new THREE.Group() : null;
+    if (debugGroup) debugGroup.name = 'world_boundary_development_debug';
+    const edgePoints: THREE.Vector3[] = [];
+    const barrierPoints: THREE.Vector3[] = [];
+
+    for (let index = 0; index < polygon.length; index++) {
+      const [x0, z0] = polygon[index];
+      const [x1, z1] = polygon[(index + 1) % polygon.length];
+      const dx = x1 - x0;
+      const dz = z1 - z0;
+      const length = Math.hypot(dx, dz);
+      if (length < 0.01) continue;
+      // For this CCW contour, the left-hand edge normal points into the map.
+      const inwardX = (-dz / length) * inwardSign;
+      const inwardZ = (dx / length) * inwardSign;
+      const sampleCount = Math.max(1, Math.ceil(length / 3));
+      for (let sample = 0; sample <= sampleCount; sample++) {
+        if (index > 0 && sample === 0) continue;
+        const t = sample / sampleCount;
+        const x = THREE.MathUtils.lerp(x0, x1, t);
+        const z = THREE.MathUtils.lerp(z0, z1, t);
+        const groundY = this.getTerrainHeight(x, z);
+        edgePoints.push(new THREE.Vector3(x, groundY + 0.1, z));
+        barrierPoints.push(new THREE.Vector3(x + inwardX * inset, groundY + 1.4, z + inwardZ * inset));
+      }
+
+      const midX = (x0 + x1) * 0.5 + inwardX * inset;
+      const midZ = (z0 + z1) * 0.5 + inwardZ * inset;
+      const groundY = this.getTerrainHeight((x0 + x1) * 0.5, (z0 + z1) * 0.5);
+      const wall = new THREE.Mesh(
+        new THREE.BoxGeometry(length + wallThickness * 0.55, wallHeight, wallThickness),
+        wallMaterial,
+      );
+      wall.name = `world_perimeter_invisible_${String(index + 1).padStart(2, '0')}`;
+      wall.position.set(midX, groundY + wallHeight * 0.5 - 0.6, midZ);
+      wall.rotation.y = Math.atan2(-dz, dx);
+      wall.userData.solidPlayerBlocker = true;
+      wall.userData.worldBoundarySegment = index;
+      wall.visible = debugEnabled;
+      wall.castShadow = false;
+      wall.receiveShadow = false;
+      scene.add(wall);
+      this.levelColliders.push(wall);
+    }
+
+    // Continue the ground behind the mountain bases so the camera never sees
+    // the HDRI through gaps at the edge of the playable terrain. This skirt is
+    // visual-only, follows the measured terrain edge, and slopes down behind
+    // the rocks instead of creating an artificial raised platform.
+    if (this.terrainGroundMaterial) {
+      const skirtWidth = 88;
+      const outerCorners = polygon.map(([x, z], index) => {
+        const [prevX, prevZ] = polygon[(index + polygon.length - 1) % polygon.length]!;
+        const [nextX, nextZ] = polygon[(index + 1) % polygon.length]!;
+        const prevLength = Math.hypot(x - prevX, z - prevZ) || 1;
+        const nextLength = Math.hypot(nextX - x, nextZ - z) || 1;
+        const prevOutX = ((z - prevZ) / prevLength) * inwardSign;
+        const prevOutZ = (-(x - prevX) / prevLength) * inwardSign;
+        const nextOutX = ((nextZ - z) / nextLength) * inwardSign;
+        const nextOutZ = (-(nextX - x) / nextLength) * inwardSign;
+        let miterX = prevOutX + nextOutX;
+        let miterZ = prevOutZ + nextOutZ;
+        const miterLength = Math.hypot(miterX, miterZ);
+        if (miterLength < 0.001) { miterX = nextOutX; miterZ = nextOutZ; }
+        else { miterX /= miterLength; miterZ /= miterLength; }
+        const denominator = Math.max(0.38, miterX * nextOutX + miterZ * nextOutZ);
+        const offset = Math.min(skirtWidth * 1.8, skirtWidth / denominator);
+        return [x + miterX * offset, z + miterZ * offset] as const;
+      });
+      const skirtPositions: number[] = [];
+      const skirtUvs: number[] = [];
+      const skirtIndices: number[] = [];
+      let vertexCount = 0;
+      for (let edge = 0; edge < polygon.length; edge++) {
+        const [x0, z0] = polygon[edge]!;
+        const [x1, z1] = polygon[(edge + 1) % polygon.length]!;
+        const [ox0, oz0] = outerCorners[edge]!;
+        const [ox1, oz1] = outerCorners[(edge + 1) % polygon.length]!;
+        const length = Math.hypot(x1 - x0, z1 - z0);
+        const steps = Math.max(1, Math.ceil(length / 4));
+        for (let step = 0; step <= steps; step++) {
+          const t = step / steps;
+          const x = THREE.MathUtils.lerp(x0, x1, t);
+          const z = THREE.MathUtils.lerp(z0, z1, t);
+          const y = this.getTerrainHeight(x, z) - 0.06;
+          const ox = THREE.MathUtils.lerp(ox0, ox1, t);
+          const oz = THREE.MathUtils.lerp(oz0, oz1, t);
+          skirtPositions.push(x, y, z, ox, y - 7.5, oz);
+          skirtUvs.push((edge * length + t * length) / 160, 0, (edge * length + t * length) / 160, skirtWidth / 160);
+          if (step > 0) {
+            const a = vertexCount - 2;
+            const b = vertexCount - 1;
+            const c = vertexCount;
+            const d = vertexCount + 1;
+            skirtIndices.push(a, c, b, c, d, b);
+          }
+          vertexCount += 2;
+        }
+      }
+      const skirtGeometry = new THREE.BufferGeometry();
+      skirtGeometry.setAttribute('position', new THREE.Float32BufferAttribute(skirtPositions, 3));
+      skirtGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(skirtUvs, 2));
+      skirtGeometry.setIndex(skirtIndices);
+      skirtGeometry.computeVertexNormals();
+      const skirtMaterial = this.terrainGroundMaterial.clone();
+      skirtMaterial.side = THREE.DoubleSide;
+      const skirt = new THREE.Mesh(skirtGeometry, skirtMaterial);
+      skirt.name = 'terrain_boundary_ground_skirt_visual_only';
+      skirt.receiveShadow = true;
+      skirt.castShadow = false;
+      skirt.frustumCulled = false;
+      scene.add(skirt);
+    }
+
+    if (debugGroup && edgePoints.length > 1) {
+      const addLoop = (name: string, points: THREE.Vector3[], color: number) => {
+        const positions: number[] = [];
+        for (let i = 0; i < points.length; i++) {
+          const a = points[i];
+          const b = points[(i + 1) % points.length];
+          positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        const line = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color, toneMapped: false, depthTest: false }));
+        line.name = name;
+        line.renderOrder = 1000;
+        debugGroup!.add(line);
+      };
+      addLoop('debug_terrain_edge_green', edgePoints, 0x43ff55);
+      addLoop('debug_collision_barrier_orange', barrierPoints, 0xff9a35);
+      scene.add(debugGroup);
+      console.info('[WorldBoundary] Development overlay enabled: green=terrain edge, orange=collision inset, yellow=mountain bases.');
+    }
+  }
+
+  /** Retint the unlit panorama layers with the existing world clock. */
+  private updateHorizonPalette(hour: number): void {
+    const h = ((hour % 24) + 24) % 24;
+    const daylight = this.dayNightCycle?.daylight ?? 0;
+    const ramp = (a: number, b: number, value: number) => THREE.MathUtils.smoothstep(value, a, b);
+    const dawn = ramp(5.2, 6.5, h) * (1 - ramp(7.1, 8, h));
+    const dusk = ramp(17.1, 18.1, h) * (1 - ramp(18.8, 20, h));
+    const warm = Math.max(dawn, dusk);
+    for (const material of this.horizonPaletteMaterials) {
+      const data = material.userData;
+      this.horizonTintScratch
+        .setHex(data.horizonNightTint ?? 0x536b91)
+        .lerp(this.horizonDayTintScratch.setHex(data.horizonDayTint ?? 0xcbd6e3), daylight)
+        .lerp(this.horizonDuskTintScratch.setHex(data.horizonDuskTint ?? 0xc79a97), warm * 0.72);
+      material.color.copy(this.horizonTintScratch);
+    }
+  }
+
+  /** Instance the project's original mossy rock GLB as distant skyline relief. */
+  private addHorizonRockforms(source: THREE.Object3D, sourceBounds: THREE.Box3, sourceCenter: THREE.Vector3): void {
+    const meshes: THREE.Mesh[] = [];
+    source.updateMatrixWorld(true);
+    source.traverse((node) => {
+      const mesh = node as THREE.Mesh;
+      if (mesh.isMesh && mesh.geometry && mesh.material) meshes.push(mesh);
+    });
+    if (!meshes.length) return;
+
+    const placements: Array<{ x: number; z: number; y: number; scale: number; yaw: number; tint: THREE.Color }> = [];
+    let seed = 0x5eeda11;
+    const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const sourceSize = sourceBounds.getSize(new THREE.Vector3());
+    const polygon = this.worldBoundaryXZ;
+    const signedArea = polygon.reduce((area, [x, z], index) => {
+      const [nextX, nextZ] = polygon[(index + 1) % polygon.length];
+      return area + x * nextZ - nextX * z;
+    }, 0) * 0.5;
+    const inwardSign = signedArea >= 0 ? 1 : -1;
+    const mountainDebug = import.meta.env.DEV && new URLSearchParams(window.location.search).get('debugWorldBoundary') === '1'
+      ? new THREE.Group()
+      : null;
+    if (mountainDebug) mountainDebug.name = 'world_boundary_mountain_debug';
+    const debugBases: THREE.Matrix4[] = [];
+    const sourceHeight = Math.max(0.001, sourceSize.y);
+
+    // Sample every contour segment, derive its outward normal, and bottom-snap
+    // the original rock asset to the terrain profile. Two staggered sizes make
+    // a continuous natural ridgeline while keeping every instance behind the
+    // player collision line. Instancing retains the original low draw-call cost.
+    polygon.forEach(([x0, z0], edgeIndex) => {
+      const [x1, z1] = polygon[(edgeIndex + 1) % polygon.length];
+      const dx = x1 - x0;
+      const dz = z1 - z0;
+      const length = Math.hypot(dx, dz);
+      if (length < 0.01) return;
+      const inwardX = (-dz / length) * inwardSign;
+      const inwardZ = (dx / length) * inwardSign;
+      const outwardX = -inwardX;
+      const outwardZ = -inwardZ;
+      // Tighter, staggered spacing closes the daylight holes between the
+      // original boulder silhouettes without creating a solid artificial wall.
+      const count = Math.max(1, Math.ceil(length / 8.5));
+      for (let segment = 0; segment < count; segment++) {
+        const t = (segment + 0.5) / count;
+        const edgeX = THREE.MathUtils.lerp(x0, x1, t);
+        const edgeZ = THREE.MathUtils.lerp(z0, z1, t);
+        const baseY = this.getTerrainHeight(edgeX, edgeZ) - 0.75;
+        const height = 21 + random() * 15;
+        const scale = height / sourceHeight;
+        const tint = new THREE.Color().setHSL(0.59 + random() * 0.055, 0.12 + random() * 0.1, 0.42 + random() * 0.12);
+        const halfWidth = sourceSize.x * scale * 0.5;
+        const majorOffset = Math.max(0, halfWidth - 1.0);
+        const yaw = Math.atan2(dz, dx) + (random() - 0.5) * 0.55;
+        placements.push({
+          x: edgeX + outwardX * majorOffset,
+          z: edgeZ + outwardZ * majorOffset,
+          y: baseY,
+          scale,
+          yaw,
+          tint,
+        });
+        if (mountainDebug) debugBases.push(new THREE.Matrix4().makeTranslation(edgeX, this.getTerrainHeight(edgeX, edgeZ) + 0.14, edgeZ));
+
+        // A smaller, overlapping shoulder hides seams along the hillside.
+        if (segment % 2 === 0) {
+          const shoulderHeight = 9 + random() * 9;
+          const shoulderScale = shoulderHeight / sourceHeight;
+          const shoulderHalfWidth = sourceSize.x * shoulderScale * 0.5;
+          const along = (random() - 0.5) * Math.min(4.0, length / count * 0.32);
+          const shoulderOffset = Math.max(0, shoulderHalfWidth - 0.45);
+          placements.push({
+            x: edgeX + dx / length * along + outwardX * shoulderOffset,
+            z: edgeZ + dz / length * along + outwardZ * shoulderOffset,
+            y: baseY - 0.18,
+            scale: shoulderScale,
+            yaw: yaw + (random() - 0.5) * 0.8,
+            tint: tint.clone().multiplyScalar(0.88 + random() * 0.14),
+          });
+          if (mountainDebug) debugBases.push(new THREE.Matrix4().makeTranslation(edgeX, this.getTerrainHeight(edgeX, edgeZ) + 0.14, edgeZ));
+        }
+      }
+    });
+
+    if (mountainDebug && debugBases.length) {
+      const markerGeometry = new THREE.SphereGeometry(0.24, 7, 5);
+      const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xffd84a, toneMapped: false, depthTest: false });
+      const markers = new THREE.InstancedMesh(markerGeometry, markerMaterial, debugBases.length);
+      markers.name = 'debug_decorative_mountain_footings_yellow';
+      debugBases.forEach((matrix, index) => markers.setMatrixAt(index, matrix));
+      markers.instanceMatrix.needsUpdate = true;
+      markers.renderOrder = 1001;
+      mountainDebug.add(markers);
+      this.sceneManager.scene.add(mountainDebug);
+    }
+
+    const sourceRootInverse = source.matrixWorld.clone().invert();
+    const pivot = new THREE.Matrix4().makeTranslation(
+      -sourceCenter.x, -sourceBounds.min.y, -sourceCenter.z,
+    );
+    // The instanced scenery is visual-only to Three.js collision queries.
+    // Create one conservative proxy per placement, reused by the existing
+    // static blocker and camera collision systems (no per-frame work).
+    for (let index = 0; index < placements.length; index++) {
+      const placement = placements[index]!;
+      const blocker = new THREE.Mesh(this.horizonRockBlockerGeometry, this.horizonRockBlockerMaterial);
+      blocker.name = `horizon_rock_solid_blocker_${String(index + 1).padStart(3, '0')}`;
+      blocker.position.set(
+        placement.x,
+        placement.y + sourceSize.y * placement.scale * 0.5,
+        placement.z,
+      );
+      blocker.rotation.y = placement.yaw;
+      blocker.scale.set(
+        Math.max(1, sourceSize.x * placement.scale * 0.72),
+        Math.max(1, sourceSize.y * placement.scale * 0.92),
+        Math.max(1, sourceSize.z * placement.scale * 0.72),
+      );
+      blocker.userData.solidPlayerBlocker = true;
+      blocker.userData.decorativeMountainBlocker = true;
+      blocker.visible = false;
+      blocker.castShadow = false;
+      blocker.receiveShadow = false;
+      blocker.updateMatrixWorld(true);
+      this.levelColliders.push(blocker);
+      this.sceneManager.scene.add(blocker);
+    }
+    for (let meshIndex = 0; meshIndex < meshes.length; meshIndex++) {
+      const sourceMesh = meshes[meshIndex];
+      const instanced = new THREE.InstancedMesh(sourceMesh.geometry, sourceMesh.material, placements.length);
+      instanced.name = `horizon_original_mossy_rock_instances_${meshIndex + 1}`;
+      instanced.count = placements.length;
+      instanced.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      instanced.castShadow = false;
+      instanced.receiveShadow = false;
+      instanced.frustumCulled = false;
+      const sourceRelative = sourceRootInverse.clone().multiply(sourceMesh.matrixWorld);
+      const rotation = new THREE.Matrix4();
+      const scale = new THREE.Matrix4();
+      const translation = new THREE.Matrix4();
+      const placementMatrix = new THREE.Matrix4();
+      placements.forEach((placement, index) => {
+        rotation.makeRotationY(placement.yaw);
+        scale.makeScale(placement.scale, placement.scale, placement.scale);
+        translation.makeTranslation(placement.x, placement.y, placement.z);
+        placementMatrix.copy(translation)
+          .multiply(rotation)
+          .multiply(scale)
+          .multiply(pivot)
+          .multiply(sourceRelative);
+        instanced.setMatrixAt(index, placementMatrix);
+        instanced.setColorAt(index, placement.tint);
+      });
+      instanced.instanceMatrix.needsUpdate = true;
+      if (instanced.instanceColor) instanced.instanceColor.needsUpdate = true;
+      instanced.computeBoundingSphere();
+      this.sceneManager.scene.add(instanced);
+    }
   }
 
   private buildSecretLavaRoute(scene: THREE.Scene): void {
@@ -3501,21 +3991,22 @@ export class LevelToyStory {
     // the underground chamber rather than replacing them with flat black stone.
     const caveWallMat = stoneMat.clone() as THREE.MeshStandardMaterial;
     caveWallMat.color.multiply(new THREE.Color(0.72, 0.78, 0.92));
-    caveWallMat.emissive.setHex(0x101d38);
-    caveWallMat.emissiveIntensity = 0.34;
+    caveWallMat.emissive.setHex(0x24190f);
+    caveWallMat.emissiveIntensity = 0.28;
     caveWallMat.roughness = 0.94;
     caveWallMat.metalness = 0.02;
     const caveCeilingMat = new THREE.MeshStandardMaterial({ color: 0x292a31, roughness: 0.98, flatShading: true, side: THREE.DoubleSide });
     const cryptFloorMat = caveWallMat.clone();
     cryptFloorMat.color.multiplyScalar(1.12);
     cryptFloorMat.emissive.setHex(0x101a31);
-    cryptFloorMat.emissiveIntensity = 0.3;
+    cryptFloorMat.emissiveIntensity = 0.34;
     const floor = new THREE.Mesh(new THREE.BoxGeometry(29.5, 0.4, 27.5), cryptFloorMat);
     floor.name = 'curiosity_chamber_floor';
     floor.position.set(-22.25, this.curiosityCryptFloorY - 0.2, castleCenterZ);
     floor.receiveShadow = true;
     scene.add(floor);
     this.levelColliders.push(floor);
+    this.cryptWalkableSurfaces = [floor];
 
     // Enclose the chamber under the terrain with a domed rock vault; the surface
     // sky is hidden from inside and the cave no longer reads as an open box.
@@ -3565,19 +4056,30 @@ export class LevelToyStory {
     returnArch.add(returnRing);
     scene.add(returnArch);
 
-    // Low-cost cave lighting, no shadow maps: readable stone and traversal on mobile too.
+    // Compact crypt-only practical lighting: warm wall/altar pools balanced by
+    // one restrained spectral accent. No shadow maps or per-frame light work.
+    const cryptLighting = new THREE.Group();
+    cryptLighting.name = 'curiosity_crypt_practical_lights';
+    // Keep this below-ground emissive group resident and visible. A hidden
+    // group of point lights was being toggled on crypt entry; Three.js then
+    // changed the light-count shader variant for the whole scene and forced a
+    // large synchronous shader warmup exactly during the fade transition.
+    cryptLighting.visible = true;
+    this.cryptLightingGroup = cryptLighting;
+    scene.add(cryptLighting);
     [
-      new THREE.Vector3(-15.5, -1.5, castleCenterZ - 7),
-      new THREE.Vector3(-22.5, -1.5, castleCenterZ),
-      new THREE.Vector3(-30, -1.5, castleCenterZ + 7),
-    ].forEach((position, i) => {
-      const glow = new THREE.Mesh(new THREE.OctahedronGeometry(0.28, 0), new THREE.MeshBasicMaterial({ color: i === 1 ? 0x64d9d2 : 0xffbb66, toneMapped: false }));
+      { position: new THREE.Vector3(-34.2, -2.25, castleCenterZ - 8.8), color: 0xffb66b, intensity: 2.7, range: 11 },
+      { position: new THREE.Vector3(-10.2, -2.25, castleCenterZ - 8.8), color: 0xffc47b, intensity: 2.45, range: 10 },
+      { position: new THREE.Vector3(-34.2, -2.25, castleCenterZ + 8.8), color: 0xffc47b, intensity: 2.45, range: 10 },
+      { position: new THREE.Vector3(-10.2, -2.25, castleCenterZ + 8.8), color: 0x72c9ff, intensity: 2.2, range: 11 },
+      { position: new THREE.Vector3(-33.4, -3.15, castleCenterZ), color: 0xffbd52, intensity: 3.2, range: 8.5 },
+    ].forEach(({ position, color }) => {
+      const glow = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), new THREE.MeshBasicMaterial({ color, toneMapped: false }));
       glow.position.copy(position);
-      scene.add(glow);
-      const light = new THREE.PointLight(i === 1 ? 0x57cfc9 : 0xffb35d, 4.2, 16, 2);
-      light.position.copy(position);
-      light.castShadow = false;
-      scene.add(light);
+      cryptLighting.add(glow);
+      // The glow mesh and the crypt stone's baked emissive response provide
+      // the warm pool. Avoid adding live point lights that trigger a full-scene
+      // shader variant change when the player enters or leaves the chamber.
     });
 
     const floorMark = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.08, 1.6), new THREE.MeshStandardMaterial({ color: 0xb78a4b, roughness: 0.7 }));
@@ -3655,7 +4157,7 @@ export class LevelToyStory {
     altarBase.castShadow = true;
     scene.add(altarBase);
     this.levelColliders.push(altarBase);
-    this.cryptWalkableSurfaces = [altarBase];
+    this.cryptWalkableSurfaces.push(altarBase);
 
     const stepMaterial = altarStone.clone();
     for (let i = 0; i < 2; i++) {
@@ -3765,179 +4267,348 @@ export class LevelToyStory {
     scene.add(this.curiosityChest.mesh);
     this.chests.push(this.curiosityChest);
     this.levelColliders.push(this.curiosityChest.mesh);
+
+    // Decode the authored curiosity key while the level is being prepared,
+    // well before the player can reach the lever/chest.
+    this.warmCuriosityKeyAsset();
   }
 
-  /** A small natural sanctuary and its original climb/swing key route, away from the pavilions. */
+  private warmCuriosityKeyAsset(): void {
+    if (this.curiosityKeyPreloadStarted) return;
+    this.curiosityKeyPreloadStarted = true;
+    const startedAt = performance.now();
+    void preloadKeyModel('key4_curiosity').then(() => {
+      if (import.meta.env.DEV) console.info('[CuriosityVaultPerf] Authored key warmup complete', { durationMs: +(performance.now() - startedAt).toFixed(1) });
+    }).catch((error) => {
+      this.curiosityKeyPreloadStarted = false;
+      console.warn('[KEY] Curiosity key preload failed; the authored model will load on demand when the reward appears.', error);
+    });
+  }
+
+  /** Observe actual RAF gaps following the lever press; one sample window only. */
+  private measureCryptActivationFrames(): void {
+    let previous = performance.now();
+    let worstFrameMs = 0;
+    let frames = 0;
+    const sample = (now: number) => {
+      worstFrameMs = Math.max(worstFrameMs, now - previous);
+      previous = now;
+      frames++;
+      if (frames < 8) {
+        requestAnimationFrame(sample);
+        return;
+      }
+      console.info('[CuriosityVaultPerf] RAF response after lever press', {
+        frames,
+        worstFrameMs: +worstFrameMs.toFixed(1),
+      });
+    };
+    requestAnimationFrame(sample);
+  }
+
+  /** Five-tree liana route on the actual collidable terrain, built from shipped tree assets. */
   private buildCanopyTrial(): void {
     const scene = this.sceneManager.scene;
-    // This western hill is over 65m from the nearest pavilion and well clear of
-    // the crypt hatch. Keep every route point derived from this single anchor.
-    const base = new THREE.Vector3(-125, this.getTerrainHeight(-125, -80), -80);
-    // Place the first landing outside the trunk collider. The previous endpoint
-    // was at the trunk's center, so the radial wall ray trapped Wukong there.
-    const top = new THREE.Vector3(base.x + 1.55, base.y + 4.18, base.z + 0.55);
-    const middle = new THREE.Vector3(-119.8, this.getTerrainHeight(-119.8, -76.5) + 0.62, -76.5);
-    const landing = new THREE.Vector3(-111.4, this.getTerrainHeight(-111.4, -68.8) + 0.38, -68.8);
-    const bark = new THREE.MeshStandardMaterial({ color: 0x52331f, roughness: 0.94 });
-    const leaf = new THREE.MeshStandardMaterial({ color: 0x367b48, roughness: 0.9, emissive: 0x10210d, emissiveIntensity: 0.18 });
-    const stone = new THREE.MeshStandardMaterial({
-      color: 0x57534c, roughness: 0.92, metalness: 0.02,
-      emissive: 0x120d06, emissiveIntensity: 0.18, transparent: true, opacity: 0,
+    // The former anchor (-125,-80) sat beyond the terrain mesh (x=-80..80).
+    // This central eastern meadow is inside the real 160m terrain and clear
+    // of the main pavilion at (20, 24), temple at (0, -40), crypt and cabin.
+    const treeXZ: Array<[number, number]> = [[30, 0], [38, -10], [46, 1], [54, -9], [62, 0]];
+    const treeBases = treeXZ.map(([x, z]) => new THREE.Vector3(x, this.getTerrainHeight(x, z), z));
+    const perchHeights = [4.55, 4.95, 5.35, 4.9, 5.2];
+    const routePoints = treeBases.map((treeBase, i) => new THREE.Vector3(
+      treeBase.x + (i === 0 ? 1.9 : 0.9), treeBase.y + perchHeights[i]!, treeBase.z + (i % 2 ? -0.25 : 0.8)
+    ));
+    const base = treeBases[0]!;
+    const top = routePoints[0]!;
+    const middle = routePoints[2]!;
+    const landing = routePoints[4]!;
+    const bark = new THREE.MeshStandardMaterial({ color: 0x56351e, roughness: 0.92 });
+    const darkWood = new THREE.MeshStandardMaterial({ color: 0x382116, roughness: 0.82 });
+    const warmWood = new THREE.MeshStandardMaterial({ color: 0x76502d, roughness: 0.85 });
+    const platformMat = new THREE.MeshStandardMaterial({
+      color: 0x625138, roughness: 0.88, metalness: 0.02,
+      emissive: 0x201302, emissiveIntensity: 0.16, transparent: true, opacity: 0,
     });
-    this.canopyPlatformsMaterial = stone;
+    this.canopyPlatformsMaterial = platformMat;
 
-    const tree = new THREE.Group();
-    tree.name = 'curiosity_tree_sanctuary';
-    tree.position.copy(base);
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.9, 5.8, 10), bark);
-    trunk.name = 'canopy_tree_trunk';
-    trunk.position.y = 2.9;
-    trunk.castShadow = true;
-    trunk.receiveShadow = true;
-    tree.add(trunk);
-    // Low, tapered roots visually seat the tree into the hill.
-    for (let i = 0; i < 5; i++) {
-      const angle = i * Math.PI * 2 / 5;
-      const root = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.34, 1.65, 7), bark);
-      root.position.set(Math.cos(angle) * 0.82, 0.42, Math.sin(angle) * 0.82);
-      root.rotation.z = Math.cos(angle) * 0.62;
-      root.rotation.x = -Math.sin(angle) * 0.62;
-      root.castShadow = true;
-      tree.add(root);
+    // Use the supplied low-weight oak mesh (20 KB), cloned at varied scales and yaw.
+    void new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}assets/environment/tree_oak.gltf?v=canopy-oak-1`)
+      .then(({ scene: oak }) => {
+        treeBases.forEach((treeBase, i) => {
+          const tree = oak.clone(true);
+          tree.name = `qi_canopy_oak_${i + 1}`;
+          tree.position.copy(treeBase);
+          tree.scale.setScalar([1.42, 1.12, 1.27, 1.05, 1.35][i]!);
+          tree.rotation.y = [-0.35, 0.65, 1.15, -0.8, 0.25][i]!;
+          tree.traverse((node) => {
+            const mesh = node as THREE.Mesh;
+            if (mesh.isMesh) { mesh.castShadow = true; mesh.receiveShadow = true; }
+          });
+          scene.add(tree);
+        });
+      })
+      .catch((error) => console.warn('[CanopyTrial] Could not load bundled oak model.', error));
+
+    const addRouteMesh = (mesh: THREE.Mesh, name: string, collider = false) => {
+      mesh.name = name;
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.visible = false;
+      scene.add(mesh);
+      this.canopyRouteVisuals.push(mesh);
+      if (collider) this.canopyPlatformColliders.push(mesh);
+      return mesh;
+    };
+    const addBox = (name: string, x: number, y: number, z: number, sx: number, sy: number, sz: number, material: THREE.Material, collider = false) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), material);
+      mesh.position.set(x, y, z);
+      return addRouteMesh(mesh, name, collider);
+    };
+
+    // Tree trunks block passage, while staying clear of the walkable stair spiral.
+    const trunkBlockMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+    treeBases.forEach((treeBase, i) => {
+      const height = perchHeights[i]! - 0.25;
+      const blocker = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.9, height, 9), trunkBlockMat);
+      blocker.name = `qi_canopy_trunk_collision_${i + 1}`;
+      blocker.position.set(treeBase.x, treeBase.y + height * 0.5, treeBase.z);
+      scene.add(blocker);
+      this.levelColliders.push(blocker);
+    });
+
+    // Tree 1 has a timber house/landing, low rails and a continuous spiral staircase.
+    const houseDeckY = top.y - 0.28;
+    addBox('qi_treehouse_deck', top.x, houseDeckY, top.z, 5.1, 0.55, 4.5, warmWood, true);
+    for (let i = 0; i < 7; i++) addBox('qi_treehouse_floor_plank_' + i, top.x - 2.15 + i * 0.7, houseDeckY + 0.285, top.z, 0.64, 0.045, 4.35, darkWood);
+    for (const sx of [-2.25, 2.25]) for (const sz of [-1.9, 1.9]) {
+      addBox('qi_treehouse_post', top.x + sx, houseDeckY + 1.0, top.z + sz, 0.18, 2.0, 0.18, darkWood);
     }
-    for (let i = 0; i < 5; i++) {
-      const crown = new THREE.Mesh(new THREE.DodecahedronGeometry(1.2 + (i % 2) * 0.22, 1), leaf);
-      crown.position.set(Math.sin(i * 1.25) * 1.25, 5.45 + (i % 3) * 0.62, Math.cos(i * 1.25) * 1.0);
-      crown.castShadow = true;
-      tree.add(crown);
+    for (const side of [-1, 1]) {
+      addBox('qi_treehouse_rail', top.x, houseDeckY + 0.75, top.z + side * 1.95, 4.55, 0.16, 0.14, warmWood);
+      for (let i = 0; i < 5; i++) addBox('qi_treehouse_baluster', top.x - 1.8 + i * 0.9, houseDeckY + 0.4, top.z + side * 1.95, 0.09, 0.7, 0.09, darkWood);
     }
-    const branch = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, 2.5, 7), bark);
-    branch.position.set(0.95, 4.45, 0);
-    branch.rotation.z = Math.PI / 2.8;
-    tree.add(branch);
-    scene.add(tree);
+    addBox('qi_treehouse_back_wall', top.x, houseDeckY + 1.55, top.z - 1.62, 3.4, 1.3, 0.14, darkWood);
+    for (let i = 0; i < 5; i++) addBox('qi_treehouse_lattice', top.x - 1.2 + i * 0.6, houseDeckY + 1.55, top.z - 1.51, 0.055, 1.05, 0.06, warmWood);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(2.8, 0.9, 4), darkWood);
+    roof.position.set(top.x, houseDeckY + 2.65, top.z - 0.15);
+    roof.rotation.y = Math.PI / 4;
+    addRouteMesh(roof, 'qi_treehouse_chinese_roof');
+    const stairSteps = 24;
+    const stairStartAngle = -Math.PI * 0.15;
+    const stairEndAngle = Math.atan2(top.z - base.z, top.x - base.x) + Math.PI * 2;
+    const stairAngleSpan = stairEndAngle - stairStartAngle;
+    const stairRadius = 2.05;
+    const stairRise = perchHeights[0]! - 0.45;
+    const stairSurfaceY = (t: number) => base.y + 0.32 + t * stairRise;
 
-    const trunkCollider = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.74, 0.94, 3.25, 10),
-      new THREE.MeshBasicMaterial({ colorWrite: false })
-    );
-    trunkCollider.name = 'canopy_tree_trunk_collision';
-    // Stop below the raised landing so the player can step away from the trunk.
-    trunkCollider.position.copy(base).add(new THREE.Vector3(0, 1.625, 0));
-    scene.add(trunkCollider);
-    this.levelColliders.push(trunkCollider);
+    // A continuous collidable walking surface closes the small gaps between
+    // the decorative stair treads, so climbing does not require precise jumps.
+    const stairPositions: number[] = [];
+    const stairIndices: number[] = [];
+    const stairSegments = 40;
+    const innerRadius = 1.14;
+    const outerRadius = 3.06;
+    for (let segment = 0; segment <= stairSegments; segment++) {
+      const t = segment / stairSegments;
+      const angle = stairStartAngle + t * stairAngleSpan;
+      for (const radius of [innerRadius, outerRadius]) {
+        stairPositions.push(
+          base.x + Math.cos(angle) * radius,
+          stairSurfaceY(t),
+          base.z + Math.sin(angle) * radius,
+        );
+      }
+    }
+    for (let segment = 0; segment < stairSegments; segment++) {
+      const a = segment * 2;
+      const b = a + 1;
+      const c = a + 2;
+      const d = a + 3;
+      stairIndices.push(a, c, b, c, d, b);
+    }
+    const stairGeometry = new THREE.BufferGeometry();
+    stairGeometry.setAttribute('position', new THREE.Float32BufferAttribute(stairPositions, 3));
+    stairGeometry.setIndex(stairIndices);
+    stairGeometry.computeVertexNormals();
+    const stairWalkwayMaterial = warmWood.clone();
+    stairWalkwayMaterial.side = THREE.DoubleSide;
+    const continuousStair = new THREE.Mesh(stairGeometry, stairWalkwayMaterial);
+    continuousStair.name = 'qi_treehouse_continuous_spiral_stair_walkway';
+    continuousStair.userData.walkableSupport = true;
+    addRouteMesh(continuousStair, continuousStair.name, true);
 
-    // Root sigil, small weathered stones and one shared non-shadowing glow make
-    // this location read as its own quiet natural shrine without costly lights.
-    const rootSigil = new THREE.Mesh(
-      new THREE.TorusGeometry(2.15, 0.045, 6, 48),
-      new THREE.MeshBasicMaterial({ color: 0xd7a94d, transparent: true, opacity: 0.7, toneMapped: false })
-    );
-    rootSigil.name = 'curiosity_tree_root_sigil';
-    rootSigil.position.set(base.x, base.y + 0.055, base.z);
-    rootSigil.rotation.x = Math.PI / 2;
-    scene.add(rootSigil);
-    const runeMarks = new THREE.Mesh(new THREE.TorusGeometry(1.55, 0.025, 5, 32), rootSigil.material);
-    runeMarks.name = 'curiosity_tree_inner_rune';
-    runeMarks.position.copy(rootSigil.position).add(new THREE.Vector3(0, 0.012, 0));
-    runeMarks.rotation.x = Math.PI / 2;
-    scene.add(runeMarks);
-    const shrineStone = new THREE.MeshStandardMaterial({ color: 0x4e5155, roughness: 0.96, flatShading: true });
+    // The decorative tube and scattered posts alone left gaps wide enough for
+    // Wukong to slip off the spiral. Build a continuous, invisible side wall
+    // from the tread surface up to guard height, using the exact stair curve.
+    // Two merged ribbon meshes keep the collision set small and leave the
+    // final few centimetres open so the player can step naturally onto the deck.
+    const railPaths: THREE.Vector3[][] = [[], []];
+    const barrierBottoms: THREE.Vector3[][] = [[], []];
+    const barrierTops: THREE.Vector3[][] = [[], []];
+    const guardEndT = 0.99;
+    for (let sample = 0; sample <= 40; sample++) {
+      const t = sample / 40;
+      if (t > guardEndT) break;
+      const angle = stairStartAngle + t * stairAngleSpan;
+      for (let side = 0; side < 2; side++) {
+        const radius = side === 0 ? innerRadius + 0.06 : outerRadius - 0.06;
+        const x = base.x + Math.cos(angle) * radius;
+        const z = base.z + Math.sin(angle) * radius;
+        const floorY = stairSurfaceY(t) + 0.035;
+        barrierBottoms[side]!.push(new THREE.Vector3(x, floorY, z));
+        barrierTops[side]!.push(new THREE.Vector3(x, floorY + 1.28, z));
+        railPaths[side]!.push(new THREE.Vector3(x, floorY + 0.9, z));
+      }
+    }
+    const guardCollisionMaterial = new THREE.MeshBasicMaterial({
+      colorWrite: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    railPaths.forEach((points, side) => {
+      const railCurve = new THREE.CatmullRomCurve3(points);
+      const rail = new THREE.Mesh(new THREE.TubeGeometry(railCurve, 60, 0.075, 6, false), warmWood);
+      rail.name = `qi_treehouse_stair_handrail_${side === 0 ? 'inner' : 'outer'}`;
+      addRouteMesh(rail, rail.name);
+
+      const positions: number[] = [];
+      const indices: number[] = [];
+      const bottoms = barrierBottoms[side]!;
+      const tops = barrierTops[side]!;
+      for (let i = 0; i < bottoms.length; i++) {
+        positions.push(
+          bottoms[i]!.x, bottoms[i]!.y, bottoms[i]!.z,
+          tops[i]!.x, tops[i]!.y, tops[i]!.z,
+        );
+      }
+      for (let i = 0; i < bottoms.length - 1; i++) {
+        const a = i * 2;
+        const b = a + 1;
+        const c = a + 2;
+        const d = a + 3;
+        indices.push(a, c, b, c, d, b);
+      }
+      const guardGeometry = new THREE.BufferGeometry();
+      guardGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      guardGeometry.setIndex(indices);
+      guardGeometry.computeVertexNormals();
+      const guardWall = new THREE.Mesh(guardGeometry, guardCollisionMaterial);
+      guardWall.name = `qi_treehouse_stair_guard_collision_${side === 0 ? 'inner' : 'outer'}`;
+      addRouteMesh(guardWall, guardWall.name, true);
+    });
+    for (let step = 1; step < stairSteps - 2; step += 2) {
+      const t = step / (stairSteps - 1);
+      const angle = stairStartAngle + t * stairAngleSpan;
+      for (const [side, radius] of [[-1, innerRadius + 0.04], [1, outerRadius - 0.04]] as const) {
+        const post = addBox(
+          `qi_treehouse_stair_guard_post_${step}_${side}`,
+          base.x + Math.cos(angle) * radius,
+          stairSurfaceY(t) + 0.44,
+          base.z + Math.sin(angle) * radius,
+          0.13, 0.88, 0.13, darkWood, true,
+        );
+        post.rotation.y = -angle;
+      }
+    }
+
+    for (let i = 0; i < stairSteps; i++) {
+      const t = i / (stairSteps - 1);
+      const angle = stairStartAngle + t * stairAngleSpan;
+      const y = base.y + 0.28 + t * stairRise;
+      const tread = addBox('qi_treehouse_stair_tread_' + (i + 1), base.x + Math.cos(angle) * stairRadius, y, base.z + Math.sin(angle) * stairRadius, 1.45, 0.22, 0.82, warmWood, true);
+      tread.rotation.y = -angle;
+    }
+
+    // Four intermediate/final timber platforms are mounted to the remaining trees.
+    routePoints.forEach((point, i) => {
+      const width = i === 4 ? 4.4 : i === 0 ? 4.2 : 3.25;
+      const depth = i === 4 ? 4.0 : i === 0 ? 3.8 : 3.2;
+      addBox('qi_canopy_perch_' + (i + 1), point.x, point.y - 0.28, point.z, width, 0.56, depth, platformMat, true);
+      for (const edge of [-1, 1]) addBox('qi_canopy_perch_trim_' + (i + 1), point.x, point.y - 0.48, point.z + edge * (depth * 0.5 - 0.14), width * 0.92, 0.08, 0.12, darkWood);
+      if (i > 0 && i < 4) for (const sx of [-1, 1]) addBox('qi_canopy_perch_guard_' + i + '_' + sx, point.x + sx * (width / 2 - 0.12), point.y + 0.38, point.z, 0.12, 0.72, depth * 0.78, warmWood);
+    });
+
+    // Root sigil and seven small weathered stones establish a natural sanctuary.
+    const shrineSigil = new THREE.Mesh(new THREE.TorusGeometry(2.15, 0.045, 6, 48), new THREE.MeshBasicMaterial({ color: 0xd7a94d, transparent: true, opacity: 0.72, toneMapped: false }));
+    shrineSigil.name = 'curiosity_tree_root_sigil';
+    shrineSigil.position.set(base.x, base.y + 0.055, base.z);
+    shrineSigil.rotation.x = Math.PI / 2;
+    scene.add(shrineSigil);
+    const innerSigil = new THREE.Mesh(new THREE.TorusGeometry(1.55, 0.025, 5, 32), shrineSigil.material);
+    innerSigil.name = 'curiosity_tree_inner_rune';
+    innerSigil.position.copy(shrineSigil.position).add(new THREE.Vector3(0, 0.012, 0));
+    innerSigil.rotation.x = Math.PI / 2;
+    scene.add(innerSigil);
+    const runeStone = new THREE.MeshStandardMaterial({ color: 0x4e5155, roughness: 0.96, flatShading: true });
     for (let i = 0; i < 7; i++) {
       const angle = i * Math.PI * 2 / 7 + 0.18;
       const x = base.x + Math.cos(angle) * 3.05;
       const z = base.z + Math.sin(angle) * 3.05;
-      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.34 + (i % 3) * 0.07, 0), shrineStone);
-      rock.name = `curiosity_sanctuary_ancient_stone_${i}`;
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.34 + (i % 3) * 0.07, 0), runeStone);
+      rock.name = 'curiosity_sanctuary_ancient_stone_' + i;
       rock.position.set(x, this.getTerrainHeight(x, z) + 0.22, z);
       rock.scale.set(1.25, 0.78 + (i % 2) * 0.18, 0.9);
       rock.rotation.y = angle;
       rock.castShadow = true;
       scene.add(rock);
     }
-    const shrineGlow = new THREE.PointLight(0xffc66b, 1.1, 8, 2);
+    const flyGeometry = new THREE.SphereGeometry(0.055, 6, 5);
+    const flyMaterial = new THREE.MeshBasicMaterial({ color: 0xffd977, toneMapped: false });
+    treeBases.forEach((treeBase, i) => {
+      const fly = new THREE.Mesh(flyGeometry, flyMaterial);
+      fly.name = 'qi_canopy_firefly_' + i;
+      fly.position.copy(treeBase).add(new THREE.Vector3(2.2, 1.1, 0));
+      scene.add(fly);
+      this.canopyFireflies.push({ mesh: fly, phase: i * 1.37, radius: 1.5 + (i % 3) * 0.25 });
+    });
+    const shrineGlow = new THREE.PointLight(0xffc66b, 0.8, 7, 2);
     shrineGlow.name = 'curiosity_tree_sanctuary_glow';
     shrineGlow.position.copy(base).add(new THREE.Vector3(0, 1.3, 0));
     shrineGlow.castShadow = false;
     scene.add(shrineGlow);
 
-    const fireflyGeometry = new THREE.SphereGeometry(0.055, 6, 5);
-    const fireflyMaterial = new THREE.MeshBasicMaterial({ color: 0xffd977, toneMapped: false });
-    for (let i = 0; i < 7; i++) {
-      const mote = new THREE.Mesh(fireflyGeometry, fireflyMaterial);
-      mote.name = `curiosity_sanctuary_firefly_${i}`;
-      mote.position.copy(base).add(new THREE.Vector3(2.2, 0.65 + (i % 3) * 0.34, 0));
-      scene.add(mote);
-      this.canopyFireflies.push({ mesh: mote, phase: i * Math.PI * 2 / 7, radius: 1.8 + (i % 3) * 0.35 });
-    }
-
-    const makeLanding = (position: THREE.Vector3, name: string, width: number, depth: number) => {
-      const platform = new THREE.Mesh(new THREE.BoxGeometry(width, 0.55, depth), stone);
-      platform.name = name;
-      platform.position.set(position.x, position.y - 0.275, position.z);
-      platform.castShadow = platform.receiveShadow = true;
-      platform.visible = false;
-      scene.add(platform);
-      this.canopyRouteVisuals.push(platform);
-      this.canopyPlatformColliders.push(platform);
-    };
-    makeLanding(top, 'canopy_tree_top_landing', 2.8, 2.6);
-    makeLanding(middle, 'canopy_middle_landing', 2.8, 2.6);
-    makeLanding(landing, 'canopy_secret_chest_landing', 3.4, 3.1);
-
-    const makeVine = (from: THREE.Vector3, to: THREE.Vector3, name: string, lift: number) => {
-      const control = new THREE.Vector3((from.x + to.x) * 0.5, Math.max(from.y, to.y) + lift, (from.z + to.z) * 0.5);
-      const curve = new THREE.QuadraticBezierCurve3(from.clone(), control, to.clone());
-      const mesh = new THREE.Mesh(
-        new THREE.TubeGeometry(curve, 20, 0.055, 6, false),
-        new THREE.MeshStandardMaterial({ color: 0x665335, roughness: 0.95, emissive: 0x171006, emissiveIntensity: 0.12 })
-      );
-      mesh.name = name;
-      mesh.castShadow = false;
-      mesh.visible = false;
-      scene.add(mesh);
-      this.canopyRouteVisuals.push(mesh);
-      return curve;
-    };
-    makeVine(top.clone().add(new THREE.Vector3(0, 1.35, 0)), middle.clone().add(new THREE.Vector3(0, 2.2, 0)), 'canopy_vine_swing_one', 3.2);
-    makeVine(middle.clone().add(new THREE.Vector3(0, 2.1, 0)), landing.clone().add(new THREE.Vector3(0, 2.7, 0)), 'canopy_vine_swing_two', 2.8);
-    const firstPath = new THREE.QuadraticBezierCurve3(
-      top.clone(),
-      new THREE.Vector3((top.x + middle.x) * 0.5, Math.max(top.y, middle.y) + 2.4, (top.z + middle.z) * 0.5),
-      middle.clone()
-    );
-    const secondPath = new THREE.QuadraticBezierCurve3(
-      middle.clone(),
-      new THREE.Vector3((middle.x + landing.x) * 0.5, Math.max(middle.y, landing.y) + 2.8, (middle.z + landing.z) * 0.5),
-      landing.clone()
-    );
-    const vineGlowMaterial = new THREE.MeshBasicMaterial({ color: 0xffd77c, toneMapped: false });
-    [top, middle].forEach((point, index) => {
-      const marker = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.045, 7, 24), vineGlowMaterial);
-      marker.name = 'canopy_vine_grab_marker_' + index;
-      marker.position.copy(point).add(new THREE.Vector3(0, 1.15, 0));
-      marker.rotation.x = Math.PI / 2;
-      marker.visible = false;
-      scene.add(marker);
-      this.canopyRouteVisuals.push(marker);
+    // Four visible, leaf-draped lianas connect branches in sequence.
+    const routePaths: THREE.QuadraticBezierCurve3[] = [];
+    const vineMaterial = new THREE.MeshStandardMaterial({ color: 0x78913c, roughness: 0.94, emissive: 0x385313, emissiveIntensity: 0.42 });
+    routePoints.slice(0, -1).forEach((point, i) => {
+      const next = routePoints[i + 1]!;
+      const start = point.clone().add(new THREE.Vector3(0, 1.5, 0));
+      const end = next.clone().add(new THREE.Vector3(0, 1.55, 0));
+      const control = new THREE.Vector3((start.x + end.x) * 0.5, Math.max(start.y, end.y) + (i % 2 ? 2.25 : 2.7), (start.z + end.z) * 0.5);
+      const curve = new THREE.QuadraticBezierCurve3(start, control, end);
+      routePaths.push(new THREE.QuadraticBezierCurve3(point.clone(), control.clone().add(new THREE.Vector3(0, -0.15, 0)), next.clone()));
+      const vine = new THREE.Mesh(new THREE.TubeGeometry(curve, 22, 0.12, 7, false), vineMaterial);
+      vine.name = 'qi_canopy_liana_' + (i + 1);
+      vine.castShadow = false;
+      vine.visible = false;
+      scene.add(vine);
+      this.canopyRouteVisuals.push(vine);
+      const branch = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.2, 1.65, 7), bark);
+      branch.position.copy(treeBases[i]!).add(new THREE.Vector3(0.7, 4.6, 0));
+      branch.rotation.z = -Math.PI / 3.2;
+      branch.visible = false;
+      scene.add(branch);
+      this.canopyRouteVisuals.push(branch);
+      const handhold = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.035, 6, 22), new THREE.MeshBasicMaterial({ color: 0xffd77c, toneMapped: false }));
+      handhold.name = 'qi_liana_handhold_' + (i + 1);
+      handhold.position.copy(start);
+      handhold.rotation.x = Math.PI / 2;
+      handhold.visible = false;
+      scene.add(handhold);
+      this.canopyRouteVisuals.push(handhold);
     });
 
     this.canopyChest = new TreasureChest(landing.clone(), Math.PI);
     this.canopyChest.mesh.name = 'canopy_secret_key_chest';
     scene.add(this.canopyChest.mesh);
-    // Chests are interactable through proximity and do not need to be physical
-    // colliders; including the whole animated lid in wall rays caused blocking.
     this.chests.push(this.canopyChest);
-    this.canopyRewardHint = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.3, 0),
-      new THREE.MeshStandardMaterial({ color: 0xf6cf77, emissive: 0xb68021, emissiveIntensity: 0.65 })
-    );
-    this.canopyRewardHint.name = 'canopy_route_reward_hint';
-    this.canopyRewardHint.position.copy(landing).add(new THREE.Vector3(0, 1.35, 0));
-    scene.add(this.canopyRewardHint);
-    this.canopyTrial = { base, top, middle, landing, firstPath, secondPath };
+    // Warm the authored key model while the level is being prepared. Chest
+    // interaction only reveals the already-cached model; it never waits on I/O.
+    void preloadKeyModel('key3_platform').catch((error) => {
+      console.warn('[CanopyTrial] Qi key preload failed; it will retry asynchronously when revealed.', error);
+    });
+    this.canopyRewardHint = null;
+    this.canopyTrial = { base, top, middle, landing, firstPath: routePaths[0]!, secondPath: routePaths[1]!, treeBases, routePoints, routePaths };
   }
-
   private setCanopyRouteActive(active: boolean): void {
     if (active === this.canopyTrialActivated || this.canopyTrialCompleted) return;
     this.canopyTrialActivated = active;
@@ -3946,8 +4617,14 @@ export class LevelToyStory {
       for (const collider of this.canopyPlatformColliders) {
         if (!this.levelColliders.includes(collider)) this.levelColliders.push(collider);
       }
+      // PlayerController snapshots collision meshes during registration. Refresh
+      // it after the challenge activates or the visible stairs remain hollow.
+      this.player.setColliders(this.levelColliders);
+      this.cameraController.setCollisionObjects(this.levelColliders);
     } else {
       this.removeCanopyPlatformColliders();
+      this.player.setColliders(this.levelColliders);
+      this.cameraController.setCollisionObjects(this.levelColliders);
     }
   }
 
@@ -3960,15 +4637,16 @@ export class LevelToyStory {
   private completeCanopyTrial(): void {
     if (this.canopyTrialCompleted) return;
     this.canopyTrialCompleted = true;
-    this.canopyTrialActivated = false;
+    this.canopyTrialActivated = true;
     this.canopyTraversal = null;
     this.canopyTraversalCurve = null;
     this.player.velocity.set(0, 0, 0);
     this.player.isControlsLocked = false;
     this.player.isMovementLocked = false;
     this.player.isGrounded = true;
-    this.canopyRouteVisuals.forEach((visual) => { visual.visible = false; });
-    this.removeCanopyPlatformColliders();
+    // Keep the route's visible surfaces and colliders after completion so
+    // Wukong cannot drop through the final perch when the key is claimed.
+    this.canopyPlatformsMaterial && (this.canopyPlatformsMaterial.opacity = 1);
     this.canopyRewardHint?.removeFromParent();
   }
 
@@ -3976,19 +4654,20 @@ export class LevelToyStory {
     const route = this.canopyTrial;
     if (!route) return;
     const time = performance.now() * 0.001;
-    for (const firefly of this.canopyFireflies) {
+    this.canopyFireflies.forEach((firefly, index) => {
+      const treeBase = route.treeBases[index] ?? route.base;
       firefly.mesh.position.set(
-        route.base.x + Math.cos(time * 0.62 + firefly.phase) * firefly.radius,
-        route.base.y + 0.62 + (Math.sin(time * 1.05 + firefly.phase) + 1) * 0.56,
-        route.base.z + Math.sin(time * 0.62 + firefly.phase) * firefly.radius
+        treeBase.x + Math.cos(time * 0.62 + firefly.phase) * firefly.radius,
+        treeBase.y + 0.62 + (Math.sin(time * 1.05 + firefly.phase) + 1) * 0.56,
+        treeBase.z + Math.sin(time * 0.62 + firefly.phase) * firefly.radius
       );
-    }
+    });
     if (this.canopyTrialCompleted) return;
     const horizontal = (point: THREE.Vector3) => Math.hypot(playerPos.x - point.x, playerPos.z - point.z);
     const distBase = horizontal(route.base);
     if (!this.canopyTrialActivated && distBase < 18) {
       this.setCanopyRouteActive(true);
-      this.subtitleSystem.show('Árbol de la Curiosidad', 'Las runas despiertan. Trepa al árbol y cruza las plataformas para alcanzar la llave.');
+      this.subtitleSystem.show('Desafío del Qi Celestial', 'Sube a la primera casa del árbol y cruza las cuatro lianas para alcanzar el cofre final.');
     }
     if (this.canopyPlatformsMaterial && this.canopyTrialActivated && this.canopyActivationProgress < 1) {
       this.canopyActivationProgress = Math.min(1, this.canopyActivationProgress + delta * 2.8);
@@ -3996,125 +4675,143 @@ export class LevelToyStory {
     }
     if (this.canopyTraversal) {
       this.player.velocity.set(0, 0, 0);
-      if (this.canopyTraversal === 'top') {
-        // Hold Wukong on the small upper platform while Climbing_To_Top
-        // finishes; don't let gravity pull him down between animation frames.
-        this.player.mesh.position.copy(route.top);
-        this.player.isGrounded = true;
-        return;
-      }
       this.canopyTraversalElapsed += delta;
       const progress = THREE.MathUtils.clamp(this.canopyTraversalElapsed / this.canopyTraversalDuration, 0, 1);
       if (this.canopyTraversalCurve) this.player.mesh.position.copy(this.canopyTraversalCurve.getPoint(progress));
-      this.player.isGrounded = this.canopyTraversal === 'swing' && progress >= 1;
+      this.player.isGrounded = progress >= 1;
       return;
     }
 
-    const distTop = horizontal(route.top);
-    const distMiddle = horizontal(route.middle);
-    if (!this.canopyTutorialShown && distBase < 17) {
+    const hud = (window as any).gameInstance?.hud;
+    if (!this.canopyTutorialShown && distBase < 20) {
       this.canopyTutorialShown = true;
-      this.cameraController.panToward(route.top.clone().add(new THREE.Vector3(0, 3, 0)), 1.8);
-      this.subtitleSystem.show('Ruta de las lianas', 'Trepa al \u00e1rbol con Acci\u00f3n. Cruza de una plataforma a la otra balance\u00e1ndote desde los dos anclajes de liana.');
+      this.cameraController.panToward(route.top.clone().add(new THREE.Vector3(0, 2.2, 0)), 1.3);
+      this.subtitleSystem.show('Ruta de las lianas', 'Sube las escaleras de madera. En cada plataforma, usa Acción para agarrar la liana y balancearte hasta el siguiente árbol.');
     }
     if (this.player.isControlsLocked || this.player.isMovementLocked || this.isCinematicPlaying) return;
-    const hud = (window as any).gameInstance?.hud;
-    if (!this.canopyAtTop && !this.canopyAtMid && distBase < 2.5 && Math.abs(playerPos.y - route.base.y) < 1.5) {
-      // Supplemental FBX clips load after first gameplay. Never lock the
-      // player or teleport through the route if they have not finished yet.
-      const canClimb = this.player.animationController.hasClip('Climbing') && this.player.animationController.hasClip('Climbing_To_Top');
-      hud?.showInteractionPrompt(canClimb
-        ? (hud?.isTouchDevice?.() ? 'Trepar al \u00e1rbol \u00b7 Acci\u00f3n' : 'Trepar al \u00e1rbol [E]')
-        : 'Preparando animaci\u00f3n de escalada');
-      if (!canClimb) return;
-      if (!this.inputManager.consumeInteractPress()) return;
-      this.player.isControlsLocked = this.player.isMovementLocked = true;
-      this.player.velocity.set(0, 0, 0);
-      this.player.mesh.rotation.y = Math.atan2(route.base.x - playerPos.x, route.base.z - playerPos.z);
-      this.canopyTraversal = 'climb';
-      this.canopyTraversalElapsed = 0;
-      this.canopyTraversalDuration = this.player.animationController.getClipDuration('Climbing');
-      this.canopyTraversalCurve = new THREE.QuadraticBezierCurve3(this.player.mesh.position.clone(), route.base.clone().add(new THREE.Vector3(0, 2.2, 0.25)), route.top.clone());
-      this.player.animationController.playOneShot('Climbing', () => {
-        this.player.mesh.position.copy(route.top);
-        this.canopyTraversal = 'top';
-        this.canopyTraversalCurve = null;
-        this.player.animationController.playOneShot('Climbing_To_Top', () => {
-          this.canopyAtTop = true;
-          this.canopyTraversal = null;
+
+    // The staircase has real per-step colliders. Reaching the deck is based on
+    // actual position and elevation; there is no snap-to-platform or auto-climb.
+    if (this.canopyRouteIndex < 0 && this.canopyTrialActivated && horizontal(route.top) < 2.8 && Math.abs(playerPos.y - route.top.y) < 1.7) {
+      this.canopyRouteIndex = 0;
+      this.player.isGrounded = true;
+      this.subtitleSystem.show('Primera casa del árbol', 'Buen comienzo. Agárrate a la liana que une los siguientes árboles.');
+    }
+
+    if (this.canopyRouteIndex >= 0 && this.canopyRouteIndex < route.routePoints.length - 1) {
+      const current = route.routePoints[this.canopyRouteIndex]!;
+      if (horizontal(current) < 3.1 && Math.abs(playerPos.y - current.y) < 2.3) {
+        const nextIndex = this.canopyRouteIndex + 1;
+        const clip = this.canopyRouteIndex % 2 === 0 ? 'Swing_To_Land' : 'Swing_To_Land2';
+        const canSwing = this.player.animationController.hasClip(clip);
+        hud?.showInteractionPrompt(canSwing
+          ? (hud?.isTouchDevice?.() ? 'Agarrar la liana · Acción' : 'Agarrar la liana [E]')
+          : 'Preparando animación de liana');
+        if (!canSwing || !this.inputManager.consumeInteractPress()) return;
+        const target = route.routePoints[nextIndex]!;
+        this.player.isControlsLocked = this.player.isMovementLocked = true;
+        this.player.velocity.set(0, 0, 0);
+        this.player.mesh.rotation.y = Math.atan2(target.x - playerPos.x, target.z - playerPos.z);
+        this.canopyTraversal = 'swing';
+        this.canopyTraversalElapsed = 0;
+        this.canopyTraversalDuration = Math.max(0.9, this.player.animationController.getClipDuration(clip));
+        const authoredPath = route.routePaths[this.canopyRouteIndex]!;
+        // Begin at Wukong's actual standing position so the input never snaps
+        // the root to a pre-authored handhold coordinate on the trigger frame.
+        this.canopyTraversalCurve = new THREE.QuadraticBezierCurve3(
+          this.player.mesh.position.clone(),
+          authoredPath.getPoint(0.5),
+          target.clone(),
+        );
+        this.player.animationController.playOneShot(clip, () => {
+          this.player.mesh.position.copy(target);
           this.player.isGrounded = true;
           this.player.isControlsLocked = this.player.isMovementLocked = false;
+          this.canopyTraversal = null;
+          this.canopyTraversalCurve = null;
+          this.canopyRouteIndex = nextIndex;
+          if (nextIndex === route.routePoints.length - 1) {
+            this.canopyRewardClaimed = true;
+            this.subtitleSystem.show('Cofre de la copa', 'Has llegado al último árbol. Pulsa Acción para abrir el cofre y obtener la Llave del Qi Celestial.');
+          } else {
+            this.subtitleSystem.show('Travesía ' + nextIndex + ' de 4', 'Suelta la liana al llegar a la plataforma y continúa hacia el siguiente árbol.');
+          }
           this.player.animationController.playState('Idle', 0.18);
         });
-      });
-      return;
-    }
-
-    const swingTo = (curve: THREE.QuadraticBezierCurve3, target: THREE.Vector3, clipName: string, next: 'middle' | 'landing') => {
-      this.player.isControlsLocked = this.player.isMovementLocked = true;
-      this.player.velocity.set(0, 0, 0);
-      this.player.mesh.rotation.y = Math.atan2(target.x - playerPos.x, target.z - playerPos.z);
-      this.canopyTraversal = 'swing';
-      this.canopyTraversalElapsed = 0;
-      this.canopyTraversalDuration = this.player.animationController.getClipDuration(clipName);
-      this.canopyTraversalCurve = curve;
-      this.player.animationController.playOneShot(clipName, () => {
-        this.player.mesh.position.copy(target);
-        this.player.isGrounded = true;
-        this.player.isControlsLocked = this.player.isMovementLocked = false;
-        this.canopyTraversal = null;
-        this.canopyTraversalCurve = null;
-        if (next === 'middle') {
-          this.canopyAtTop = false;
-          this.canopyAtMid = true;
-          this.subtitleSystem.show('Primera traves\u00eda', 'Has llegado a la plataforma intermedia. Contin\u00faa por la segunda liana hacia el cofre secreto.');
-        } else {
-          this.canopyAtMid = false;
-          this.canopyRewardClaimed = true;
-          this.subtitleSystem.show('Cofre de la copa', 'La segunda traves\u00eda te ha llevado a un cofre secreto. Pulsa Acci\u00f3n para abrirlo.');
-        }
-        this.player.animationController.playState('Idle', 0.18);
-      });
-    };
-
-    if (this.canopyAtTop && distTop < 3.2) {
-      const canSwing = this.player.animationController.hasClip('Swing_To_Land');
-      hud?.showInteractionPrompt(canSwing
-        ? (hud?.isTouchDevice?.() ? 'Cruzar a la plataforma \u00b7 Acci\u00f3n' : 'Cruzar a la plataforma [E]')
-        : 'Preparando animaci\u00f3n de liana');
-      if (!canSwing) return;
-      if (this.inputManager.consumeInteractPress()) swingTo(route.firstPath, route.middle, 'Swing_To_Land', 'middle');
-      return;
-    }
-    if (this.canopyAtMid && distMiddle < 3.2) {
-      const clip = route.middle.distanceTo(route.landing) > 8 ? 'Swing_To_Land2' : 'Swing_To_Land';
-      const canSwing = this.player.animationController.hasClip(clip);
-      hud?.showInteractionPrompt(canSwing
-        ? (hud?.isTouchDevice?.() ? 'Balancearse a la otra orilla \u00b7 Acci\u00f3n' : 'Balancearse a la otra orilla [E]')
-        : 'Preparando animaci\u00f3n de liana');
-      if (!canSwing) return;
-      if (this.inputManager.consumeInteractPress()) {
-        swingTo(route.secondPath, route.landing, clip, 'landing');
+        return;
       }
-      return;
     }
-    if (this.canopyRewardClaimed && this.canopyChest && !this.canopyChestOpen && this.canopyChest.mesh.position.distanceTo(playerPos) < 2.7) {
-      hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Abrir cofre secreto \u00b7 Acci\u00f3n' : 'Abrir cofre secreto [E]');
+
+    if (this.canopyRewardClaimed && this.canopyChest && !this.canopyChestOpen && horizontal(route.landing) < 2.8 && Math.abs(playerPos.y - route.landing.y) < 2.5) {
+      hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Abrir cofre del Qi · Acción' : 'Abrir cofre del Qi [E]');
       if (!this.inputManager.consumeInteractPress()) return;
       this.canopyChestOpen = this.canopyChest.isUnlocked = true;
       this.canopyChest.unlock(this.audioManager, this.collectibleSystem, () => {
-        if (!this.collectedKeys.key4_curiosity && !this.curiosityKeySpawned) {
-          this.curiosityKeySpawned = true;
-          this.spawn3DKey('key4_curiosity', this.canopyChest!.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0)));
-          this.subtitleSystem.show('Llave de la Curiosidad', 'Has encontrado una ruta secreta y la llave de su cofre.');
-        } else {
-          this.powerOrbSystem?.spawn(this.canopyChest!.mesh.position, 30);
-          this.subtitleSystem.show('Cofre secreto', 'El cofre contiene una Esfera de Poder.');
-          this.completeCanopyTrial();
+        const rewardPosition = this.canopyChest!.mesh.position.clone();
+        if (!this.collectedKeys.key3_platform) {
+          this.spawn3DKey('key3_platform', rewardPosition.add(new THREE.Vector3(0, 1.15, 0)), true);
         }
+        this.completeCanopyTrial();
       });
       if (this.canopyRewardHint) this.canopyRewardHint.visible = false;
     }
+  }
+  /** Start the six-key finale once Qi is claimed; wait until another camera cinematic yields. */
+  private tryStartIntroKeyCelebration(): void {
+    const game = (window as any).gameInstance;
+    if (this.introKeyCelebrationInProgress || this.stateFlags.introKeysCelebrated ||
+        !this.collectedKeys.key3_platform || this.totalKeysCount < 6 ||
+        this.isCinematicPlaying || game?.cinematicCamera?.isActive() || game?.menuState !== 'Playing' || game?.isPaused) return;
+    const camera = game?.cinematicCamera as { moveCamera: (...args: any[]) => Promise<void>; abort: () => void } | undefined;
+    const hud = game?.hud;
+    if (!camera || !hud) return;
+
+    this.introKeyCelebrationInProgress = true;
+    const player = this.player.mesh;
+    const originalRotation = player.rotation.y;
+    const focus = player.position.clone().add(new THREE.Vector3(0, 1.12, 0));
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(player.quaternion).normalize();
+    const endPosition = player.position.clone().addScaledVector(forward, 4.15).add(new THREE.Vector3(0, 1.48, 0));
+    const cameraObject = this.cameraController.camera;
+    const startPosition = cameraObject.position.clone();
+    const startLookAt = startPosition.clone().add(cameraObject.getWorldDirection(new THREE.Vector3()).multiplyScalar(5));
+    this.player.velocity.set(0, 0, 0);
+    this.player.isControlsLocked = true;
+    this.player.isMovementLocked = true;
+
+    void camera.moveCamera(startPosition, endPosition, startLookAt, focus, 1.15).then(() => {
+      if (!this.introKeyCelebrationInProgress) return;
+      void camera.moveCamera(endPosition, endPosition, focus, focus, 9999);
+      hud.showDialogueChoices(
+        'LISAR',
+        'Felicidades, has completado las 6 llaves del Nivel Introductorio. ¿Deseas seguir la aventura?',
+        [
+          { label: 'Sí, continuar', value: 'accept' },
+          { label: 'No, quedarme explorando', value: 'decline' },
+        ],
+        (choice: 'accept' | 'decline') => {
+          this.stateFlags.introKeysCelebrated = true;
+          this.introKeyCelebrationInProgress = false;
+          this.player.isControlsLocked = false;
+          this.player.isMovementLocked = false;
+          player.rotation.y = originalRotation;
+          camera.abort();
+          this.cameraController.setTarget(player);
+          this.cameraController.resumeAfterCinematic();
+          if (choice === 'accept') {
+            this.stateFlags.levelCompleted = true;
+            hud.showVictoryScreen(6, '05:00');
+          }
+          game.saveGame(false);
+        },
+        { placement: 'top', type: 'reward', focusPoints: [{ x: 0.5, y: 0.64, weight: 4 }] },
+      );
+    }).catch((error: unknown) => {
+      this.introKeyCelebrationInProgress = false;
+      this.player.isControlsLocked = false;
+      this.player.isMovementLocked = false;
+      console.warn('[KeyCompletion] Could not play the closing camera move.', error);
+    });
   }
 
   private buildAncientRuinsAndLandmarks(): void {
@@ -4978,14 +5675,16 @@ export class LevelToyStory {
       rawCoins.push(new THREE.Vector3(rx, 0.6, rz));
     }
 
-    // Keep the existing 50-coin quest total; place the eight cabin coins on
-    // the measured ground-floor plane (local GLB Y=0.10), never on its upper
-    // deck at Y=6.10. Collectible visuals float 0.15m above their root.
+    // Keep the existing 50-coin quest total. Five cabin coins remain on the
+    // ground floor and three of these same coin instances reward exploring
+    // the second storey; no collectible IDs or persistence totals are added.
     const houseCoinY = this.getAbandonedHouseFloorTopY() + 0.02;
+    const houseUpperCoinY = this.getAbandonedHouseUpperFloorTopY() + 0.02;
     const highHouseCoins = [
-      [34, -88], [38, -88], [42, -88], [34, -92],
-      [42, -92], [34, -96], [38, -96], [42, -96]
-    ].map(([x, z]) => new THREE.Vector3(x, houseCoinY, z));
+      [34, -88, houseCoinY], [38, -88, houseCoinY], [42, -88, houseCoinY],
+      [34, -92, houseCoinY], [42, -92, houseCoinY],
+      [39.2, -96, houseUpperCoinY], [40.3, -94, houseUpperCoinY], [42, -92, houseUpperCoinY]
+    ].map(([x, z, y]) => new THREE.Vector3(x, y, z));
     rawCoins.splice(rawCoins.length - highHouseCoins.length, highHouseCoins.length, ...highHouseCoins);
 
     // ── AUTOMATED COIN POSITION VALIDATION & COLLISION CHECKER ──
@@ -5026,7 +5725,10 @@ export class LevelToyStory {
         checkedPos.y = this.curiosityCryptFloorY + 0.6;
       } else if (Math.abs(checkedPos.x - this.highHouseCenter.x) < 7.5 &&
                  Math.abs(checkedPos.z - this.highHouseCenter.z) < 8.5) {
-        checkedPos.y = this.getAbandonedHouseFloorTopY() + 0.02;
+        const houseUpperFloor = this.getAbandonedHouseUpperFloorTopY();
+        checkedPos.y = checkedPos.y > houseUpperFloor - 0.8
+          ? houseUpperFloor + 0.02
+          : this.getAbandonedHouseFloorTopY() + 0.02;
       } else {
         checkedPos.y = this.getTerrainHeight(checkedPos.x, checkedPos.z) + 0.6;
       }
@@ -5094,8 +5796,9 @@ export class LevelToyStory {
         }
         const rows = coinMeshes.map((item) => {
           const position = item.mesh.position;
-          const inHouseInterior = Math.abs(position.x - this.highHouseCenter.x) < 5 && Math.abs(position.z - this.highHouseCenter.z) < 5 &&
-            Math.abs(position.y - (this.getAbandonedHouseFloorTopY() + 0.02)) < 0.35;
+          const inHouseInterior = Math.abs(position.x - this.highHouseCenter.x) < 7.5 && Math.abs(position.z - this.highHouseCenter.z) < 8.5 &&
+            (Math.abs(position.y - (this.getAbandonedHouseFloorTopY() + 0.02)) < 0.35 ||
+             Math.abs(position.y - (this.getAbandonedHouseUpperFloorTopY() + 0.02)) < 0.35);
           const inTempleInterior = this.centralTempleFloorTopY !== null && Math.abs(position.x) <= this.centralTempleFloorWidth * 0.5 &&
             position.z >= this.centralTempleFloorCenterZ - this.centralTempleFloorDepth * 0.5 &&
             position.z <= this.centralTempleFloorCenterZ + this.centralTempleFloorDepth * 0.5 &&
@@ -5224,20 +5927,34 @@ export class LevelToyStory {
     ]);
 
     // Four existing crab controllers patrol the crypt in two entry and two
-    // central lanes. All positions share the chamber floor elevation.
-    const cryptGuard1 = new EnemyController('crypt_crab_guard_1', new THREE.Vector3(-14.5, -5.82, -35), [
-      new THREE.Vector3(-16, -5.82, -35), new THREE.Vector3(-12, -5.82, -35),
+    // central lanes. Their ground sampler must use the underground slab,
+    // never the outdoor terrain height function.
+    const cryptFloorY = this.curiosityCryptFloorY;
+    const cryptGuard1 = new EnemyController('crypt_crab_guard_1', new THREE.Vector3(-14.5, cryptFloorY, -35), [
+      new THREE.Vector3(-16, cryptFloorY, -35), new THREE.Vector3(-12, cryptFloorY, -35),
     ]);
-    const cryptGuard2 = new EnemyController('crypt_crab_guard_2', new THREE.Vector3(-14.5, -5.82, -45), [
-      new THREE.Vector3(-16, -5.82, -45), new THREE.Vector3(-12, -5.82, -45),
+    const cryptGuard2 = new EnemyController('crypt_crab_guard_2', new THREE.Vector3(-14.5, cryptFloorY, -45), [
+      new THREE.Vector3(-16, cryptFloorY, -45), new THREE.Vector3(-12, cryptFloorY, -45),
     ]);
-    const cryptGuard3 = new EnemyController('crypt_crab_guard_3', new THREE.Vector3(-24, -5.82, -34), [
-      new THREE.Vector3(-27, -5.82, -34), new THREE.Vector3(-21, -5.82, -34),
+    const cryptGuard3 = new EnemyController('crypt_crab_guard_3', new THREE.Vector3(-24, cryptFloorY, -34), [
+      new THREE.Vector3(-27, cryptFloorY, -34), new THREE.Vector3(-21, cryptFloorY, -34),
     ]);
-    const cryptGuard4 = new EnemyController('crypt_crab_guard_4', new THREE.Vector3(-24, -5.82, -46), [
-      new THREE.Vector3(-27, -5.82, -46), new THREE.Vector3(-21, -5.82, -46),
+    const cryptGuard4 = new EnemyController('crypt_crab_guard_4', new THREE.Vector3(-24, cryptFloorY, -46), [
+      new THREE.Vector3(-27, cryptFloorY, -46), new THREE.Vector3(-21, cryptFloorY, -46),
     ]);
     this.cryptGuardians = [cryptGuard1, cryptGuard2, cryptGuard3, cryptGuard4];
+    const cryptGrounds = this.getCuriosityCryptWalkableSurfaces();
+    const cryptMovementBounds = new THREE.Box2(
+      new THREE.Vector2(-36.1, -52.7),
+      new THREE.Vector2(-8.9, -27.3),
+    );
+    for (const guardian of this.cryptGuardians) {
+      guardian.groundHeightOverride = cryptFloorY;
+      guardian.groundSnapSurfaces = cryptGrounds;
+      guardian.movementBounds = cryptMovementBounds;
+      // Keep underground enemies out of the outdoor view until their room is entered.
+      guardian.mesh.visible = false;
+    }
 
     // Boss Giant Crab in the Sand Arena (firmly grounded at y = 0.2)
     const bossY = 0.2;
@@ -5279,82 +5996,28 @@ export class LevelToyStory {
         if (hud) hud.triggerDamageFlash();
       };
 
-      e.onDeath = async () => {
+      e.onDeath = () => {
         this.powerOrbSystem?.spawn(e.mesh.position, e.id === 'crab_boss' ? 200 : 20);
         if (e.id === 'crab_boss') {
           console.log('[BOSS] HP: 0 -> Entering DYING state. Defeat sequence started.');
-          if (this.isCinematicPlaying) return;
-          this.isCinematicPlaying = true;
           this.bossEncounterActive = false;
           this.stateFlags.bossDefeated = true;
           (window as any).gameInstance?.saveGame(false);
           void this.audioManager.stopBossMusic();
           const hud = (window as any).gameInstance?.hud;
           hud?.hideBossHealth();
-
-          // Pause other enemies
-          this.enemies.forEach(other => {
-            if (other.id !== 'crab_boss') other.isPaused = true;
-          });
-
-          // Focus camera on defeated boss lying on the ground
-          const cinematicCamera = (window as any).gameInstance?.cinematicCamera;
-          if (cinematicCamera) {
-            const bossPos = e.mesh.position.clone();
-            const camPos = bossPos.clone().add(new THREE.Vector3(-6.0, 3.5, 6.0));
-            const lookAt = bossPos.clone().add(new THREE.Vector3(0, 0.5, 0));
-            cinematicCamera.moveCamera(camPos, camPos, lookAt, lookAt, 999.0);
-          }
-
           this.subtitleSystem.show('Jefe Cangrejo', '¡El Jefe Cangrejo ha sido derrotado!');
 
-          // Wait 1.0s to view defeated boss lying on arena floor
-          await new Promise(r => setTimeout(r, 1000));
-
-          // Run KeyPickupSequence for Crimson Boss Key (key2_boss)
-          console.log('[BOSS] Reward key spawned — flying to player');
-          const bossKeyData = this.keyDefinitions['key2_boss'];
-          const playerPos = this.player.mesh.position.clone();
-          const facing = new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.mesh.quaternion).setY(0).normalize();
-          if (facing.lengthSq() < 0.001) facing.set(0, 0, 1);
-          const keySpawnPos = playerPos.clone().addScaledVector(facing, 0.5).add(new THREE.Vector3(0, 6.0, 0));
-          if (cinematicCamera) {
-            const camPos = playerPos.clone().add(new THREE.Vector3(0, 3.2, 6.8));
-            const lookAt = playerPos.clone().add(new THREE.Vector3(0, 1.6, 0));
-            cinematicCamera.moveCamera(camPos, camPos, lookAt, lookAt, 999.0);
-          }
-
-          await KeyPickupSequence.runSequence(
-            bossKeyData,
-            keySpawnPos,
-            this.player,
-            this.sceneManager.scene,
-            () => {
-              console.log('[BOSS] Death sequence completed — gameplay resumed');
-              this.awardKey('key2_boss');
-              if (cinematicCamera) cinematicCamera.abort();
-              const cameraController = (window as any).gameInstance?.cameraController;
-              if (cameraController) {
-                cameraController.target = this.player.mesh;
-                cameraController.resumeAfterCinematic();
-              }
-              this.enemies.forEach(other => other.isPaused = false);
-              this.isCinematicPlaying = false;
-            },
-            'boss-celestial'
-          );
+          // Keep gameplay and camera live. The authored key remains a normal
+          // world pickup, so the player is never locked during the dissolve.
+          const keyPosition = e.mesh.position.clone().add(new THREE.Vector3(0, 1.1, 0));
+          if (!this.collectedKeys.key2_boss) this.spawn3DKey('key2_boss', keyPosition);
         }
       };
     });
   }
 
-  // Spawns the physical key objects in the world for 3D collection (except Gekko's which is dialog based)
-  private spawnKeysInWorld(): void {
-    // Key 3 remains in the temple route, moved off the removed castle roof.
-    this.spawn3DKey('key3_platform', new THREE.Vector3(15, this.getTerrainHeight(15, -47) + 0.8, -47));
-  }
-
-  public spawn3DKey(id: string, pos: THREE.Vector3): void {
+  public spawn3DKey(id: string, pos: THREE.Vector3, showMagicEffects = true, transientSeconds = 0): void {
     if (!getKeyAsset(id)) {
       console.warn(`[KEY] No approved 3D asset is assigned to '${id}'; no substitute model will be spawned.`);
       return;
@@ -5365,34 +6028,44 @@ export class LevelToyStory {
     keyGroup.position.copy(pos);
     keyGroup.name = id;
     keyGroup.userData.assetReady = false;
+    if (transientSeconds > 0) keyGroup.userData.removeAt = performance.now() + transientSeconds * 1000;
     scene.add(keyGroup);
     this.keysMeshes.push(keyGroup);
     void loadKeyModel(id).then((model) => {
       if (!keyGroup.parent) return;
       keyGroup.add(model);
-      const asset = getKeyAsset(id)!;
-      const halo = new THREE.Mesh(keyHaloGeometry, new THREE.MeshBasicMaterial({
-        color: asset.magicColor, transparent: true, opacity: 0.48, depthWrite: false, toneMapped: false,
-      }));
-      halo.rotation.x = Math.PI / 2;
-      halo.position.y = 0.12;
-      keyGroup.add(halo);
-      const sparkles = new THREE.InstancedMesh(keySparkGeometry, new THREE.MeshBasicMaterial({
-        color: asset.magicColor, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false,
-      }), 8);
-      const dummy = new THREE.Object3D();
-      for (let i = 0; i < 8; i++) {
-        const angle = i * Math.PI / 4;
-        dummy.position.set(Math.cos(angle) * 0.35, 0.08 + (i % 3) * 0.22, Math.sin(angle) * 0.35);
-        dummy.scale.setScalar(i % 2 === 0 ? 1 : 0.7);
-        dummy.updateMatrix();
-        sparkles.setMatrixAt(i, dummy.matrix);
+      if (showMagicEffects) {
+        const asset = getKeyAsset(id)!;
+        const halo = new THREE.Mesh(keyHaloGeometry, new THREE.MeshBasicMaterial({
+          color: asset.magicColor, transparent: true, opacity: 0.48, depthWrite: false, toneMapped: false,
+        }));
+        halo.rotation.x = Math.PI / 2;
+        halo.position.y = 0.12;
+        keyGroup.add(halo);
+        const sparkles = new THREE.InstancedMesh(keySparkGeometry, new THREE.MeshBasicMaterial({
+          color: asset.magicColor, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false,
+        }), 8);
+        const dummy = new THREE.Object3D();
+        for (let i = 0; i < 8; i++) {
+          const angle = i * Math.PI / 4;
+          dummy.position.set(Math.cos(angle) * 0.35, 0.08 + (i % 3) * 0.22, Math.sin(angle) * 0.35);
+          dummy.scale.setScalar(i % 2 === 0 ? 1 : 0.7);
+          dummy.updateMatrix();
+          sparkles.setMatrixAt(i, dummy.matrix);
+        }
+        sparkles.instanceMatrix.needsUpdate = true;
+        keyGroup.add(sparkles);
       }
-      sparkles.instanceMatrix.needsUpdate = true;
-      keyGroup.add(sparkles);
       keyGroup.userData.assetReady = true;
       console.log(`[LevelToyStory] Spawned authored key '${id}' at`, pos);
     }).catch((error) => {
+      keyGroup.removeFromParent();
+      const failedIndex = this.keysMeshes.indexOf(keyGroup);
+      if (failedIndex >= 0) this.keysMeshes.splice(failedIndex, 1);
+      if (id === 'key4_curiosity') {
+        this.curiosityKeySpawned = false;
+        this.curiosityKeyRetryAt = performance.now() + 900;
+      }
       console.error(`[KEY] Could not load authored model for '${id}'.`, error);
     });
   }
@@ -5427,12 +6100,6 @@ export class LevelToyStory {
     // awardKey owns the idempotency check, persistence and HUD progress update.
     // Remove the world object only after that transaction accepts the pickup.
     if (!this.awardKey(keyId, keyPosition)) return;
-    if (keyId === 'key4_curiosity' && this.canopyTrial &&
-        Math.hypot(keyPosition.x - this.canopyTrial.landing.x, keyPosition.z - this.canopyTrial.landing.z) < 4.2) {
-      // The platforms are temporary challenge aids. Retire their collision on
-      // reward pickup so the landing can never become an invisible enclosure.
-      this.completeCanopyTrial();
-    }
     nearest.userData.collected = true;
     nearest.removeFromParent();
     const index = this.keysMeshes.indexOf(nearest);
@@ -5453,17 +6120,32 @@ export class LevelToyStory {
       if (switchDistance < 2.8 && Math.abs(playerPos.y - switchPos.y) < 3.0) {
         hud?.showInteractionPrompt(hud?.isTouchDevice?.() ? 'Activar Palanca · Acción' : 'Activar Palanca [E]');
         if (this.inputManager.consumeInteractPress()) {
+          const activationStart = performance.now();
           this.isLavaVaultOpen = true;
           this.leverTarget = -Math.PI / 4;
           this.hatchTarget = 1;
-          // Start fetching/decoding the authored reward while Wukong travels
-          // to the underground room, not at the moment the chest is opened.
-          void preloadKeyModel('key4_curiosity').catch((error) =>
-            console.warn('[KEY] Curiosity key preload failed.', error)
-          );
+          // Key GLTF fetch/decode is started during level preparation, never
+          // on the lever's interaction frame.
           this.audioManager.playHitImpact();
           this.audioManager.playPortalActivate();
-          (window as any).gameInstance?.saveGame(false);
+          // Persist the lever after the interaction frame. saveGame serializes
+          // the full exploration state synchronously; running it inline here
+          // used to hitch the same frame that starts the hatch animation.
+          const persistLever = () => (window as any).gameInstance?.saveGame(false);
+          const idleWindow = window as Window & {
+            requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+          };
+          if (idleWindow.requestIdleCallback) {
+            idleWindow.requestIdleCallback(persistLever, { timeout: 1600 });
+          } else {
+            window.setTimeout(persistLever, 0);
+          }
+          if (import.meta.env.DEV) {
+            console.info('[CuriosityVaultPerf] Lever activation synchronous work', {
+              totalMs: +(performance.now() - activationStart).toFixed(1),
+            });
+            this.measureCryptActivationFrames();
+          }
           this.subtitleSystem.show('Mecanismo Secreto', '¡El mecanismo del pabellón ha abierto una cámara secreta al otro lado del reino!');
         }
       }
@@ -5498,6 +6180,11 @@ export class LevelToyStory {
       }
     }
     this.totalKeysCount = Object.values(this.collectedKeys).filter(Boolean).length;
+    if (this.collectedKeys.key3_platform) {
+      this.canopyChestOpen = true;
+      this.canopyChest?.restoreOpen(false);
+      this.completeCanopyTrial();
+    }
     for (let i = this.keysMeshes.length - 1; i >= 0; i--) {
       const key = this.keysMeshes[i];
       if (!this.collectedKeys[key.name as keyof typeof this.collectedKeys]) continue;
@@ -5514,7 +6201,7 @@ export class LevelToyStory {
 
     // Key milestones (apart from Gekko's 50-coin reward) also feed the staff
     // progression, making all five upgrades reachable through full exploration.
-    if (keyId !== 'key1_gekko') {
+    if (keyId !== 'key1_gekko' && keyId !== 'key3_platform') {
       this.powerOrbSystem?.spawn(this.player.mesh.position.clone(), 250);
     }
 
@@ -5531,7 +6218,7 @@ export class LevelToyStory {
     let keyName = '';
     if (keyId === 'key1_gekko') keyName = 'Llave de la Riqueza (Gekko 50 Monedas)';
     if (keyId === 'key2_boss') keyName = 'Llave de la Valentía (Jefe Cangrejo)';
-    if (keyId === 'key3_platform') keyName = getKeyAsset(keyId)?.name ?? 'Llave de la Naturaleza';
+    if (keyId === 'key3_platform') keyName = getKeyAsset(keyId)?.name ?? 'Llave del Qi Celestial';
     if (keyId === 'key4_curiosity') keyName = 'Llave de la Curiosidad';
     if (keyId === 'key6_gargoyles') keyName = 'Llave del Secreto (Gárgolas)';
     if (keyId === 'key5_pots') keyName = 'Llave de Destrucción (Gemas)';
@@ -6194,6 +6881,9 @@ export class LevelToyStory {
     this.updateLifePickups(delta, playerPos);
     this.syncStructureColliders(playerPos);
     this.loadOptionalArchitectureNearPlayer(playerPos);
+    if (this.optionalHouseLightingGroup) {
+      this.optionalHouseLightingGroup.visible = playerPos.distanceToSquared(this.highHouseCenter) < 30 * 30;
+    }
     if (this.skyAnchor) this.skyAnchor.position.copy(playerPos);
     const interactionHud = (window as any).gameInstance?.hud;
     interactionHud?.beginInteractionFrame();
@@ -6208,6 +6898,7 @@ export class LevelToyStory {
     this.updateKeyInteraction(playerPos);
     this.updateCryptInteractions(playerPos);
     this.updateCanopyTrial(delta, playerPos);
+    this.tryStartIntroKeyCelebration();
     this.updateTreeReactions(delta, realElapsed);
     for (let i = this.treeSnakes.length - 1; i >= 0; i--) {
       const snake = this.treeSnakes[i];
@@ -6224,6 +6915,13 @@ export class LevelToyStory {
     this.twinCatsChallenge?.setNightAmount(nightAmount);
     if (this.skyPanorama && this.dayNightCycle) {
       this.skyPanorama.update(this.sceneManager.renderer, skyBlendForHour(this.dayNightCycle.hour));
+    }
+    if (this.dayNightCycle) {
+      this.horizonPaletteElapsed += delta;
+      if (this.horizonPaletteElapsed >= 0.16) {
+        this.horizonPaletteElapsed %= 0.16;
+        this.updateHorizonPalette(this.dayNightCycle.hour);
+      }
     }
     if (this.moonMaterial) this.moonMaterial.opacity = 0;
     if (this.cloudsUniforms?.uNightIntensity) this.cloudsUniforms.uNightIntensity.value = nightAmount;
@@ -6338,7 +7036,6 @@ export class LevelToyStory {
       }
       this.grassCullElapsed = 0.35;
     }
-    if (this.lampMoths) this.lampMoths.update(delta);
     if (this.hatchPivot && this.hatchTarget !== this.hatchOpenProgress) {
       this.hatchOpenProgress = THREE.MathUtils.damp(this.hatchOpenProgress, this.hatchTarget, 4.6, delta);
       if (Math.abs(this.hatchOpenProgress - this.hatchTarget) < 0.002) this.hatchOpenProgress = this.hatchTarget;
@@ -6376,7 +7073,12 @@ export class LevelToyStory {
       this.staffChest.mesh.position.distanceTo(playerPos) < 2.2 &&
       !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying;
     const openStaffChest = chestInRange && this.inputManager.consumeInteractPress();
-    const cryptGuardiansDefeated = this.cryptGuardians.every((enemy) => enemy.state === 'DEAD');
+    // DYING means gameplay damage is finished; it also covers despawned or
+    // health-zero guardians while their short visual death sequence completes.
+    // Visibility controls where the room is rendered; it is not a kill state.
+    // Counting hidden pre-entry guardians as defeated permanently unlocked
+    // the chest before the challenge could be played.
+    const cryptGuardiansDefeated = this.cryptGuardians.every((enemy) => !enemy.isAlive());
     if (cryptGuardiansDefeated && !this.cryptGuardiansCleared) {
       this.cryptGuardiansCleared = true;
       this.curiosityChest.isUnlocked = true;
@@ -6385,11 +7087,17 @@ export class LevelToyStory {
       hud?.showInfoToast('CRIPTA ANCESTRAL', '¡Los guardianes han caído! El cofre ancestral está desbloqueado', 4200, 3);
       (window as any).gameInstance?.saveGame(false);
     }
-    const curiosityChestDistance = this.curiosityChest.mesh.position.distanceTo(playerPos);
+    // Measure the chest's approach range in the floor plane; the chest pivot
+    // sits 0.3 m above the chamber floor and must not shrink the usable radius.
+    const curiosityChestDistance = Math.hypot(
+      this.curiosityChest.mesh.position.x - playerPos.x,
+      this.curiosityChest.mesh.position.z - playerPos.z,
+    );
     const curiosityChestNear = this.isInsideCuriosityCrypt && this.isLavaVaultOpen && !this.curiosityChestOpen &&
-      curiosityChestDistance < 2.7 && !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying;
+      curiosityChestDistance < 2.7 && Math.abs(this.curiosityChest.mesh.position.y - playerPos.y) < 2.6 &&
+      !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying;
     const curiosityChestInRange = curiosityChestNear && this.curiosityChest.isUnlocked &&
-      this.curiosityChest.mesh.position.distanceTo(playerPos) < 2.7 &&
+      curiosityChestDistance < 2.7 &&
       !this.player.isControlsLocked && !this.player.isMovementLocked && !this.isCinematicPlaying;
     const openCuriosityChest = curiosityChestInRange && this.inputManager.consumeInteractPress();
     const gekkoPosForAction = this.gekkoNPC?.mesh?.position;
@@ -6448,7 +7156,13 @@ export class LevelToyStory {
 
     // Spin 3D floating keys in the world & check for collection with TakingItem animation
     // Key visuals keep spinning after the one-frame interaction was resolved.
-    for (const key of this.keysMeshes) {
+    for (let i = this.keysMeshes.length - 1; i >= 0; i--) {
+      const key = this.keysMeshes[i]!;
+      if (typeof key.userData.removeAt === 'number' && performance.now() >= key.userData.removeAt) {
+        key.removeFromParent();
+        this.keysMeshes.splice(i, 1);
+        continue;
+      }
       if (!key.userData.assetReady) continue;
       key.rotation.y += delta * 2.0;
       key.position.y += Math.sin(Date.now() * 0.003) * 0.001;
@@ -6456,11 +7170,15 @@ export class LevelToyStory {
 
     // Update enemies (including DYING state for death VFX execution and memory cleanup)
     this.enemies.forEach(e => {
-      if (e.state !== 'DEAD') {
+      if (e.state !== 'DEAD' && e.state !== 'DEFEATED') {
+        if (e.id.startsWith('crypt_crab_guard_') && !this.isInsideCuriosityCrypt) {
+          e.mesh.visible = false;
+          return;
+        }
         // Enemy AI uses planar distance; keep surface enemies from aggroing or
         // dealing damage through the ground while Wukong explores the crypt.
         // Continue DYING sequences everywhere so their cleanup/VFX still finish.
-        if (e.state !== 'DYING' && Math.abs(e.mesh.position.y - playerPos.y) > 3.25) return;
+        if (e.state !== 'DYING' && e.state !== 'DISSOLVING' && Math.abs(e.mesh.position.y - playerPos.y) > 3.25) return;
         e.update(delta, playerPos, this.levelColliders);
         if (!this.combatTutorialShown && e.isAlive() && e.mesh.position.distanceTo(playerPos) < 5.5) {
           this.combatTutorialShown = true;
@@ -6597,12 +7315,19 @@ export class LevelToyStory {
       hud?.hideInteractionPrompt();
       this.curiosityChestOpen = true;
       this.curiosityChest.isUnlocked = true;
-      this.curiosityChest.unlock(this.audioManager, this.collectibleSystem, () => {
-        if (this.curiosityKeySpawned || this.collectedKeys.key4_curiosity) return;
+      this.curiosityKeyRewardReady = true;
+      if (!this.curiosityKeySpawned && !this.collectedKeys.key4_curiosity) {
         this.curiosityKeySpawned = true;
-        this.spawn3DKey('key4_curiosity', this.curiosityChest.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0)));
-        this.subtitleSystem.show('Cofre antiguo', 'Dentro del cofre está la Llave de la Curiosidad.');
-      });
+        this.spawn3DKey('key4_curiosity', this.curiosityChest.mesh.position.clone().add(new THREE.Vector3(0, 1.08, 0)), false);
+        this.subtitleSystem.show('Cofre antiguo', 'Has encontrado la Llave de la Curiosidad.');
+      }
+      this.curiosityChest.unlock(this.audioManager, this.collectibleSystem);
+    }
+
+    if (this.curiosityKeyRewardReady && !this.collectedKeys.key4_curiosity && !this.curiosityKeySpawned &&
+        performance.now() >= this.curiosityKeyRetryAt) {
+      this.curiosityKeySpawned = true;
+      this.spawn3DKey('key4_curiosity', this.curiosityChest.mesh.position.clone().add(new THREE.Vector3(0, 1.08, 0)), false);
     }
 
     if (!this.stateFlags.staffFound && this.staffChest.mesh.position.distanceTo(playerPos) < 2.2 && !this.player.isControlsLocked && !this.isCinematicPlaying) {
@@ -6661,7 +7386,7 @@ export class LevelToyStory {
     const loadStartedAt = performance.now();
     const loader = new GLTFLoader();
     const base = import.meta.env.BASE_URL + 'assets/environment/';
-    loader.load(base + 'wukong-chinese-high-house-original.glb', (gltf) => {
+    loader.load(base + 'wukong-chinese-high-house-original.glb', async (gltf) => {
       const house = gltf.scene;
       house.name = 'chinese_high_house_wood_original';
       house.traverse((part) => {
@@ -6679,10 +7404,76 @@ export class LevelToyStory {
       house.updateMatrixWorld(true);
       const bounds = new THREE.Box3().setFromObject(house);
       const center = bounds.getCenter(new THREE.Vector3());
+      const houseSize = bounds.getSize(new THREE.Vector3());
+      const wallThickness = 0.38;
       house.position.x += this.highHouseCenter.x - center.x;
       house.position.z += this.highHouseCenter.z - center.z;
       house.position.y += this.getTerrainHeight(this.highHouseCenter.x, this.highHouseCenter.z) - bounds.min.y;
       house.updateMatrixWorld(true);
+
+      // The GLB is intentionally kept as the original combined mesh. Cut a
+      // small, measured opening only through horizontal upper-deck faces so
+      // the interior stair can reach the second storey without altering its
+      // walls, posts, roof, materials, textures, or UVs.
+      // World-space footprint of the L-shaped landing well. The geometry
+      // audit measured the original house bounds; this cut follows the two
+      // stair runs rather than removing a large rectangular section of floor.
+      const stairStartX = this.highHouseCenter.x - houseSize.x * 0.5 + wallThickness + 0.75;
+      const stairEndX = stairStartX + 6.0;
+      const stairZ = this.highHouseCenter.z - houseSize.z * 0.5 + wallThickness + 1.0;
+      const stairClearance = 0.82;
+      const houseMesh = house.children.find((part) => (part as THREE.Mesh).isMesh) as THREE.Mesh | undefined;
+      if (houseMesh?.geometry.index) {
+        const sourceGeometry = houseMesh.geometry;
+        const sourceIndex = sourceGeometry.index!;
+        const positions = sourceGeometry.getAttribute('position');
+        const kept = new Uint32Array(sourceIndex.count);
+        let keptCount = 0;
+        const a = new THREE.Vector3();
+        const b = new THREE.Vector3();
+        const c = new THREE.Vector3();
+        const normal = new THREE.Vector3();
+        const edge = new THREE.Vector3();
+        const centroid = new THREE.Vector3();
+        const upperY = this.getAbandonedHouseUpperFloorTopY();
+        const world = (index: number, target: THREE.Vector3) => target.fromBufferAttribute(positions, index).applyMatrix4(houseMesh.matrixWorld);
+        for (let i = 0; i < sourceIndex.count; i += 3) {
+          const ia = sourceIndex.getX(i), ib = sourceIndex.getX(i + 1), ic = sourceIndex.getX(i + 2);
+          world(ia, a); world(ib, b); world(ic, c);
+          edge.subVectors(c, a);
+          normal.subVectors(b, a).cross(edge).normalize();
+          centroid.copy(a).add(b).add(c).multiplyScalar(1 / 3);
+          const inLowerFlightWell = centroid.x > stairStartX - stairClearance && centroid.x < stairEndX + stairClearance &&
+            centroid.z > stairZ - stairClearance && centroid.z < stairZ + stairClearance;
+          const inUpperFlightWell = centroid.x > stairEndX - stairClearance && centroid.x < stairEndX + stairClearance &&
+            centroid.z > stairZ - stairClearance && centroid.z < stairZ + 6.0 + stairClearance;
+          const inStairwell = inLowerFlightWell || inUpperFlightWell;
+          const upperDeckFace = Math.abs(normal.y) > 0.88 && Math.abs(centroid.y - upperY) < 0.58;
+          if (!(inStairwell && upperDeckFace)) {
+            kept[keptCount++] = ia;
+            kept[keptCount++] = ib;
+            kept[keptCount++] = ic;
+          }
+          // This mesh contains hundreds of thousands of triangles. Yield in
+          // bounded batches so the optional annex cannot monopolize a frame
+          // when its GLB finishes loading beside the moving player.
+          if (i > 0 && i % (8192 * 3) === 0) {
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          }
+        }
+        const cutGeometry = new THREE.BufferGeometry();
+        cutGeometry.name = sourceGeometry.name;
+        cutGeometry.userData = { ...sourceGeometry.userData };
+        for (const [name, attribute] of Object.entries(sourceGeometry.attributes)) cutGeometry.setAttribute(name, attribute);
+        cutGeometry.morphAttributes = sourceGeometry.morphAttributes;
+        cutGeometry.morphTargetsRelative = sourceGeometry.morphTargetsRelative;
+        for (const group of sourceGeometry.groups) cutGeometry.addGroup(group.start, group.count, group.materialIndex);
+        cutGeometry.setDrawRange(sourceGeometry.drawRange.start, sourceGeometry.drawRange.count);
+        cutGeometry.setIndex(new THREE.BufferAttribute(kept.slice(0, keptCount), 1));
+        cutGeometry.computeBoundingBox();
+        cutGeometry.computeBoundingSphere();
+        houseMesh.geometry = cutGeometry;
+      }
 
       // The architectural GLB is a visual asset (330k triangles), not a
       // physics mesh. Register a small set of boxes for collision instead of
@@ -6690,10 +7481,8 @@ export class LevelToyStory {
       const houseGroundY = this.getTerrainHeight(this.highHouseCenter.x, this.highHouseCenter.z);
       const houseFloorTopY = this.getAbandonedHouseFloorTopY();
       const houseUpperFloorTopY = this.getAbandonedHouseUpperFloorTopY();
-      const houseSize = bounds.getSize(new THREE.Vector3());
       const halfWidth = houseSize.x * 0.5;
       const halfDepth = houseSize.z * 0.5;
-      const wallThickness = 0.38;
       // The lower storey is visibly open on stilts. Do not wrap it in a solid
       // AABB shell: that was the invisible barrier sealing Wukong outside.
       // Keep simplified wall blockers only around the enclosed upper storey.
@@ -6763,51 +7552,206 @@ export class LevelToyStory {
       this.optionalHouseFloorCollider.userData.walkableSupport = true;
       this.sceneManager.scene.add(this.optionalHouseFloorCollider);
 
-      // Retain the second-storey deck for the authored upper doorway and stairs.
-      this.optionalHouseUpperFloorCollider = new THREE.Mesh(
-        new THREE.BoxGeometry(houseSize.x - wallThickness * 2, 0.16, houseSize.z),
-        new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide })
-      );
-      this.optionalHouseUpperFloorCollider.name = 'abandoned_house_upper_floor_support';
-      this.optionalHouseUpperFloorCollider.position.set(this.highHouseCenter.x, houseUpperFloorTopY - 0.08, this.highHouseCenter.z);
-      this.optionalHouseUpperFloorCollider.userData.walkableSupport = true;
-      this.sceneManager.scene.add(this.optionalHouseUpperFloorCollider);
+      // Upper floor support is split around the stairwell so neither the
+      // invisible collision nor the original deck closes the opening.
+      const supportMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide });
+      const supportCenterX = this.highHouseCenter.x;
+      const supportCenterZ = this.highHouseCenter.z;
+      // Extend the walkable deck support to the original model bounds so the
+      // authored front balcony remains solid through the doorway.
+      const supportWidth = houseSize.x;
+      const supportDepth = houseSize.z;
+      const supportMinX = supportCenterX - supportWidth / 2;
+      const supportMaxX = supportCenterX + supportWidth / 2;
+      const supportMinZ = supportCenterZ - supportDepth / 2;
+      const supportMaxZ = supportCenterZ + supportDepth / 2;
+      const upperSupports: THREE.Mesh[] = [];
+      const addUpperSupport = (name: string, width: number, depth: number, x: number, z: number) => {
+        if (width <= 0.1 || depth <= 0.1) return;
+        const support = new THREE.Mesh(new THREE.BoxGeometry(width, 0.16, depth), supportMaterial);
+        support.name = name;
+        support.position.set(x, houseUpperFloorTopY - 0.08, z);
+        support.userData.walkableSupport = true;
+        upperSupports.push(support);
+        this.sceneManager.scene.add(support);
+      };
+      const clearBounds = {
+        minX: stairStartX - stairClearance, maxX: stairEndX + stairClearance,
+        minZ: stairZ - stairClearance, maxZ: stairZ + 6.0 + stairClearance,
+      };
+      const xCuts = [supportMinX, clearBounds.minX, stairEndX - stairClearance, stairEndX + stairClearance, clearBounds.maxX, supportMaxX]
+        .map((x) => THREE.MathUtils.clamp(x, supportMinX, supportMaxX)).sort((a, b) => a - b);
+      const zCuts = [supportMinZ, clearBounds.minZ, stairZ - stairClearance, stairZ + stairClearance, stairZ + 6.0 + stairClearance, clearBounds.maxZ, supportMaxZ]
+        .map((z) => THREE.MathUtils.clamp(z, supportMinZ, supportMaxZ)).sort((a, b) => a - b);
+      for (let xi = 0; xi < xCuts.length - 1; xi++) {
+        const minX = xCuts[xi], maxX = xCuts[xi + 1];
+        if (maxX - minX < 0.02) continue;
+        for (let zi = 0; zi < zCuts.length - 1; zi++) {
+          const minZ = zCuts[zi], maxZ = zCuts[zi + 1];
+          if (maxZ - minZ < 0.02) continue;
+          const cx = (minX + maxX) * 0.5, cz = (minZ + maxZ) * 0.5;
+          const inLowerFlightWell = cx > stairStartX - stairClearance && cx < stairEndX + stairClearance &&
+            cz > stairZ - stairClearance && cz < stairZ + stairClearance;
+          const inUpperFlightWell = cx > stairEndX - stairClearance && cx < stairEndX + stairClearance &&
+            cz > stairZ - stairClearance && cz < stairZ + 6.0 + stairClearance;
+          if (inLowerFlightWell || inUpperFlightWell) continue;
+          addUpperSupport(`abandoned_house_upper_floor_support_${xi}_${zi}`, maxX - minX, maxZ - minZ, cx, cz);
+        }
+      }
 
-      // Supply a low-cost walkable ramp through the entrance, aligned with
-      // the GLB's exterior steps. This lets the player reach the raised deck
-      // without a jump while preserving the house's wall boundaries.
-      const rampLength = 8.5;
-      const rampThickness = 0.16;
-      // Overlap the walkable deck by 0.9 m to prevent a fall at the threshold.
-      const rampInnerZ = this.highHouseCenter.z + halfDepth - 0.9;
-      const rampOuterZ = rampInnerZ + rampLength;
-      const rampApproachY = this.getTerrainHeight(entranceCenterX, rampOuterZ);
-      const rampRise = houseUpperFloorTopY - rampApproachY - rampThickness * 0.5;
-      const rampAngle = Math.atan2(rampRise, rampLength);
-      const ramp = new THREE.Mesh(
-        new THREE.BoxGeometry(Math.max(3.2, doorWidth - 0.3), rampThickness, rampLength),
-        new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide })
+      // Functional L stair sized to the 1.7 m player: two 6 m runs, 15
+      // risers per run (~20 cm each), with a turning landing between them.
+      // Treads reuse the house's existing material and one instanced draw call.
+      const treadCount = 15;
+      const treadWidth = 1.35;
+      const treadDepth = 0.46;
+      const runLength = 6.0;
+      const risePerStep = (houseUpperFloorTopY - houseFloorTopY) / (treadCount * 2);
+      const stairMaterial = (Array.isArray(houseMesh?.material) ? houseMesh?.material[0] : houseMesh?.material)?.clone();
+      if (stairMaterial) {
+        const treadGeometry = new THREE.BoxGeometry(treadWidth, 0.18, treadDepth);
+        const treads = new THREE.InstancedMesh(treadGeometry, stairMaterial, treadCount * 2);
+        treads.name = 'abandoned_house_l_stair_treads';
+        const matrix = new THREE.Matrix4();
+        const quaternion = new THREE.Quaternion();
+        const scale = new THREE.Vector3(1, 1, 1);
+        let instance = 0;
+        // First flight runs along X, so its 1.35 m tread width rotates across Z.
+        quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+        for (let i = 0; i < treadCount; i++) {
+          const x = supportMinX + 0.75 + i * (runLength / (treadCount - 1));
+          const y = houseFloorTopY + (i + 1) * risePerStep - 0.09;
+          matrix.compose(new THREE.Vector3(x, y, supportMinZ + 1.0), quaternion, scale);
+          treads.setMatrixAt(instance++, matrix);
+        }
+        quaternion.identity();
+        for (let i = 0; i < treadCount; i++) {
+          const z = supportMinZ + 1.0 + i * (runLength / (treadCount - 1));
+          const y = houseFloorTopY + (treadCount + i + 1) * risePerStep - 0.09;
+          quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+          matrix.compose(new THREE.Vector3(supportMinX + 0.75 + runLength, y, z), quaternion, scale);
+          treads.setMatrixAt(instance++, matrix);
+        }
+        treads.instanceMatrix.needsUpdate = true;
+        this.sceneManager.scene.add(treads);
+      }
+      // Matching invisible step tops make the stair follow the controller's
+      // normal 20 cm step-up path. The mesh is instanced, so all 30 supports
+      // add one draw call and avoid a long unsupported ramp snap.
+      const stairStepSupports = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(treadWidth, risePerStep, treadDepth), supportMaterial, treadCount * 2
       );
-      ramp.name = 'abandoned_house_entry_ramp_support';
-      ramp.position.set(
-        entranceCenterX,
-        (rampApproachY + houseUpperFloorTopY) * 0.5 - 0.04,
-        rampInnerZ + rampLength * 0.5
-      );
-      ramp.rotation.x = rampAngle;
-      ramp.userData.walkableSupport = true;
-      this.sceneManager.scene.add(ramp);
+      stairStepSupports.name = 'abandoned_house_stair_step_supports';
+      stairStepSupports.userData.walkableSupport = true;
+      const stepMatrix = new THREE.Matrix4();
+      const stepRotation = new THREE.Quaternion();
+      const stepScale = new THREE.Vector3(1, 1, 1);
+      let stepInstance = 0;
+      stepRotation.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+      for (let i = 0; i < treadCount; i++) {
+        const x = stairStartX + i * (runLength / (treadCount - 1));
+        const y = houseFloorTopY + (i + 1) * risePerStep - risePerStep / 2;
+        stepMatrix.compose(new THREE.Vector3(x, y, stairZ), stepRotation, stepScale);
+        stairStepSupports.setMatrixAt(stepInstance++, stepMatrix);
+      }
+      stepRotation.identity();
+      for (let i = 0; i < treadCount; i++) {
+        const z = stairZ + i * (runLength / (treadCount - 1));
+        const y = houseFloorTopY + (treadCount + i + 1) * risePerStep - risePerStep / 2;
+        stepMatrix.compose(new THREE.Vector3(stairEndX, y, z), stepRotation, stepScale);
+        stairStepSupports.setMatrixAt(stepInstance++, stepMatrix);
+      }
+      stairStepSupports.instanceMatrix.needsUpdate = true;
+      this.sceneManager.scene.add(stairStepSupports);
+      const addWalkableRamp = (name: string, length: number, center: THREE.Vector3, alongX: boolean, rise: number) => {
+        const support = new THREE.Mesh(new THREE.BoxGeometry(alongX ? length : treadWidth, 0.1, alongX ? treadWidth : length), supportMaterial);
+        support.name = name;
+        support.position.copy(center);
+        support.rotation.z = alongX ? Math.atan2(rise, length) : 0;
+        if (!alongX) support.rotation.x = -Math.atan2(rise, length);
+        support.userData.walkableSupport = true;
+        this.sceneManager.scene.add(support);
+        return support;
+      };
+      const landingY = houseFloorTopY + treadCount * risePerStep;
+      const lowerRamp = addWalkableRamp('abandoned_house_lower_stair_ramp_support', runLength,
+        new THREE.Vector3(stairStartX + runLength / 2, houseFloorTopY + (landingY - houseFloorTopY) / 2, stairZ), true, landingY - houseFloorTopY);
+      const upperRamp = addWalkableRamp('abandoned_house_upper_stair_ramp_support', runLength,
+        new THREE.Vector3(stairStartX + runLength, landingY + (houseUpperFloorTopY - landingY) / 2, stairZ + runLength / 2), false, houseUpperFloorTopY - landingY);
+      const landing = new THREE.Mesh(new THREE.BoxGeometry(treadWidth, 0.12, treadWidth), supportMaterial);
+      landing.name = 'abandoned_house_stair_landing_support';
+      landing.position.set(stairStartX + runLength, landingY - 0.06, stairZ);
+      landing.userData.walkableSupport = true;
+      this.sceneManager.scene.add(landing);
 
-      this.levelColliders.push(collisionRoot, this.optionalHouseFloorCollider, this.optionalHouseUpperFloorCollider, ramp);
+      // Small top landing bridges the stair opening onto the authored upper
+      // deck. It overlaps the surrounding floor by design so there is no lip.
+      const topLanding = new THREE.Mesh(new THREE.BoxGeometry(treadWidth + 0.12, 0.14, 1.45), stairMaterial ?? supportMaterial);
+      topLanding.name = 'abandoned_house_upper_stair_landing';
+      topLanding.position.set(stairEndX, houseUpperFloorTopY - 0.07, stairZ + runLength + 0.45);
+      this.sceneManager.scene.add(topLanding);
+      const topLandingSupport = new THREE.Mesh(new THREE.BoxGeometry(treadWidth + 0.12, 0.14, 1.45), supportMaterial);
+      topLandingSupport.name = 'abandoned_house_upper_stair_landing_support';
+      topLandingSupport.position.copy(topLanding.position);
+      topLandingSupport.userData.walkableSupport = true;
+      this.sceneManager.scene.add(topLandingSupport);
+
+      // Handrails sit just outside the 1.35 m clear walking width. They reuse
+      // the cabin timber material, with four meshes total and no added lights.
+      if (stairMaterial) {
+        const railGeometry = new THREE.BoxGeometry(runLength + 0.12, 0.12, 0.10);
+        const lowerAngle = Math.atan2(landingY - houseFloorTopY, runLength);
+        const upperAngle = Math.atan2(houseUpperFloorTopY - landingY, runLength);
+        const addRail = (name: string, position: THREE.Vector3, rotation: THREE.Euler) => {
+          const rail = new THREE.Mesh(railGeometry, stairMaterial);
+          rail.name = name;
+          rail.position.copy(position);
+          rail.rotation.copy(rotation);
+          // The curved turn is narrow; keep the handrails visual so their
+          // expanded capsule bounds cannot seal the landing transition.
+          collisionRoot.add(rail);
+        };
+        for (const side of [-1, 1]) {
+          addRail(`abandoned_house_lower_stair_rail_${side}`, new THREE.Vector3(
+            stairStartX + runLength * 0.5,
+            houseFloorTopY + (landingY - houseFloorTopY) * 0.5 + 0.72,
+            stairZ + side * 0.78
+          ), new THREE.Euler(0, 0, lowerAngle));
+          addRail(`abandoned_house_upper_stair_rail_${side}`, new THREE.Vector3(
+            stairEndX + side * 0.78,
+            landingY + (houseUpperFloorTopY - landingY) * 0.5 + 0.72,
+            stairZ + runLength * 0.5
+          ), new THREE.Euler(-upperAngle, Math.PI / 2, 0));
+        }
+      }
+
+      this.levelColliders.push(collisionRoot, this.optionalHouseFloorCollider, ...upperSupports, lowerRamp, upperRamp, landing, topLandingSupport, stairStepSupports);
+
+      // Two restrained warm fills make the aged timber readable indoors.
+      // They cast no shadows and switch off outside the cabin's nearby region.
+      const cabinLighting = new THREE.Group();
+      cabinLighting.name = 'abandoned_house_warm_practical_lighting';
+      cabinLighting.visible = playerPos.distanceToSquared(this.highHouseCenter) < 30 * 30;
+      const lowerWarmFill = new THREE.PointLight(0xffb477, 1.7, 9, 2);
+      lowerWarmFill.name = 'abandoned_house_lower_warm_fill';
+      lowerWarmFill.position.set(this.highHouseCenter.x + 1.2, houseFloorTopY + 2.4, this.highHouseCenter.z + 1.0);
+      lowerWarmFill.castShadow = false;
+      const upperWarmFill = new THREE.PointLight(0xffc184, 1.5, 8, 2);
+      upperWarmFill.name = 'abandoned_house_upper_warm_fill';
+      upperWarmFill.position.set(stairEndX + 2.0, houseUpperFloorTopY + 2.1, stairZ + 4.5);
+      upperWarmFill.castShadow = false;
+      cabinLighting.add(lowerWarmFill, upperWarmFill);
+      this.sceneManager.scene.add(cabinLighting);
+      this.optionalHouseLightingGroup = cabinLighting;
+
       this.player.setColliders(this.levelColliders);
       this.cameraController.setCollisionObjects(this.levelColliders);
       this.optionalArchitectureStarted = true;
       this.optionalArchitectureLoading = false;
-      const houseMesh = house.children.find((part) => (part as THREE.Mesh).isMesh) as THREE.Mesh | undefined;
       const triangleCount = houseMesh?.geometry.index?.count
         ? houseMesh.geometry.index.count / 3
         : (houseMesh?.geometry.getAttribute('position')?.count ?? 0) / 3;
-      console.info(`[LevelToyStory] Loaded high-house visual (${Math.round(triangleCount).toLocaleString()} tris) in ${Math.round(performance.now() - loadStartedAt)}ms; collision keeps the stilts-level open and supports both measured floors plus the upper entry ramp.`);
+      console.info(`[LevelToyStory] Loaded original high-house visual (${Math.round(triangleCount).toLocaleString()} tris) in ${Math.round(performance.now() - loadStartedAt)}ms; added an interior two-run stair and a matching upper-deck opening.`);
     }, undefined, (error) => {
       this.optionalArchitectureLoading = false;
       console.warn('[LevelToyStory] Optional high-house annex could not load.', error);
@@ -6816,6 +7760,10 @@ export class LevelToyStory {
 
   private async transitionCuriosityCrypt(entering: boolean): Promise<void> {
     if (this.curiosityCryptTransitioning || !this.isLavaVaultOpen) return;
+    const transitionStartedAt = performance.now();
+    let fadeOutMs = 0;
+    let sceneSwapMs = 0;
+    let fadeInMs = 0;
     this.curiosityCryptTransitioning = true;
     this.isTeleportingToCrypt = entering;
     this.player.isControlsLocked = true;
@@ -6827,9 +7775,12 @@ export class LevelToyStory {
     let screenIsFadedOut = false;
     try {
       if (hud) {
+        const phaseStart = performance.now();
         await hud.fadeScreenOut(90);
+        fadeOutMs = performance.now() - phaseStart;
         screenIsFadedOut = true;
       }
+      const sceneSwapStartedAt = performance.now();
       if (entering) {
         // Switch the ground resolver before moving under the terrain. Otherwise
         // the next physics frame can snap Wukong back to the temple surface.
@@ -6842,7 +7793,15 @@ export class LevelToyStory {
         this.grassSectors.forEach((sector) => { sector.visible = false; });
         this.grassCullElapsed = 0;
         for (const guardian of this.cryptGuardians) {
-          if (guardian.state !== 'DEAD') guardian.mesh.visible = true;
+          if (!guardian.isAlive()) {
+            guardian.mesh.visible = false;
+            continue;
+          }
+          const spawn = guardian.patrolWaypoints[0];
+          if (spawn) guardian.mesh.position.copy(spawn);
+          guardian.mesh.position.y = this.curiosityCryptFloorY;
+          guardian.mesh.updateMatrixWorld(true);
+          guardian.mesh.visible = true;
         }
         // Land on the authored underground floor immediately. Mark the player
         // grounded as part of the teleport so the outdoor terrain resolver
@@ -6853,6 +7812,7 @@ export class LevelToyStory {
         this.player.jumpCount = 0;
         this.player.mesh.updateMatrixWorld(true);
       } else {
+        for (const guardian of this.cryptGuardians) guardian.mesh.visible = false;
         this.player.mesh.position.set(this.curiosityCryptSurface.x, this.curiosityCryptSurface.y + 0.08, this.curiosityCryptSurface.z + 3.0);
         this.isInsideCuriosityCrypt = false;
         if (this.worldTerrainMesh) this.worldTerrainMesh.visible = true;
@@ -6860,12 +7820,41 @@ export class LevelToyStory {
         this.player.isGrounded = false;
         this.player.mesh.updateMatrixWorld(true);
       }
+      sceneSwapMs = performance.now() - sceneSwapStartedAt;
       this.player.mesh.rotation.y = entering ? Math.PI / 2 : Math.PI;
       this.player.velocity.set(0, 0, 0);
       cameraController?.snapBehindTarget();
       if (hud) {
+        const phaseStart = performance.now();
         await hud.fadeScreenIn(110);
+        fadeInMs = performance.now() - phaseStart;
         screenIsFadedOut = false;
+      }
+      if (entering && !this.curiosityChestOpen && !this.cryptGuardiansCleared) {
+        hud?.showInfoToast(
+          'CRIPTA DE LA CURIOSIDAD',
+          'Vence a los guardianes de la cripta para desbloquear el tesoro del cofre.',
+          6000,
+          3,
+        );
+      }
+      if (import.meta.env.DEV) {
+        console.info('[CuriosityVaultPerf] Crypt transition completed', {
+          direction: entering ? 'enter' : 'exit',
+          fadeOutMs: +fadeOutMs.toFixed(1),
+          sceneSwapMs: +sceneSwapMs.toFixed(1),
+          fadeInMs: +fadeInMs.toFixed(1),
+          totalMs: +(performance.now() - transitionStartedAt).toFixed(1),
+          guardians: this.cryptGuardians.map((enemy) => ({
+            id: enemy.id,
+            position: [
+              +enemy.mesh.position.x.toFixed(2),
+              +enemy.mesh.position.y.toFixed(2),
+              +enemy.mesh.position.z.toFixed(2),
+            ],
+            state: enemy.state,
+          })),
+        });
       }
       this.subtitleSystem.show(
         'Cripta de la Curiosidad',
@@ -6900,10 +7889,11 @@ export class LevelToyStory {
     this.curiosityChestOpen = chestOpen;
     if (chestOpen) {
       this.cryptGuardiansCleared = true;
+      this.curiosityKeyRewardReady = true;
       this.curiosityChest.restoreOpen();
       if (!this.collectedKeys.key4_curiosity) {
         this.curiosityKeySpawned = true;
-        this.spawn3DKey('key4_curiosity', this.curiosityChest.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0)));
+        this.spawn3DKey('key4_curiosity', this.curiosityChest.mesh.position.clone().add(new THREE.Vector3(0, 1.08, 0)), false);
       }
     }
     if (preserveLegacyExit && this.exitDoor) this.exitDoor.open();
@@ -6913,6 +7903,9 @@ export class LevelToyStory {
     if (!this.stateFlags.bossDefeated || !this.bossEnemy) return;
     this.bossEncounterActive = false;
     this.stateFlags.bossCinematicPlayed = true;
+    if (!this.collectedKeys.key2_boss) {
+      this.spawn3DKey('key2_boss', new THREE.Vector3(45, this.getTerrainHeight(45, -40) + 1.2, -40));
+    }
     this.bossEnemy.dispose();
     (window as any).gameInstance?.hud?.hideBossHealth();
   }
@@ -7131,3 +8124,5 @@ export class LevelToyStory {
   }
 
 }
+
+

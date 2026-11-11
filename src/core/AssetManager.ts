@@ -524,6 +524,40 @@ export class AssetManager {
     return this.loadAndRetargetClip(url, 'Continue', targetRoot, this.playerTranslationScale);
   }
 
+  /** Prepare support clips before gameplay, never in a timed mid-play burst. */
+  public async loadGameplaySupportClips(targetRoot: THREE.Object3D): Promise<THREE.AnimationClip[]> {
+    const clips: THREE.AnimationClip[] = [];
+    const specs: Array<[string, string, string]> = [
+      ['continue.fbx', 'Continue', '20261027-gameover'],
+      ['Falling To Landing.fbx', 'Wukong_NoWood_HardLanding', '20261026-supplemental'],
+      ['esquivar_paso_atras.fbx', 'Dodge_Back', '20261026-supplemental'],
+      ['Swing To Land.fbx', 'Swing_To_Land', '20261026-supplemental'],
+      ['Swing To Land2.fbx', 'Swing_To_Land2', '20261026-supplemental'],
+    ];
+    for (const [file, name, version] of specs) {
+      // FBX parsing and retargeting are main-thread work. Yield between each
+      // optional clip so a background preparation never batches several rigs
+      // into a single long frame on mobile devices.
+      await new Promise<void>((resolve) => {
+        const ric = (window as any).requestIdleCallback as ((cb: () => void, options?: { timeout: number }) => number) | undefined;
+        if (ric) ric(resolve, { timeout: 2500 });
+        else window.setTimeout(resolve, 350);
+      });
+      try {
+        const clip = await this.loadAndRetargetClip(
+          `${import.meta.env.BASE_URL}assets/characters/wukong/${encodeURIComponent(file)}?v=${version}`,
+          name,
+          targetRoot,
+          this.playerTranslationScale,
+        );
+        if (clip?.tracks.length) clips.push(clip);
+      } catch (error) {
+        console.warn(`[AssetManager] Optional support animation ${name} could not be prepared.`, error);
+      }
+    }
+    return clips;
+  }
+
   /** Load nonessential animation variants after the initial playable encounter. */
   public async loadLatePlayerClips(targetRoot: THREE.Object3D): Promise<THREE.AnimationClip[]> {
     const specs: Array<[string, string, string]> = [

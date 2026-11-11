@@ -212,7 +212,6 @@ export class MobileTouchControls {
   private bindButtonEvents(): void {
     const actions: Array<[HTMLButtonElement | null, () => void]> = [
       [this.btnJump, () => this.inputManager.triggerJump()],
-      [this.btnAttack, () => this.inputManager.triggerAttack()],
       [this.btnAction, () => this.inputManager.triggerInteract()],
     ];
     for (const [button, action] of actions) {
@@ -232,6 +231,22 @@ export class MobileTouchControls {
       button.addEventListener('pointercancel', release);
       button.addEventListener('lostpointercapture', release);
     }
+
+    const attackButton = this.btnAttack;
+    attackButton?.addEventListener('pointerdown', (event: PointerEvent) => {
+      if (!this.gameplayEnabled || event.button !== 0 || attackButton.disabled) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if ([...this.activeButtonPointers.values()].includes(attackButton)) return;
+      this.activeButtonPointers.set(event.pointerId, attackButton);
+      attackButton.setPointerCapture(event.pointerId);
+      attackButton.classList.add('pressed');
+      this.inputManager.triggerAttackPress();
+    });
+    const releaseAttack = (event: PointerEvent) => this.releaseButtonPointer(event.pointerId);
+    attackButton?.addEventListener('pointerup', releaseAttack);
+    attackButton?.addEventListener('pointercancel', releaseAttack);
+    attackButton?.addEventListener('lostpointercapture', releaseAttack);
 
     const runButton = this.btnRun;
     runButton?.addEventListener('pointerdown', (event: PointerEvent) => {
@@ -264,6 +279,7 @@ export class MobileTouchControls {
     this.activeButtonPointers.delete(pointerId);
     const stillHeld = [...this.activeButtonPointers.values()].includes(button);
     if (!stillHeld) button.classList.remove('pressed', 'active');
+    if (button === this.btnAttack && !stillHeld) this.inputManager.triggerAttackRelease();
     if (button === this.btnRun && !stillHeld) this.inputManager.touchIsRunning = false;
   }
 

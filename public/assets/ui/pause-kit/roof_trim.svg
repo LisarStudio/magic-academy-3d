@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="240" viewBox="0 0 1400 240" fill="none">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#263b5a"/><stop offset=".48" stop-color="#101b30"/><stop offset="1" stop-color="#080c18"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff2a2"/><stop offset=".28" stop-color="#ffca40"/><stop offset=".58" stop-color="#a84e09"/><stop offset=".8" stop-color="#ffe078"/><stop offset="1" stop-color="#8d3508"/></linearGradient>
+    <linearGradient id="red" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#831b0d"/><stop offset=".5" stop-color="#310804"/><stop offset="1" stop-color="#130506"/></linearGradient>
+    <pattern id="tiles" width="27" height="44" patternUnits="userSpaceOnUse"><path d="M13.5 0 1 35m12.5-35L26 35M1 35h25" stroke="#7390b2" stroke-opacity=".7" stroke-width="2"/><path d="M1 35v7m25-7v7" stroke="#111a28" stroke-width="4"/></pattern>
+    <filter id="glow" x="-20%" y="-30%" width="140%" height="170%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <clipPath id="roof"><path d="M12 172Q92 169 133 78q25 82 149 77h836q124 5 149-77 41 91 121 94l-31 31H43z"/></clipPath>
+  </defs>
+  <g clip-path="url(#roof)"><path d="M0 72h1400v170H0z" fill="url(#tile)"/><path d="M0 82h1400v158H0z" fill="url(#tiles)" opacity=".88"/><path d="M0 172q80-3 121-94 25 82 161 77h836q136 5 161-77 41 91 121 94" stroke="#090d16" stroke-width="24"/><path d="M0 169q82-2 121-91 24 81 161 77h836q137 4 161-77 39 89 121 91" stroke="url(#gold)" stroke-width="8"/><path d="M0 183h1400" stroke="#9e3d07" stroke-width="12"/><path d="M0 188h1400" stroke="#ffcf50" stroke-width="3" filter="url(#glow)"/></g>
+  <path d="M13 173Q88 170 132 77q24 82 151 78M1387 173q-75-3-119-96-24 82-151 78" stroke="url(#gold)" stroke-width="11" stroke-linecap="round"/>
+  <path d="M132 78q-28 7-54-8l-31 22 40 6m1181-20q28 7 54-8l31 22-40 6" fill="url(#red)" stroke="url(#gold)" stroke-width="6" stroke-linejoin="round"/>
+  <g fill="#18253b" stroke="url(#gold)" stroke-width="3"><circle cx="80" cy="162" r="9"/><circle cx="1320" cy="162" r="9"/></g>
+  <path d="M698 43c-16-28-40-26-49-5-18-3-28 12-18 27-12 20 8 34 24 26 18 14 42 4 43-13 18 12 41 2 41-16s-21-29-41-19z" fill="url(#red)" stroke="url(#gold)" stroke-width="7"/>
+  <path d="M697 48v35m-14-18 14-17 15 17-15 16z" stroke="#ffd966" stroke-width="4"/>
+</svg>

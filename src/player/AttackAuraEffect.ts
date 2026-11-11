@@ -11,6 +11,8 @@ export class AttackAuraEffect {
   private state: 'OFF' | 'FADE_IN' | 'ACTIVE' | 'FADE_OUT' = 'OFF';
   private timer = 0;
   private currentOpacity = 0;
+  private chargeLevel = 0;
+  private holdCharge = false;
 
   private readonly FADE_IN_DURATION = 0.10;
   private readonly ACTIVE_DURATION = 0.35;
@@ -58,13 +60,30 @@ export class AttackAuraEffect {
   }
 
   public trigger(): void {
+    this.holdCharge = false;
+    this.chargeLevel = 0;
     this.state = 'FADE_IN';
     this.timer = 0;
     this.currentOpacity = 0.0;
     this.mesh.visible = true;
   }
 
+  public beginCharge(): void {
+    this.holdCharge = true;
+    this.chargeLevel = 0;
+    this.state = 'FADE_IN';
+    this.timer = 0;
+    this.currentOpacity = 0;
+    this.mesh.visible = true;
+  }
+
+  public setChargeLevel(level: number): void {
+    this.chargeLevel = THREE.MathUtils.clamp(level, 0, 1);
+  }
+
   public stop(): void {
+    this.holdCharge = false;
+    this.chargeLevel = 0;
     this.state = 'OFF';
     this.timer = 0;
     this.currentOpacity = 0.0;
@@ -87,7 +106,7 @@ export class AttackAuraEffect {
       }
     } else if (this.state === 'ACTIVE') {
       this.currentOpacity = 0.60 + Math.sin(this.timer * 20.0) * 0.08;
-      if (this.timer >= this.ACTIVE_DURATION) {
+      if (!this.holdCharge && this.timer >= this.ACTIVE_DURATION) {
         this.state = 'FADE_OUT';
         this.timer = 0;
       }
@@ -101,8 +120,10 @@ export class AttackAuraEffect {
     }
 
     // Apply smooth opacity to tube and sparks
-    this.auraTubeMat.opacity = this.currentOpacity;
-    (this.auraSparks.material as THREE.PointsMaterial).opacity = this.currentOpacity * 1.4;
+    const chargeBoost = 1 + this.chargeLevel * 0.55;
+    this.auraTubeMat.opacity = Math.min(0.9, this.currentOpacity * chargeBoost);
+    (this.auraSparks.material as THREE.PointsMaterial).opacity = Math.min(1, this.currentOpacity * 1.4 * chargeBoost);
+    (this.auraSparks.material as THREE.PointsMaterial).size = 0.08 + this.chargeLevel * 0.035;
 
     // Gentle shimmer along the staff shaft
     const pArr = this.sparkPositions;

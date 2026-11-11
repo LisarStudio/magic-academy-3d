@@ -11,8 +11,8 @@ export type ProgressKeyId =
 
 export interface KeyAssetDefinition {
   name: string;
-  /** Fixed visual slot in the five-key HUD; never based on pickup order. */
-  slotIndex: 0 | 1 | 2 | 3 | 4;
+  /** Fixed visual slot in the progression HUD; never based on pickup order. */
+  slotIndex: 0 | 1 | 2 | 3 | 4 | 5;
   modelUrl: string;
   iconUrl: string;
   magicColor: number;
@@ -20,8 +20,7 @@ export interface KeyAssetDefinition {
 
 const root = './assets/keys';
 
-// Five authored keys are present in D:\Wukong\Keys. The sixth progression ID
-// (gems/pots) deliberately has no visual assignment until its approved asset is supplied.
+// All six progression keys have dedicated visual entries; key5_pots uses a unique procedural model.
 export const KEY_ASSETS: Partial<Record<ProgressKeyId, KeyAssetDefinition>> = {
   key1_gekko: {
     name: 'Llave de la Riqueza',
@@ -38,12 +37,12 @@ export const KEY_ASSETS: Partial<Record<ProgressKeyId, KeyAssetDefinition>> = {
     magicColor: 0x62dfff,
   },
   key3_platform: {
-    // Legacy save/progression ID: this original asset is the Nature key.
-    name: 'Llave de la Naturaleza',
+    // Preserve the existing third-key ID and HUD slot for the Qi key.
+    name: 'Llave del Qi Celestial',
     slotIndex: 4,
-    modelUrl: `${root}/models/llave_de_la_naturaleza.glb`,
-    iconUrl: `${root}/icons/llave_naturaleza.png`,
-    magicColor: 0x79e6a3,
+    modelUrl: `${root}/models/llave_qi_celestial.glb`,
+    iconUrl: `${root}/icons/llave_qi_celestial.png`,
+    magicColor: 0x62dfff,
   },
   key4_curiosity: {
     name: 'Llave de la Curiosidad',
@@ -59,6 +58,13 @@ export const KEY_ASSETS: Partial<Record<ProgressKeyId, KeyAssetDefinition>> = {
     iconUrl: `${root}/icons/llave_fortaleza_hud.png`,
     magicColor: 0xffbd70,
   },
+  key5_pots: {
+    name: 'Llave de Destrucción (Gemas)',
+    slotIndex: 5,
+    modelUrl: '',
+    iconUrl: `${root}/icons/llave_gemas_hud.svg`,
+    magicColor: 0xff493c,
+  },
 };
 
 const loader = new GLTFLoader();
@@ -71,6 +77,33 @@ export function getKeyAsset(id: string): KeyAssetDefinition | undefined {
 export function loadKeyModel(id: string): Promise<THREE.Group> {
   const asset = getKeyAsset(id);
   if (!asset) return Promise.reject(new Error(`No hay un modelo aprobado asignado a ${id}`));
+
+  if (id === 'key5_pots') {
+    const gold = new THREE.MeshStandardMaterial({ color: 0xffc84a, metalness: 0.72, roughness: 0.28, emissive: 0x6b3300, emissiveIntensity: 0.3 });
+    const ruby = new THREE.MeshStandardMaterial({ color: 0xc92535, metalness: 0.42, roughness: 0.2, emissive: 0x70101b, emissiveIntensity: 0.55 });
+    const key = new THREE.Group();
+    key.name = 'authored_key5_pots';
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.055, 8, 24), gold);
+    ring.position.y = 0.38;
+    key.add(ring);
+    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.11, 1), ruby);
+    gem.position.set(0, 0.38, 0.035);
+    key.add(gem);
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 0.65, 8), gold);
+    shaft.position.y = -0.08;
+    key.add(shaft);
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.025, 6, 16), gold);
+    collar.position.y = -0.4;
+    key.add(collar);
+    for (const side of [-1, 1]) {
+      const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.07, 0.08), gold);
+      tooth.position.set(side * 0.09, -0.34, 0);
+      key.add(tooth);
+    }
+    key.scale.setScalar(0.72);
+    key.traverse((object) => { if ((object as THREE.Mesh).isMesh) (object as THREE.Mesh).castShadow = false; });
+    return Promise.resolve(key);
+  }
 
   let modelPromise = modelCache.get(asset.modelUrl);
   if (!modelPromise) {

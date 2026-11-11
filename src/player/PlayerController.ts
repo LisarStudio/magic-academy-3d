@@ -45,15 +45,26 @@ export class PlayerController {
   public mana = 100;
   public maxMana = 100;
   public manaRegenRate = 12.0; // Mana per second
+  public static readonly SPRINT_STAMINA_MAX = 100;
+  public static readonly SPRINT_STAMINA_DRAIN_PER_SECOND = 20;
+  public static readonly SPRINT_STAMINA_REGEN_PER_SECOND = 15;
+  public static readonly SPRINT_REGEN_DELAY = 0.6;
+  public static readonly SPRINT_RECOVERY_THRESHOLD = 25;
+  public stamina = PlayerController.SPRINT_STAMINA_MAX;
+  private sprintRegenDelay = 0;
+  private sprintExhausted = false;
+  private sprintingThisFrame = false;
 
   public isControlsLocked = false;
   public isMovementLocked = false;
   private groundRaycaster = new THREE.Raycaster();
   private colliders: THREE.Object3D[] = [];
   private solidBlockerBounds: Array<{ mesh: THREE.Mesh; bounds: THREE.Box3 }> = [];
+  private worldBoundary: readonly (readonly [number, number])[] | null = null;
 
   public onHealthChange?: (hp: number, maxHp: number) => void;
   public onManaChange?: (mp: number, maxMp: number) => void;
+  public onStaminaChange?: (value: number, maxValue: number, visible: boolean) => void;
 
   // ── EXTENSIBLE WEAPON INVENTORY SYSTEM ──────────────────────────────────
   public ownedWeapons: Set<WeaponType> = new Set();
@@ -78,6 +89,7 @@ export class PlayerController {
   public jumpCount = 0;
   public doubleJumpSpinTimer = 0;
   public isAttacking = false;
+  public isChargingStaff = false;
   
   public visualModel: THREE.Object3D;
 
@@ -518,7 +530,10 @@ export class PlayerController {
   }
 
   public setColliders(colliders: THREE.Object3D[]): void {
-    this.colliders = colliders;
+    // Mountain blocker proxies are dedicated to the swept-box collision and
+    // camera boom. Keep them out of the broad ground/wall raycast tree so the
+    // added perimeter safety does not make every player frame more expensive.
+    this.colliders = colliders.filter((collider) => collider.userData.decorativeMountainBlocker !== true);
     this.solidBlockerBounds = [];
     const includeBlocker = (object: THREE.Object3D) => {
       const name = (object.name || '').toLowerCase();
@@ -529,6 +544,99 @@ export class PlayerController {
       }
     };
     for (const collider of colliders) collider.traverse(includeBlocker);
+  }
+
+  /** A final swept-position guard for the outdoor map edge. Mesh raycasts are
+   * still used for ordinary walls; this polygon clamp also stops sprint/jump
+   * tunnelling through invisible perimeter segments or decorative mountains. */
+  public setWorldBoundary(points: readonly (readonly [number, number])[]): void {
+    this.worldBoundary = points.map(([x, z]) => [x, z] as const);
+  }
+
+  private constrainToWorldBoundary(): void {
+    const polygon = this.worldBoundary;
+    if (!polygon || polygon.length < 3) return;
+    let area2 = 0;
+    for (let i = 0; i < polygon.length; i++) {
+      const a = polygon[i]!;
+      const b = polygon[(i + 1) % polygon.length]!;
+      area2 += a[0] * b[1] - b[0] * a[1];
+    }
+    const inwardSign = area2 >= 0 ? 1 : -1;
+    // Stop before the terrain lip and the inward overhang of the decorative
+    // boulders. This swept-position clamp also catches sprint/jump movement
+    // that can cross a mesh proxy between collision frames.
+    const margin = this.PLAYER_RADIUS + 5.0;
+    let x = this.mesh.position.x;
+    let z = this.mesh.position.z;
+    const isInside = (px: number, pz: number): boolean => {
+      let inside = false;
+      for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+        const [xi, zi] = polygon[i]!;
+        const [xj, zj] = polygon[j]!;
+        if (((zi > pz) !== (zj > pz)) && px < (xj - xi) * (pz - zi) / ((zj - zi) || 1e-9) + xi) inside = !inside;
+      }
+      return inside;
+    };
+    let correctionX = 0;
+    let correctionZ = 0;
+
+    // Four passes resolve acute corners of the concave western map wing too.
+    for (let pass = 0; pass < 4; pass++) {
+      let bestDistanceSq = Infinity;
+      let bestX = x;
+      let bestZ = z;
+      let bestInwardX = 0;
+      let bestInwardZ = 0;
+      for (let i = 0; i < polygon.length; i++) {
+        const [ax, az] = polygon[i]!;
+        const [bx, bz] = polygon[(i + 1) % polygon.length]!;
+        const dx = bx - ax;
+        const dz = bz - az;
+        const lengthSq = dx * dx + dz * dz;
+        if (lengthSq < 1e-8) continue;
+        const t = THREE.MathUtils.clamp(((x - ax) * dx + (z - az) * dz) / lengthSq, 0, 1);
+        const qx = ax + dx * t;
+        const qz = az + dz * t;
+        const distanceSq = (x - qx) ** 2 + (z - qz) ** 2;
+        if (distanceSq >= bestDistanceSq) continue;
+        const length = Math.sqrt(lengthSq);
+        bestDistanceSq = distanceSq;
+        bestX = qx;
+        bestZ = qz;
+        bestInwardX = (-dz / length) * inwardSign;
+        bestInwardZ = (dx / length) * inwardSign;
+      }
+      if (!Number.isFinite(bestDistanceSq)) return;
+      if (isInside(x, z) && bestDistanceSq >= margin * margin) break;
+      const oldX = x;
+      const oldZ = z;
+      x = bestX + bestInwardX * margin;
+      z = bestZ + bestInwardZ * margin;
+      correctionX += x - oldX;
+      correctionZ += z - oldZ;
+    }
+
+    if (!isInside(x, z)) {
+      // Safe fallback for a position restored beyond a concave boundary.
+      x = 0;
+      z = -40;
+      correctionX = x - this.mesh.position.x;
+      correctionZ = z - this.mesh.position.z;
+    }
+    this.mesh.position.x = x;
+    this.mesh.position.z = z;
+
+    if (correctionX || correctionZ) {
+      const correctionLength = Math.hypot(correctionX, correctionZ) || 1;
+      const inwardX = correctionX / correctionLength;
+      const inwardZ = correctionZ / correctionLength;
+      const outwardVelocity = this.velocity.x * inwardX + this.velocity.z * inwardZ;
+      if (outwardVelocity < 0) {
+        this.velocity.x -= inwardX * outwardVelocity;
+        this.velocity.z -= inwardZ * outwardVelocity;
+      }
+    }
   }
 
   public forceIdle(): void {
@@ -604,7 +712,7 @@ export class PlayerController {
       if (!this.animationController.isArmed) {
         this.animationController.setArmed(true);
       }
-      if (this.isAttacking) {
+      if (this.isAttacking || this.isChargingStaff) {
         if (this.staffBackMesh && this.staffBackMesh.visible) this.staffBackMesh.visible = false;
         if (this.staffHandMesh && !this.staffHandMesh.visible) this.staffHandMesh.visible = true;
       } else {
@@ -612,7 +720,7 @@ export class PlayerController {
         // An equipped staff remains visible on Wukong's back at every camera
         // distance. Hiding it based on camera distance made it disappear in
         // overview shots and on some desktop/mobile camera framings.
-        const backStaffShouldShow = !this.isAttacking;
+        const backStaffShouldShow = !this.isAttacking && !this.isChargingStaff;
         if (this.staffBackMesh && this.staffBackMesh.visible !== backStaffShouldShow) {
           this.staffBackMesh.visible = backStaffShouldShow;
         }
@@ -791,7 +899,25 @@ export class PlayerController {
 
     const isMoving = moveDir.lengthSq() > 0.01;
     const touchMag = Math.hypot(input.touchAnalogX, input.touchAnalogZ);
-    const isSprinting = input.isRunning || touchMag > 0.45;
+    const wantsSprint = input.isRunning || touchMag > 0.45;
+    const gamePaused = (window as any).gameInstance?.isPaused === true;
+    const canSprintThisFrame = wantsSprint && isMoving && this.isGrounded && !this.isMovementLocked && !gamePaused && !this.sprintExhausted && this.stamina > 0;
+    const wasSprinting = this.sprintingThisFrame;
+    this.sprintingThisFrame = canSprintThisFrame;
+    if (canSprintThisFrame) {
+      this.stamina = Math.max(0, this.stamina - PlayerController.SPRINT_STAMINA_DRAIN_PER_SECOND * delta);
+      this.sprintRegenDelay = PlayerController.SPRINT_REGEN_DELAY;
+      if (this.stamina <= 0) this.sprintExhausted = true;
+    } else if (!gamePaused) {
+      if (wasSprinting) this.sprintRegenDelay = PlayerController.SPRINT_REGEN_DELAY;
+      this.sprintRegenDelay = Math.max(0, this.sprintRegenDelay - delta);
+      if (this.sprintRegenDelay <= 0) {
+        this.stamina = Math.min(PlayerController.SPRINT_STAMINA_MAX, this.stamina + PlayerController.SPRINT_STAMINA_REGEN_PER_SECOND * delta);
+        if (this.sprintExhausted && this.stamina >= PlayerController.SPRINT_RECOVERY_THRESHOLD) this.sprintExhausted = false;
+      }
+    }
+    this.onStaminaChange?.(this.stamina, PlayerController.SPRINT_STAMINA_MAX, this.sprintingThisFrame || this.stamina < PlayerController.SPRINT_STAMINA_MAX - 0.01);
+    const isSprinting = this.sprintingThisFrame;
     const currentSpeed = isSprinting ? this.runSpeed : this.moveSpeed;
 
     // A hit flinch is interruptible: movement should switch the pose on this
@@ -839,7 +965,10 @@ export class PlayerController {
       if (wallHits.length > 0 && wallHits[0].distance < this.PLAYER_RADIUS + moveAmount) {
         const hitObject = wallHits[0].object;
         const objName = (hitObject.name || '').toLowerCase();
-        const isStairStep = objName.includes('step') || objName.includes('stair') || objName.includes('ramp');
+        // Guard rails may include "stair" in their node name, but must remain
+        // solid walls. Only the tread/ramp surfaces should bypass wall blocking.
+        const isStairGuard = objName.includes('guard') || objName.includes('handrail');
+        const isStairStep = !isStairGuard && (objName.includes('step') || objName.includes('stair') || objName.includes('ramp'));
         let canClimbActualStep = false;
         const wallNormal = wallHits[0].face?.normal?.clone() || new THREE.Vector3(0, 0, 1);
         wallNormal.transformDirection(hitObject.matrixWorld);
@@ -905,30 +1034,34 @@ export class PlayerController {
           const maxX = box.max.x + this.PLAYER_RADIUS;
           const minZ = box.min.z - this.PLAYER_RADIUS;
           const maxZ = box.max.z + this.PLAYER_RADIUS;
-          const inside = (x: number, z: number) => x >= minX && x <= maxX && z >= minZ && z <= maxZ;
-          if (inside(startX, startZ)) {
+          const startInside = startX >= minX && startX <= maxX && startZ >= minZ && startZ <= maxZ;
+          if (startInside) {
             // If a saved position or earlier frame already put Wukong inside
             // a wall, permit recovery only through the nearest face. Without
             // this guard an endpoint outside the box could tunnel completely
             // through it while starting from an overlap.
-            const faces = [
-              { axis: 'x' as const, distance: startX - minX, edge: minX, direction: -1 },
-              { axis: 'x' as const, distance: maxX - startX, edge: maxX, direction: 1 },
-              { axis: 'z' as const, distance: startZ - minZ, edge: minZ, direction: -1 },
-              { axis: 'z' as const, distance: maxZ - startZ, edge: maxZ, direction: 1 }
-            ].sort((a, b) => a.distance - b.distance);
-            const nearest = faces[0];
-            if (nearest.axis !== axis) return true;
+            const faceXMin = startX - minX;
+            const faceXMax = maxX - startX;
+            const faceZMin = startZ - minZ;
+            const faceZMax = maxZ - startZ;
+            let nearestDistance = faceXMin;
+            let nearestAxis: 'x' | 'z' = 'x';
+            let nearestEdge = minX;
+            let nearestDirection = -1;
+            if (faceXMax < nearestDistance) { nearestDistance = faceXMax; nearestEdge = maxX; nearestDirection = 1; }
+            if (faceZMin < nearestDistance) { nearestDistance = faceZMin; nearestAxis = 'z'; nearestEdge = minZ; nearestDirection = -1; }
+            if (faceZMax < nearestDistance) { nearestAxis = 'z'; nearestEdge = maxZ; nearestDirection = 1; }
+            if (nearestAxis !== axis) return true;
             const startAxis = axis === 'x' ? startX : startZ;
             const endAxis = axis === 'x' ? endX : endZ;
             const otherAxis = axis === 'x' ? endZ : endX;
             const otherMin = axis === 'x' ? minZ : minX;
             const otherMax = axis === 'x' ? maxZ : maxX;
-            if (nearest.direction < 0) {
-              if (endAxis >= startAxis || endAxis < nearest.edge || otherAxis < otherMin || otherAxis > otherMax) return true;
+            if (nearestDirection < 0) {
+              if (endAxis >= startAxis || endAxis < nearestEdge || otherAxis < otherMin || otherAxis > otherMax) return true;
               continue;
             }
-            if (endAxis <= startAxis || endAxis > nearest.edge || otherAxis < otherMin || otherAxis > otherMax) return true;
+            if (endAxis <= startAxis || endAxis > nearestEdge || otherAxis < otherMin || otherAxis > otherMax) return true;
             continue;
           }
 
@@ -975,6 +1108,7 @@ export class PlayerController {
       this.mesh.position.y += this.velocity.y * delta;
     }
     this.mesh.position.z += this.velocity.z * delta;
+    this.constrainToWorldBoundary();
 
     // Re-sample support at the *new* X/Z after horizontal movement. Using only
     // the pre-move height let Wukong trail behind terrain on slopes and sink at
@@ -1161,8 +1295,7 @@ export class PlayerController {
       const moving = input.moveForward || input.moveBackward || input.moveLeft || input.moveRight ||
         Math.hypot(input.touchAnalogX, input.touchAnalogZ) > 0.15;
       if (moving) {
-        const touchMagnitude = Math.hypot(input.touchAnalogX, input.touchAnalogZ);
-        nextState = input.isRunning || touchMagnitude > 0.45 ? 'Sprint' : 'Run';
+        nextState = this.sprintingThisFrame ? 'Sprint' : 'Run';
       }
     } else if (Math.hypot(this.velocity.x, this.velocity.z) > 0.08) {
       nextState = 'Run';
@@ -1173,6 +1306,21 @@ export class PlayerController {
 
   public triggerAttackAura(): void {
     this.attackAura.trigger();
+  }
+
+  public setStaffCharge(level: number): void {
+    this.attackAura.setChargeLevel(level);
+  }
+
+  public beginStaffCharge(): void {
+    if (!this.hasStaff || !this.staffEquipped) return;
+    this.isChargingStaff = true;
+    this.attachStaffToHand();
+    this.attackAura.beginCharge();
+  }
+
+  public endStaffCharge(): void {
+    this.isChargingStaff = false;
   }
 
   public stopAttackAura(): void {

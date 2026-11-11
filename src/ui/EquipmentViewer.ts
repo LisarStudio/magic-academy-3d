@@ -51,6 +51,11 @@ export class EquipmentViewer {
   }
 
   public onPauseOpened(): void {
+    const activePanel = document.getElementById('pause-screen')?.dataset.activePanel;
+    if (activePanel !== 'equipment') {
+      this.hide3DPreview();
+      return;
+    }
     const tabPause = document.getElementById('tab-btn-pause');
     const tabEquip = document.getElementById('tab-btn-equipment');
     const contentPause = document.getElementById('pause-tab-content-pause');

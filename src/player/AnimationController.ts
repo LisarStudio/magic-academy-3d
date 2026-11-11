@@ -255,7 +255,10 @@ export class AnimationController {
     const suffix = this.isArmed ? '_Armed' : '_Unarmed';
 
     if (state === 'Idle') return 'Idle' + suffix;
-    if (state === 'Sprint') return this.allActions.has('Wukong_Naruto_Run') ? 'Wukong_Naruto_Run' : 'Run' + suffix;
+    // Sprint is the same authored Wukong run cycle played a little faster.
+    // The optional Naruto-run clip has a different pose/style and used to
+    // override the correct rig animation as soon as it became available.
+    if (state === 'Sprint') return 'Run' + suffix;
     if (state === 'Run' || state === 'Walk') return 'Run' + suffix;
     if (state === 'Jump') return 'Jump' + suffix;
     if (state === 'Fall') return 'Fall' + suffix;
@@ -591,8 +594,13 @@ export class AnimationController {
     }
     this.idleCyclePhase = null;
 
-    // Skip if already in this state and playing
+    const movementTimeScale = newState === 'Sprint' ? 1.22 : 1;
+
+    // Keep sprint cadence responsive even when movement state stays the same.
     if (this.currentState === newState && this.currentAction && this.currentAction.isRunning()) {
+      if (newState === 'Sprint' || newState === 'Run' || newState === 'Walk') {
+        this.currentAction.setEffectiveTimeScale(movementTimeScale);
+      }
       return;
     }
 
@@ -617,12 +625,21 @@ export class AnimationController {
       return;
     }
 
+    // Run and Sprint share one compatible clip. Change cadence in place to
+    // avoid restarting the stride or blending the character back to idle.
+    if (this.currentAction === newAction) {
+      newAction.setEffectiveTimeScale(movementTimeScale);
+      newAction.play();
+      this.currentState = newState;
+      return;
+    }
+
     // Crossfade from old to new
     if (this.currentAction && this.currentAction !== newAction) {
       this.currentAction.fadeOut(duration);
     }
 
-    newAction.reset().setEffectiveWeight(1).fadeIn(duration).play();
+    newAction.reset().setEffectiveTimeScale(movementTimeScale).setEffectiveWeight(1).fadeIn(duration).play();
     this.currentAction = newAction;
     this.currentState = newState;
   }
