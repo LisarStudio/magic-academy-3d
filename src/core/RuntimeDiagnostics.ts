@@ -23,10 +23,14 @@ type DiagnosticEvent = { atSeconds: number; type: string; detail?: string };
 /** Small, local-only stability recorder. The game does not send telemetry. */
 export class RuntimeDiagnostics {
   private readonly startedAt = performance.now();
-  private readonly frameTimes: number[] = [];
+  private readonly maxFrames = 1800;
+  // Fixed-size ring buffer: shifting a full 1,800-entry array on every frame
+  // adds steady main-thread work to the very frame timings we are measuring.
+  private readonly frameTimes = new Float32Array(this.maxFrames);
+  private frameTimeWriteIndex = 0;
+  private frameTimeCount = 0;
   private readonly samples: PerformanceSample[] = [];
   private readonly events: DiagnosticEvent[] = [];
-  private readonly maxFrames = 1800;
   private readonly maxSamples = 360;
   private readonly maxEvents = 120;
   private sampleElapsed = 0;
@@ -92,8 +96,9 @@ export class RuntimeDiagnostics {
     if (!Number.isFinite(frameMs) || frameMs < 0) return;
     this.sessionFrames++;
     this.gameplaySeconds += Math.max(0, elapsed);
-    this.frameTimes.push(Math.min(frameMs, 10_000));
-    if (this.frameTimes.length > this.maxFrames) this.frameTimes.shift();
+    this.frameTimes[this.frameTimeWriteIndex] = Math.min(frameMs, 10_000);
+    this.frameTimeWriteIndex = (this.frameTimeWriteIndex + 1) % this.maxFrames;
+    this.frameTimeCount = Math.min(this.frameTimeCount + 1, this.maxFrames);
     this.sampleElapsed += Math.max(0, elapsed);
     if (this.sampleElapsed < 5) return;
     this.sampleElapsed %= 5;
@@ -192,8 +197,10 @@ export class RuntimeDiagnostics {
   private elapsedSeconds(): number { return Math.max(0, (performance.now() - this.startedAt) / 1000); }
 
   private percentile95(): number {
-    if (!this.frameTimes.length) return 0;
-    const ordered = [...this.frameTimes].sort((a, b) => a - b);
+    if (!this.frameTimeCount) return 0;
+    // A copy/sort occurs only once per five-second sample; frame recording is
+    // allocation-free and constant time regardless of session length.
+    const ordered = Array.from(this.frameTimes.subarray(0, this.frameTimeCount)).sort((a, b) => a - b);
     return ordered[Math.min(ordered.length - 1, Math.ceil(ordered.length * 0.95) - 1)];
   }
 

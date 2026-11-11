@@ -782,7 +782,11 @@ export class LevelToyStory {
   private async loadIntroEnvironmentAssets(): Promise<void> {
     const base = import.meta.env.BASE_URL + 'assets/environment/';
     const version = `?v=${__APP_VERSION__}`;
-    const mobileTextures = isLowPowerDevice();
+    // Phones and tablets need the mobile-authored scene assets even when the
+    // browser reports a modern CPU and ample RAM. Capability-only detection
+    // loaded the full desktop temple on recent devices and inflated decode,
+    // upload and GPU costs on the very platforms with the tightest budgets.
+    const mobileTextures = isMobileDevice() || isLowPowerDevice();
     const loadingManager = new THREE.LoadingManager();
     loadingManager.onProgress = (url, loaded, total) => this.onResourceProgress?.(loaded, total, url);
     const loader = new GLTFLoader(loadingManager);
@@ -1913,46 +1917,120 @@ export class LevelToyStory {
    * untouched here. Supports are sampled from the real asset so they cannot
    * create a guessed slab over grass or furniture. */
   private addTempleBalconyCollision(asset: THREE.Object3D): void {
+    const startedAt = performance.now();
     asset.updateMatrixWorld(true);
     const root = new THREE.Group();
     root.name = 'central_temple_exterior_balcony_collision';
     const invisible = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide });
-    const ray = new THREE.Raycaster();
-    const down = new THREE.Vector3(0, -1, 0);
-    const normal = new THREE.Vector3();
     const vertices: number[] = [];
     const normals: number[] = [];
     const step = 0.24;
     const half = step * 0.53;
     // Two side galleries outside the temple wall shell. The front stair and
-    // the existing central floor are intentionally excluded.
-    for (const side of [-1, 1]) {
-      for (let x = 5.45; x <= 7.05; x += step) {
-        for (let z = -4.25; z <= 4.25; z += step) {
-          const sample = asset.localToWorld(new THREE.Vector3(side * x, 5.0, z));
-          ray.set(sample, down);
-          ray.far = 5.0;
-          const hit = ray.intersectObject(asset, true).find((candidate) => {
-            if (!candidate.face) return false;
-            normal.copy(candidate.face.normal).transformDirection(candidate.object.matrixWorld);
-            if (normal.y < 0.82) return false;
-            const local = asset.worldToLocal(candidate.point.clone());
-            return local.y >= 0.88 && local.y <= 1.16 &&
-              Math.abs(local.x) >= 5.38 && Math.abs(local.x) <= 7.15 &&
-              Math.abs(local.z) <= 4.4;
-          });
-          if (!hit) continue;
-          const y = hit.point.y + 0.014;
-          const left = hit.point.x - half, right = hit.point.x + half;
-          const near = hit.point.z - half, far = hit.point.z + half;
-          vertices.push(left, y, near, right, y, far, right, y, near,
-            left, y, near, left, y, far, right, y, far);
+    // central floor are excluded. The previous implementation cast one full
+    // ray through the complete 318k-vertex GLB for every 24 cm patch; several
+    // hundred repeated whole-mesh raycasts stalled the main thread on entry.
+    // Instead, scan the source triangles once, rasterize only upward-facing
+    // balcony faces into a small local height grid, then emit the same patches.
+    const xMin = -7.05;
+    const xMax = 7.05;
+    const zMin = -4.25;
+    const xCount = Math.ceil((xMax - xMin) / step);
+    const zCount = Math.ceil((4.25 - zMin) / step);
+    const leftHeights = new Float32Array(xCount * zCount);
+    const rightHeights = new Float32Array(xCount * zCount);
+    leftHeights.fill(-Infinity);
+    rightHeights.fill(-Infinity);
+    const inverseAssetWorld = asset.matrixWorld.clone().invert();
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    const edge1 = new THREE.Vector3(), edge2 = new THREE.Vector3(), faceNormal = new THREE.Vector3();
+    const geometryToTemple = new THREE.Matrix4();
+    let inspectedTriangles = 0;
+    let accepted = 0;
+    asset.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      const geometry = mesh.isMesh ? mesh.geometry : undefined;
+      const position = geometry?.getAttribute('position');
+      if (!geometry || !position) return;
+      geometryToTemple.copy(inverseAssetWorld).multiply(mesh.matrixWorld);
+      const index = geometry.getIndex();
+      const sourceCount = index?.count ?? position.count;
+      const groups = geometry.groups.length
+        ? geometry.groups.map(({ start, count }) => ({ start, count }))
+        : [{ start: 0, count: sourceCount }];
+      for (const group of groups) {
+        const end = Math.min(sourceCount, group.start + group.count);
+        for (let i = group.start; i + 2 < end; i += 3) {
+          inspectedTriangles++;
+          a.fromBufferAttribute(position, index ? index.getX(i) : i).applyMatrix4(geometryToTemple);
+          b.fromBufferAttribute(position, index ? index.getX(i + 1) : i + 1).applyMatrix4(geometryToTemple);
+          c.fromBufferAttribute(position, index ? index.getX(i + 2) : i + 2).applyMatrix4(geometryToTemple);
+          faceNormal.crossVectors(edge1.subVectors(b, a), edge2.subVectors(c, a)).normalize();
+          if (faceNormal.y < 0.82) continue;
+          const minY = Math.min(a.y, b.y, c.y);
+          const maxY = Math.max(a.y, b.y, c.y);
+          const minX = Math.min(a.x, b.x, c.x);
+          const maxX = Math.max(a.x, b.x, c.x);
+          const minZ = Math.min(a.z, b.z, c.z);
+          const maxZ = Math.max(a.z, b.z, c.z);
+          if (maxY < 0.88 || minY > 1.16 || minZ > 4.25 || maxZ < -4.25) continue;
+          for (const side of [-1, 1] as const) {
+            const sideMin = side < 0 ? -7.05 : 5.45;
+            const sideMax = side < 0 ? -5.45 : 7.05;
+            if (maxX < sideMin || minX > sideMax) continue;
+            const heights = side < 0 ? leftHeights : rightHeights;
+            const firstX = Math.max(0, Math.floor((Math.max(minX, sideMin) - xMin) / step));
+            const lastX = Math.min(xCount - 1, Math.floor((Math.min(maxX, sideMax) - xMin) / step));
+            const firstZ = Math.max(0, Math.floor((Math.max(minZ, zMin) - zMin) / step));
+            const lastZ = Math.min(zCount - 1, Math.floor((Math.min(maxZ, 4.25) - zMin) / step));
+            const denominator = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+            if (Math.abs(denominator) < 1e-7) continue;
+            for (let gx = firstX; gx <= lastX; gx++) {
+              const px = xMin + (gx + 0.5) * step;
+              if (px < sideMin || px > sideMax) continue;
+              for (let gz = firstZ; gz <= lastZ; gz++) {
+                const pz = zMin + (gz + 0.5) * step;
+                const wa = ((b.z - c.z) * (px - c.x) + (c.x - b.x) * (pz - c.z)) / denominator;
+                const wb = ((c.z - a.z) * (px - c.x) + (a.x - c.x) * (pz - c.z)) / denominator;
+                const wc = 1 - wa - wb;
+                if (wa < -1e-4 || wb < -1e-4 || wc < -1e-4) continue;
+                const y = wa * a.y + wb * b.y + wc * c.y;
+                if (y < 0.88 || y > 1.16) continue;
+                const cell = gx * zCount + gz;
+                if (y > heights[cell]!) heights[cell] = y;
+              }
+            }
+          }
+        }
+      }
+    });
+    for (const side of [-1, 1] as const) {
+      const heights = side < 0 ? leftHeights : rightHeights;
+      const sideMin = side < 0 ? -7.05 : 5.45;
+      const sideMax = side < 0 ? -5.45 : 7.05;
+      for (let gx = 0; gx < xCount; gx++) {
+        const x = xMin + (gx + 0.5) * step;
+        if (x < sideMin || x > sideMax) continue;
+        for (let gz = 0; gz < zCount; gz++) {
+          const y = heights[gx * zCount + gz]!;
+          if (!Number.isFinite(y)) continue;
+          const z = zMin + (gz + 0.5) * step;
+          const localCorners = [
+            new THREE.Vector3(x - half, y + 0.014, z - half),
+            new THREE.Vector3(x + half, y + 0.014, z - half),
+            new THREE.Vector3(x + half, y + 0.014, z + half),
+            new THREE.Vector3(x - half, y + 0.014, z + half),
+          ];
+          const [p0, p1, p2, p3] = localCorners.map((point) => asset.localToWorld(point));
+          vertices.push(p0!.x, p0!.y, p0!.z, p1!.x, p1!.y, p1!.z, p2!.x, p2!.y, p2!.z,
+            p0!.x, p0!.y, p0!.z, p2!.x, p2!.y, p2!.z, p3!.x, p3!.y, p3!.z);
           for (let i = 0; i < 6; i++) normals.push(0, 1, 0);
+          accepted++;
         }
       }
     }
     if (!vertices.length) {
-      console.info('[LevelToyStory] No external temple balcony surfaces found; existing floor/stair supports remain unchanged.');
+      console.info(`[Performance] Temple balcony scan: ${inspectedTriangles} triangles, 0 support patches after ${(performance.now() - startedAt).toFixed(1)} ms; existing floor/stair supports remain unchanged.`);
       return;
     }
     const geometry = new THREE.BufferGeometry();
@@ -1982,6 +2060,7 @@ export class LevelToyStory {
     this.sceneManager.scene.add(root);
     root.updateMatrixWorld(true);
     this.levelColliders.push(root);
+    console.info(`[Performance] Temple balcony support: ${inspectedTriangles} triangles scanned once, ${accepted} surface patches, ${(performance.now() - startedAt).toFixed(1)} ms.`);
   }
 
   /** Clear the authored central entrance: this temple has an open passage, not
@@ -2564,28 +2643,22 @@ export class LevelToyStory {
   }
 
   /**
-   * Instances the exact Grass It! source meshes exported from
-   * la_leyenda_de_wukong_Camarasuave.blend. The original GLB remains untouched;
-   * GPU wind bends its real blades at the tips while the roots stay planted.
+   * Instances the authored Grass It! low-detail meshes exported from Blender.
+   * The compact asset keeps the exact geometry used by the live distance bands
+   * and the source albedo maps, while avoiding a second full-size GLB decode.
    */
   public loadGrassInBackground(): Promise<void> {
     if (this.grassLoadStarted) return this.grassLoadPromise ?? Promise.resolve();
     this.grassLoadStarted = true;
     const base = import.meta.env.BASE_URL + 'assets/environment/';
     const loader = new GLTFLoader();
-    this.grassLoadPromise = loader.loadAsync(`${base}wukong-grass-clumps.glb?v=${__APP_VERSION__}`)
-      .then(async (original) => {
-        let lodRoot: THREE.Object3D | null = null;
-        try {
-          lodRoot = (await loader.loadAsync(`${base}wukong-grass-clumps-lod.glb?v=${__APP_VERSION__}`)).scene;
-        } catch (error) {
-          console.warn('[Grass] Optional LOD failed; using the original meshes at every distance.', error);
-        }
-        this.applyOriginalGrassGroundTexture(original.scene);
-        await this.buildOriginalGrass(original.scene, lodRoot ?? original.scene);
+    this.grassLoadPromise = loader.loadAsync(`${base}wukong-grass-clumps-lod-textured.glb?v=${__APP_VERSION__}`)
+      .then(async (grassLod) => {
+        this.applyOriginalGrassGroundTexture(grassLod.scene);
+        await this.buildOriginalGrass(grassLod.scene, grassLod.scene);
       })
       .catch((error: unknown) => {
-        console.error('[Grass] Background load of original Grass It! assets failed; no substitute grass was generated.', error);
+      console.error('[Grass] Background load of the authored Grass It! LOD failed; no substitute grass was generated.', error);
         this.grassSectors.forEach((sector) => this.sceneManager.scene.remove(sector));
         this.grassSectors = [];
         this.grassUniforms = null;
@@ -2597,7 +2670,7 @@ export class LevelToyStory {
 
   private applyOriginalGrassGroundTexture(sourceRoot: THREE.Object3D): void {
     if (!this.terrainGroundMaterial) return;
-    const named = sourceRoot.getObjectByName('Grass_Lush');
+    const named = sourceRoot.getObjectByName('Grass_Lush') ?? sourceRoot.getObjectByName('Grass_Lush_LOD');
     let sourceMaterial: THREE.Material | undefined;
     named?.traverse((child) => {
       if (!sourceMaterial && (child as THREE.Mesh).isMesh) {
@@ -2659,7 +2732,7 @@ export class LevelToyStory {
     };
 
     const templates = sourceNames.map((name) => {
-      const source = findMesh(sourceRoot, name);
+      const source = findMesh(sourceRoot, name) ?? findMesh(sourceRoot, `${name}_LOD`);
       if (!source) throw new Error(`Original grass GLB is missing mesh under ${name}`);
       // The Blender source was exported Z-up (its blade height is on the
       // asset Z axis). Three.js places the field on an XZ ground plane with
@@ -2758,6 +2831,35 @@ export class LevelToyStory {
       };
     });
 
+    // Compile the instanced LOD material variants before the field starts
+    // appearing around the player. Otherwise the first visible LOD can trigger
+    // shader compilation during active play on mobile browsers.
+    const warmupStartedAt = performance.now();
+    const warmupScene = new THREE.Scene();
+    for (const template of templates) {
+      const materials = Array.isArray(template.material) ? template.material : [template.material];
+      for (const material of materials) {
+        warmupScene.add(new THREE.InstancedMesh(template.lodGeometry, material, 1));
+      }
+    }
+    try {
+      const warmups = [...warmupScene.children];
+      const variantScene = new THREE.Scene();
+      for (const object of warmups) {
+        variantScene.add(object);
+        await this.sceneManager.renderer.compileAsync(variantScene, this.sceneManager.camera, this.sceneManager.scene);
+        variantScene.remove(object);
+        // Limit shader work to one material variant per frame on devices that
+        // compile synchronously inside the driver.
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
+      console.info(`[Performance] Grass instanced LOD shaders ready in ${(performance.now() - warmupStartedAt).toFixed(1)} ms.`);
+    } catch (error) {
+      console.warn('[Grass] Shader warmup failed; the browser will compile visible variants on demand.', error);
+    } finally {
+      warmupScene.clear();
+    }
+
     let seed = 709391;
     const random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
     const dummy = new THREE.Object3D();
@@ -2796,6 +2898,7 @@ export class LevelToyStory {
     // rather than exactly on a seam that would activate two full-detail tiles.
     const xSectorOrigin = -90;
     const zSectorOrigin = -120;
+    const rowsPerYield = isMobile ? 1 : 2;
     const sectorsX = Math.ceil(180 / sectorSize);
     const sectorsZ = Math.ceil(160 / sectorSize);
     let placedTotal = 0;
@@ -2838,7 +2941,7 @@ export class LevelToyStory {
           }
           // Keep the render/input loop responsive on mobile and desktop while
           // sampling the same original grass field at the selected density.
-          if (gx > 0 && gx % 8 === 0) {
+          if (gx > 0 && gx % rowsPerYield === 0) {
             await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
           }
         }
@@ -3874,19 +3977,20 @@ export class LevelToyStory {
     const collisionChunkSize = 8;
     for (let meshIndex = 0; meshIndex < meshes.length; meshIndex++) {
       const sourceMesh = meshes[meshIndex];
-      const instanced = new THREE.InstancedMesh(sourceMesh.geometry, sourceMesh.material, placements.length);
-      instanced.name = `horizon_original_mossy_rock_instances_${meshIndex + 1}`;
-      instanced.count = placements.length;
-      instanced.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-      instanced.castShadow = false;
-      instanced.receiveShadow = false;
-      instanced.frustumCulled = false;
+      // Keep the exact original rock mesh and placement, but split the ring
+      // into bounded render batches. A single full-world InstancedMesh with
+      // frustum culling disabled sent every mountain through the GPU from all
+      // camera angles (over three million triangles in the mobile profile).
+      // Small spatial batches let Three.js skip the mountains behind the view;
+      // the invisible collision chunks below remain independent and unchanged.
+      const visibleChunkSize = 8;
       const sourceRelative = sourceRootInverse.clone().multiply(sourceMesh.matrixWorld);
       const rotation = new THREE.Matrix4();
       const scale = new THREE.Matrix4();
       const translation = new THREE.Matrix4();
       const placementMatrix = new THREE.Matrix4();
-      placements.forEach((placement, index) => {
+      const placementMatrices: THREE.Matrix4[] = [];
+      placements.forEach((placement) => {
         rotation.makeRotationY(placement.yaw);
         scale.makeScale(placement.scale, placement.scale, placement.scale);
         translation.makeTranslation(placement.x, placement.y, placement.z);
@@ -3895,8 +3999,7 @@ export class LevelToyStory {
           .multiply(scale)
           .multiply(pivot)
           .multiply(sourceRelative);
-        instanced.setMatrixAt(index, placementMatrix);
-        instanced.setColorAt(index, placement.tint);
+        placementMatrices.push(placementMatrix.clone());
       });
       // Mirror the visible GLB instances into small detached chunks. Their
       // matrices and source triangles match the render mesh exactly, while
@@ -3909,8 +4012,7 @@ export class LevelToyStory {
         collisionChunk.userData.horizonMountainSurface = true;
         collisionChunk.frustumCulled = false;
         for (let localIndex = 0; localIndex < count; localIndex++) {
-          instanced.getMatrixAt(start + localIndex, rotation);
-          collisionChunk.setMatrixAt(localIndex, rotation);
+          collisionChunk.setMatrixAt(localIndex, placementMatrices[start + localIndex]!);
         }
         collisionChunk.instanceMatrix.needsUpdate = true;
         collisionChunk.updateMatrixWorld(true);
@@ -3918,10 +4020,24 @@ export class LevelToyStory {
         collisionChunk.computeBoundingSphere();
         mountainSurfaceColliders.push(collisionChunk);
       }
-      instanced.instanceMatrix.needsUpdate = true;
-      if (instanced.instanceColor) instanced.instanceColor.needsUpdate = true;
-      instanced.computeBoundingSphere();
-      this.sceneManager.scene.add(instanced);
+      for (let start = 0; start < placements.length; start += visibleChunkSize) {
+        const count = Math.min(visibleChunkSize, placements.length - start);
+        const visibleChunk = new THREE.InstancedMesh(sourceMesh.geometry, sourceMesh.material, count);
+        visibleChunk.name = `horizon_original_mossy_rock_instances_${meshIndex + 1}_chunk_${Math.floor(start / visibleChunkSize) + 1}`;
+        visibleChunk.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+        visibleChunk.castShadow = false;
+        visibleChunk.receiveShadow = false;
+        for (let localIndex = 0; localIndex < count; localIndex++) {
+          visibleChunk.setMatrixAt(localIndex, placementMatrices[start + localIndex]!);
+          visibleChunk.setColorAt(localIndex, placements[start + localIndex]!.tint);
+        }
+        visibleChunk.instanceMatrix.needsUpdate = true;
+        if (visibleChunk.instanceColor) visibleChunk.instanceColor.needsUpdate = true;
+        visibleChunk.computeBoundingBox();
+        visibleChunk.computeBoundingSphere();
+        visibleChunk.frustumCulled = true;
+        this.sceneManager.scene.add(visibleChunk);
+      }
     }
     this.player.setMountainSurfaceColliders(mountainSurfaceColliders);
   }
@@ -7356,7 +7472,10 @@ export class LevelToyStory {
     if (this.grassCullElapsed <= 0) {
       // Keep authored Blender LODs at all distances; the ground material
       // carries coverage beyond the vegetation range. Avoid broken topology.
-      const isMobile = isLowPowerDevice();
+      // Mobile class and low-power capability are separate signals: recent
+      // phones commonly report ample RAM/cores, but still need the compact
+      // vegetation radius to keep their fill and vertex budgets predictable.
+      const isMobile = isMobileDevice() || isLowPowerDevice();
       const selectedQualityIndex = this.grassQuality === 0.65 ? 0 : this.grassQuality === 1 ? 2 : 1;
       // Keep the visual style, but cap the default high preset to the medium
       // vegetation radius on phones. This avoids drawing distant grass sectors
