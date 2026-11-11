@@ -1,8 +1,8 @@
 {
-  "version": "0.0.42",
-  "cacheVersion": "0.0.42+b65c7ae.dirty.local-mwc5wfcd",
+  "version": "0.0.43",
+  "cacheVersion": "0.0.43+b65c7ae.dirty.local-mwc683ht",
   "commit": "b65c7aee03738e28790b481400db117dbc454d1f",
-  "buildId": "local-mwc5wfcd",
-  "builtAtUTC": "2026-11-11T13:35:49.933Z",
+  "buildId": "local-mwc683ht",
+  "builtAtUTC": "2026-11-11T13:44:54.449Z",
   "dirtyWorkingTree": true
 }
