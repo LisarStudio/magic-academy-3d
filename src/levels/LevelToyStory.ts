@@ -1152,6 +1152,53 @@ export class LevelToyStory {
         scene.add(columnFill);
         this.dayNightCycle?.registerNightLight(columnFill);
       });
+
+      // Broad architectural spots provide the directional warm/cool contrast
+      // that the small lantern fills cannot produce on this full-size facade.
+      // They are unshadowed and attached to the temple's authored local frame,
+      // so the original mesh, lanterns, and their placement remain untouched.
+      const addTempleSpot = (
+        name: string,
+        localPosition: THREE.Vector3,
+        localTarget: THREE.Vector3,
+        intensity: number,
+        distance: number,
+        angle: number,
+      ) => {
+        const spot = new THREE.SpotLight(0xffb15f, intensity, distance, angle, 0.78, 2);
+        spot.name = name;
+        spot.castShadow = false;
+        spot.position.copy(this.centralTempleObject!.localToWorld(localPosition));
+        spot.target.position.copy(this.centralTempleObject!.localToWorld(localTarget));
+        scene.add(spot, spot.target);
+        this.dayNightCycle?.registerNightLight(spot);
+      };
+      const architecturalMobileLighting = navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches;
+      const lightScale = architecturalMobileLighting ? 0.72 : 1;
+      addTempleSpot(
+        'central_temple_lower_facade_architectural_spot',
+        new THREE.Vector3(-7.0, 10.0, -12.0),
+        new THREE.Vector3(-2.8, 4.2, -5.5),
+        620 * lightScale,
+        30,
+        0.78,
+      );
+      addTempleSpot(
+        'central_temple_entry_architectural_spot',
+        new THREE.Vector3(7.0, 10.0, -12.0),
+        new THREE.Vector3(2.8, 4.2, -5.5),
+        620 * lightScale,
+        30,
+        0.78,
+      );
+      addTempleSpot(
+        'central_temple_upper_eave_architectural_spot',
+        new THREE.Vector3(0, 19.0, -11.5),
+        new THREE.Vector3(0, 13.0, -5.8),
+        480 * lightScale,
+        34,
+        0.72,
+      );
     }
     this.player.setColliders(this.levelColliders);
     this.cameraController.setCollisionObjects(this.levelColliders);

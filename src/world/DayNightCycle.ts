@@ -32,7 +32,7 @@ export class DayNightCycle {
   public readonly sunMesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
   public readonly sunLight: THREE.PointLight;
 
-  private readonly nightLights = new Map<THREE.PointLight, number>();
+  private readonly nightLights = new Map<THREE.PointLight | THREE.SpotLight, number>();
   private readonly nightEmissiveMaterials = new Map<THREE.MeshStandardMaterial, number>();
   private readonly nightSky = new THREE.Color(0x0b1530);
   private readonly dawnSky = new THREE.Color(0xf3a982);
@@ -81,7 +81,7 @@ export class DayNightCycle {
     scene.add(this.sunMesh);
   }
 
-  public registerNightLight(light: THREE.PointLight): void {
+  public registerNightLight(light: THREE.PointLight | THREE.SpotLight): void {
     this.nightLights.set(light, light.intensity);
   }
 
