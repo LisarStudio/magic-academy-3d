@@ -215,24 +215,10 @@ export class AnimationController {
    * (pickup, attacks, death and cinematics) keep their existing gameplay locks. */
   public interruptHitReaction(nextState: AnimationState): boolean {
     if (this.oneShotAction?.getClip().name !== 'Reaction') return false;
-    if (this.oneShotFinishedListener) {
-      this.mixer?.removeEventListener('finished', this.oneShotFinishedListener as any);
-      this.oneShotFinishedListener = null;
-    }
-    this.oneShotAction.stop();
-    this.oneShotAction.enabled = false;
-    this.oneShotAction.setEffectiveWeight(0);
-    this.oneShotAction = null;
-    this.oneShotOnMarker = null;
-    this.oneShotMarkerTime = -1;
-    this.oneShotMarkerFired = false;
-    this.pendingReaction = null;
-    this.isPlayingOneShot = false;
-    this.idleCyclePhase = null;
-    this.currentAction = null;
-    this.currentState = 'Hit';
-    this.playState(nextState, 0.07);
-    return true;
+    // Movement and attack input used to cancel this one-shot on the next
+    // frame, making confirmed hits look as if they had no reaction.
+    void nextState;
+    return false;
   }
 
   public playImpactReaction(onComplete: () => void = () => {}): boolean {
@@ -675,10 +661,9 @@ export class AnimationController {
     }
     this.idleCyclePhase = null;
 
-    // Keep the standard run cycle at its brisk travel cadence; sprint doubles
-    // that cadence in step with the Shift speed so feet do not visibly skate.
+    // Match animation cadence to the actual sprint/walk speed ratio (1.5x).
     const cadence = THREE.MathUtils.clamp(movementSpeedRatio, 0.42, 1);
-    const movementTimeScale = newState === 'Sprint' ? 2.5 * cadence : (newState === 'Run' || newState === 'Walk') ? 1.25 * cadence : 1;
+    const movementTimeScale = newState === 'Sprint' ? 1.875 * cadence : (newState === 'Run' || newState === 'Walk') ? 1.25 * cadence : 1;
 
     // Keep sprint cadence responsive even when movement state stays the same.
     if (this.currentState === newState && this.currentAction && this.currentAction.isRunning()) {

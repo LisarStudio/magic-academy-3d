@@ -717,9 +717,9 @@ export class Game {
             .then((clips) => this.animationController.addClips(clips))
             .catch((error) => console.warn('[Game] Deferred startup animations could not be prepared.', error));
         };
-        if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(loadDeferred, { timeout: 30000 });
+        if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(loadDeferred, { timeout: 1200 });
         else loadDeferred();
-      }, 20000);
+      }, 1800);
     }
     // Keep optional FBX parsing out of startup. Each clip loader is sequential
     // and yields between files; this work starts only after the player has had

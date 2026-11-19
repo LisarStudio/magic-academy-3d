@@ -3591,6 +3591,7 @@ export class LevelToyStory {
       rock.castShadow = true;
       rock.receiveShadow = true;
       rock.userData.ownerId = 'crab_boss';
+      rock.userData.collisionDisabled = false;
       rock.userData.homePosition = rock.position.clone();
       rock.userData.homeRotation = rock.rotation.clone();
       scene.add(rock);
@@ -4949,8 +4950,29 @@ export class LevelToyStory {
       addBox('qi_treehouse_post', top.x + sx, houseDeckY + 1.0, top.z + sz, 0.18, 2.0, 0.18, darkWood);
     }
     for (const side of [-1, 1]) {
-      addBox('qi_treehouse_rail', top.x, houseDeckY + 0.75, top.z + side * 1.95, 4.55, 0.16, 0.14, warmWood);
-      for (let i = 0; i < 5; i++) addBox('qi_treehouse_baluster', top.x - 1.8 + i * 0.9, houseDeckY + 0.4, top.z + side * 1.95, 0.09, 0.7, 0.09, darkWood);
+      const railZ = top.z + side * 1.95;
+      if (side < 0) {
+        addBox('qi_treehouse_rail', top.x, houseDeckY + 0.75, railZ, 4.55, 0.16, 0.14, warmWood);
+        for (let i = 0; i < 5; i++) addBox('qi_treehouse_baluster', top.x - 1.8 + i * 0.9, houseDeckY + 0.4, railZ, 0.09, 0.7, 0.09, darkWood);
+      } else {
+        // Leave a doorway over the stair's arrival side instead of ending the
+        // climb against an unbroken rail and baluster line.
+        const openingHalfWidth = 0.82;
+        const segmentWidth = (4.55 - openingHalfWidth * 2) / 2;
+        for (const direction of [-1, 1]) {
+          const centerOffset = direction * (openingHalfWidth + segmentWidth * 0.5);
+          addBox('qi_treehouse_entry_rail', top.x + centerOffset, houseDeckY + 0.75, railZ, segmentWidth, 0.16, 0.14, warmWood);
+        }
+        for (const xOffset of [-1.35, -0.9, 0.9, 1.35]) {
+          addBox('qi_treehouse_entry_baluster', top.x + xOffset, houseDeckY + 0.4, railZ, 0.09, 0.7, 0.09, darkWood);
+        }
+        // A collidable, level landing carries the final step through the entry.
+        addBox('qi_treehouse_entry_landing', top.x, houseDeckY + 0.17, top.z + 2.45, 1.72, 0.2, 1.05, warmWood, true);
+        for (const xOffset of [-0.9, 0.9]) {
+          addBox('qi_treehouse_entry_jamb', top.x + xOffset, houseDeckY + 1.22, railZ, 0.14, 1.65, 0.16, darkWood);
+        }
+        addBox('qi_treehouse_entry_lintel', top.x, houseDeckY + 2.05, railZ, 1.98, 0.16, 0.2, warmWood);
+      }
     }
     addBox('qi_treehouse_back_wall', top.x, houseDeckY + 1.55, top.z - 1.62, 3.4, 1.3, 0.14, darkWood);
     for (let i = 0; i < 5; i++) addBox('qi_treehouse_lattice', top.x - 1.2 + i * 0.6, houseDeckY + 1.55, top.z - 1.51, 0.055, 1.05, 0.06, warmWood);
@@ -6625,7 +6647,9 @@ export class LevelToyStory {
       };
 
       e.onDeath = () => {
-        this.powerOrbSystem?.spawn(e.mesh.position, e.id === 'crab_boss' ? 200 : 20);
+        // Nezha-X pays out only its progression key; ordinary enemies keep
+        // their existing orb-drop behavior.
+        if (e.id !== 'crab_boss') this.powerOrbSystem?.spawn(e.mesh.position, 20);
         if (e.id === 'crab_boss') {
           console.log('[BOSS] HP: 0 -> Entering DYING state. Defeat sequence started.');
           this.bossEncounterActive = false;
@@ -6705,11 +6729,11 @@ export class LevelToyStory {
         this.player.isMovementLocked || this.isCinematicPlaying) return;
 
     let nearest: THREE.Group | null = null;
-    let nearestDistance = 2.0;
+    let nearestDistance = 2.8;
     for (const key of this.keysMeshes) {
       if (!key.userData.assetReady || this.collectedKeys[key.name as keyof typeof this.collectedKeys]) continue;
       const verticalDistance = Math.abs(key.position.y - playerPos.y);
-      if (verticalDistance > 2.4) continue;
+      if (verticalDistance > 3.0) continue;
       const distance = Math.hypot(key.position.x - playerPos.x, key.position.z - playerPos.z);
       if (distance < nearestDistance) {
         nearest = key;
@@ -6829,7 +6853,7 @@ export class LevelToyStory {
 
     // Key milestones (apart from Gekko's 50-coin reward) also feed the staff
     // progression, making all five upgrades reachable through full exploration.
-    if (keyId !== 'key1_gekko' && keyId !== 'key3_platform' && keyId !== 'key6_qi_celestial') {
+    if (keyId !== 'key1_gekko' && keyId !== 'key2_boss' && keyId !== 'key3_platform' && keyId !== 'key6_qi_celestial') {
       this.powerOrbSystem?.spawn(this.player.mesh.position.clone(), 250);
     }
 

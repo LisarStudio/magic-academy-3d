@@ -14,8 +14,11 @@ export const PLAYER_NAME = 'LISAR';
 const BASE_WALK_SPEED = 9.5;
 const BASE_SPRINT_SPEED = BASE_WALK_SPEED * 2;
 const LOCOMOTION_SPEED_SCALE = 1.25;
+// Preserve the brisk walk while reducing the former sprint top speed by 25%.
+const SPRINT_SPEED_SCALE = LOCOMOTION_SPEED_SCALE * 0.75;
 const HORIZONTAL_ACCELERATION = 64;
 const HORIZONTAL_BRAKING = 86;
+const DOUBLE_JUMP_DESCENT_GRAVITY = -30;
 
 export class PlayerController {
   /** Pickups may extend the current stock; keep the cap centralized for balance tuning. */
@@ -28,7 +31,7 @@ export class PlayerController {
   public velocity = new THREE.Vector3();
   public isGrounded = true;
   public moveSpeed = BASE_WALK_SPEED * LOCOMOTION_SPEED_SCALE;
-  public runSpeed = BASE_SPRINT_SPEED * LOCOMOTION_SPEED_SCALE;
+  public runSpeed = BASE_SPRINT_SPEED * SPRINT_SPEED_SCALE;
   public jumpForce = 8.0;
   public gravity = -20.0;
   /** Tracks the top of the current airborne arc so short jumps don't use the
@@ -802,6 +805,14 @@ export class PlayerController {
       }
       return false;
     };
+    const isCollisionDisabled = (obj: THREE.Object3D): boolean => {
+      let current: THREE.Object3D | null = obj;
+      while (current) {
+        if (current.userData.collisionDisabled === true) return true;
+        current = current.parent;
+      }
+      return false;
+    };
 
     // 1. Ground Check (Surface normal validation + Self-mesh exclusion)
     PlayerController.TEMP_GROUND_ORIGIN.copy(this.mesh.position).add(PlayerController.RAY_OFFSET);
@@ -812,7 +823,7 @@ export class PlayerController {
 
     let validGroundHit: THREE.Intersection | null = null;
     for (const hit of rawGroundHits) {
-      if (isPlayerChild(hit.object)) continue;
+      if (isPlayerChild(hit.object) || isCollisionDisabled(hit.object)) continue;
       if (!hit.face) continue;
       PlayerController.TEMP_NORM.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
       const isAuthoredRecoverySurface = hit.object.userData.walkableSupport === true;
@@ -891,7 +902,8 @@ export class PlayerController {
       else this.airApexY = Math.max(this.airApexY, this.mesh.position.y);
       // Gravity continues while gameplay input is locked. Scripted sequences
       // can freeze horizontal control, but must not suspend a jump or fall.
-      this.velocity.y += this.gravity * delta;
+      const descendingAfterDoubleJump = this.jumpCount >= 2 && this.velocity.y < 0;
+      this.velocity.y += (descendingAfterDoubleJump ? DOUBLE_JUMP_DESCENT_GRAVITY : this.gravity) * delta;
     }
 
     // Bind dynamic onJumpPress
@@ -974,10 +986,6 @@ export class PlayerController {
     const isSprinting = this.sprintingThisFrame;
     const currentSpeed = isSprinting ? this.runSpeed : this.moveSpeed;
 
-    // A hit flinch is interruptible: movement should switch the pose on this
-    // same simulation tick instead of sliding with Reaction still clamped.
-    if (isMoving) this.interruptHitReactionForCommand(input);
-
     if (isMoving) {
       const accel = HORIZONTAL_ACCELERATION * delta;
       this.approachHorizontalVelocity(moveDir.x * currentSpeed, moveDir.z * currentSpeed, accel);
@@ -1034,7 +1042,7 @@ export class PlayerController {
       }
 
       const rawWallHits = this.colliders.length > 0 ? this.wallRaycaster.intersectObjects(this.colliders, true) : [];
-      let wallHit = rawWallHits.find((hit) => !isPlayerChild(hit.object));
+      let wallHit = rawWallHits.find((hit) => !isPlayerChild(hit.object) && !isCollisionDisabled(hit.object));
       if (mountainCandidates.length > 0) {
         // Sweep the character's occupied width and height against the real
         // rock triangles. A single chest-height center ray can miss sloped
@@ -1090,7 +1098,7 @@ export class PlayerController {
           this.groundRaycaster.far = 1.12;
           const support = this.groundRaycaster.intersectObjects(this.colliders, true)
             .find((hit) => {
-              if (isPlayerChild(hit.object) || !hit.face) return false;
+              if (isPlayerChild(hit.object) || isCollisionDisabled(hit.object) || !hit.face) return false;
               const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
               return normal.y >= 0.4 && hit.point.y > this.mesh.position.y + 0.025 && hit.point.y <= this.mesh.position.y + 0.45;
             });
@@ -1258,7 +1266,7 @@ export class PlayerController {
         this.groundRaycaster.far = 4.8;
         const rawSnapHits = this.groundRaycaster.intersectObjects(this.colliders, true);
         for (const hit of rawSnapHits) {
-          if (isPlayerChild(hit.object) || !hit.face) continue;
+          if (isPlayerChild(hit.object) || isCollisionDisabled(hit.object) || !hit.face) continue;
           const norm = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
           const isWalkableSupport = hit.object.userData.walkableSupport === true;
           const maxSupportAboveRoot = isWalkableSupport ? 2.25 : 0.55;
@@ -1330,14 +1338,15 @@ export class PlayerController {
           this.wallRaycaster.far = this.PLAYER_RADIUS;
           const hits = this.wallRaycaster.intersectObjects(this.colliders, true);
 
-          if (hits.length > 0 && hits[0].distance < this.PLAYER_RADIUS) {
-            const normal = hits[0].face?.normal?.clone() || dir.clone().negate();
-            normal.transformDirection(hits[0].object.matrixWorld);
+          const hit = hits.find((candidate) => !isCollisionDisabled(candidate.object));
+          if (hit && hit.distance < this.PLAYER_RADIUS) {
+            const normal = hit.face?.normal?.clone() || dir.clone().negate();
+            normal.transformDirection(hit.object.matrixWorld);
 
             // Only push away from steep vertical surfaces (abs(normal.y) < 0.35)
             if (Math.abs(normal.y) < 0.35) {
               if (normal.dot(dir) > 0) normal.negate();
-              const overlap = this.PLAYER_RADIUS - hits[0].distance;
+              const overlap = this.PLAYER_RADIUS - hit.distance;
               normal.y = 0;
               const nLen = normal.length();
               if (nLen > 0.0001) {

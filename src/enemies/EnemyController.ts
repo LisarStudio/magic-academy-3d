@@ -885,7 +885,7 @@ export class EnemyController {
       this.bossVolleyShotTimer = 0;
       this.bossVolleyFinishTimer = 0;
       this.clearBossProjectiles();
-      this.restoreBossRock();
+      this.consumeBossRock();
       this.bossEyeWindup = 0;
       if (this.bossEyeGlow) (this.bossEyeGlow.material as THREE.MeshBasicMaterial).opacity = 0;
       if (this.bossEyeLight) this.bossEyeLight.intensity = 0;
@@ -1491,7 +1491,10 @@ export class EnemyController {
       this.mesh.position.z = THREE.MathUtils.clamp(this.mesh.position.z, this.movementBounds.min.y, this.movementBounds.max.y);
     }
 
-    if (this.id === 'crab_boss') this.animateBossTell(delta);
+    if (this.id === 'crab_boss') {
+      this.resolveBossArenaRockCollision();
+      this.animateBossTell(delta);
+    }
     this.animateLegs(delta);
   }
 
@@ -1531,6 +1534,15 @@ export class EnemyController {
     this.bossAttackHitApplied = false;
     this.clearBossProjectiles();
     this.restoreBossRock();
+    for (const rock of this.bossArenaRocks) {
+      if (rock.userData.ownerId !== this.id) continue;
+      const home = rock.userData.homePosition;
+      const homeRotation = rock.userData.homeRotation;
+      if (home instanceof THREE.Vector3) rock.position.copy(home);
+      if (homeRotation instanceof THREE.Euler) rock.rotation.copy(homeRotation);
+      rock.userData.collisionDisabled = false;
+      rock.visible = true;
+    }
     this.bossVolleyShotsRemaining = 0;
     this.bossVolleyShotTimer = 0;
     this.bossVolleyFinishTimer = 0;
@@ -1802,7 +1814,7 @@ export class EnemyController {
       this.debugBossEvent('ARENA_ROCK_HIT', { damage: 10 });
     }
     if (hit || this.bossRockFlightLife <= 0 || rock.position.y <= this.bossRockHome.y) {
-      this.restoreBossRock();
+      this.consumeBossRock();
     }
   }
 
@@ -1818,6 +1830,37 @@ export class EnemyController {
     this.bossRockInFlight = false;
     this.bossRockFlightLife = 0;
     this.bossRockVelocity.set(0, 0, 0);
+  }
+
+  /** A used projectile vanishes and ceases colliding; it is never left hovering. */
+  private consumeBossRock(): void {
+    if (this.bossRockTarget) {
+      this.bossRockTarget.visible = false;
+      this.bossRockTarget.userData.collisionDisabled = true;
+    }
+    this.bossRockTarget = null;
+    this.bossRockInFlight = false;
+    this.bossRockFlightLife = 0;
+    this.bossRockVelocity.set(0, 0, 0);
+  }
+
+  /** Keep the boss body outside static arena boulders; they are never walkable. */
+  private resolveBossArenaRockCollision(): void {
+    if (this.id !== 'crab_boss') return;
+    for (const rock of this.bossArenaRocks) {
+      if (!rock.visible || rock.userData.ownerId !== this.id || rock === this.bossRockTarget) continue;
+      const dx = this.mesh.position.x - rock.position.x;
+      const dz = this.mesh.position.z - rock.position.z;
+      const distance = Math.hypot(dx, dz);
+      const required = 1.15 + Math.max(rock.scale.x, rock.scale.z) * 0.95;
+      if (distance >= required) continue;
+      const nx = distance > 1e-4 ? dx / distance : 1;
+      const nz = distance > 1e-4 ? dz / distance : 0;
+      this.mesh.position.x = rock.position.x + nx * required;
+      this.mesh.position.z = rock.position.z + nz * required;
+    }
+    const level = (window as any).gameInstance?.level01;
+    if (level?.getTerrainHeight) this.mesh.position.y = level.getTerrainHeight(this.mesh.position.x, this.mesh.position.z) + 0.1;
   }
 
   private clearBossProjectiles(): void {

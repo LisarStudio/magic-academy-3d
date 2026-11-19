@@ -513,11 +513,11 @@ export class AssetManager {
     }
   }
 
-  /** Load cosmetic/reaction clips after the first playable scene is on screen. */
+  /** Load the damage reaction first so combat does not start without hit feedback. */
   public async loadDeferredStartupClips(targetRoot: THREE.Object3D): Promise<THREE.AnimationClip[]> {
     const specs: Array<[string, string, string]> = [
-      ['assets/characters/wukong/wukong_kick.fbx', 'Wukong_NoWood_Kick', '20261026-supplemental'],
       ['assets/characters/wukong/Reaction.fbx', 'Reaction', '20261029-reaction'],
+      ['assets/characters/wukong/wukong_kick.fbx', 'Wukong_NoWood_Kick', '20261026-supplemental'],
     ];
     const clips: THREE.AnimationClip[] = [];
     for (const [path, name, version] of specs) {
@@ -525,8 +525,8 @@ export class AssetManager {
         const idleWindow = window as Window & {
           requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
         };
-        if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(() => resolve(), { timeout: 30000 });
-        else window.setTimeout(resolve, 12000);
+        if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(() => resolve(), { timeout: 1400 });
+        else window.setTimeout(resolve, 450);
       });
       try {
         const clip = await this.loadAndRetargetClip(
