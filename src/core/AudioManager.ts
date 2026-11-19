@@ -1,8 +1,5 @@
 export class AudioManager {
   private ctx: AudioContext | null = null;
-  private musicSource: MediaElementAudioSourceNode | null = null;
-  private musicBassFilter: BiquadFilterNode | null = null;
-  private musicCompressor: DynamicsCompressorNode | null = null;
   private readonly bgmAudio = new Audio();
   private readonly musicPaths = {
     intro: 'assets/music/optimized/wukong-intro-theme-128.mp3',
@@ -98,38 +95,7 @@ export class AudioManager {
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
-    this.connectMusicToBalancedOutput(this.ctx);
     return this.ctx;
-  }
-
-  /** Tame excessive sub-bass/peaks without changing the music assets or UI gain. */
-  private connectMusicToBalancedOutput(ctx: AudioContext): void {
-    if (this.musicSource) return;
-    let source: MediaElementAudioSourceNode | null = null;
-    try {
-      source = ctx.createMediaElementSource(this.bgmAudio);
-      this.musicBassFilter = ctx.createBiquadFilter();
-      this.musicBassFilter.type = 'lowshelf';
-      this.musicBassFilter.frequency.value = 150;
-      this.musicBassFilter.gain.value = -5;
-      this.musicCompressor = ctx.createDynamicsCompressor();
-      this.musicCompressor.threshold.value = -12;
-      this.musicCompressor.knee.value = 8;
-      this.musicCompressor.ratio.value = 3;
-      this.musicCompressor.attack.value = 0.012;
-      this.musicCompressor.release.value = 0.22;
-      source.connect(this.musicBassFilter);
-      this.musicBassFilter.connect(this.musicCompressor);
-      this.musicCompressor.connect(ctx.destination);
-      this.musicSource = source;
-    } catch (error) {
-      // Keep HTMLAudioElement playback usable if a browser disallows routing.
-      if (source) {
-        try { source.connect(ctx.destination); } catch { /* browser already connected the source */ }
-        this.musicSource = source;
-      }
-      console.warn('[AudioManager] Balanced music output unavailable; using direct playback.', error);
-    }
   }
 
   public prepareMusic(): Promise<void> {
