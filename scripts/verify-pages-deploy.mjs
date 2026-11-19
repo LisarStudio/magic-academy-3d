@@ -21,6 +21,7 @@ const criticalAssets = [
   'assets/collectibles/teara-wukong-vida.glb',
   'assets/enemies/boss-crab.glb',
   'assets/ui/hud-boss-imperial.png',
+  'assets/ui/boss_nezha-x_hud.png',
   'assets/music/Silvio_OST.mp3',
   ...missionAssets,
 ];

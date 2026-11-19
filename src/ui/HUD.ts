@@ -538,15 +538,15 @@ export class HUD {
 
     const targetWidth = this.bossHealthFillEl.style.width;
     const mask = this.bossHealthPanelEl.querySelector<HTMLElement>('.boss-health-mask');
-    const targetMaskLeft = mask?.style.left ?? '88.25%';
-    const targetMaskWidth = mask?.style.width ?? '0%';
+    const targetMaskLeft = mask?.style.left ?? '0%';
+    const targetMaskWidth = mask?.style.width ?? '100%';
     this.bossHealthPanelEl.classList.remove('boss-health-reveal');
     this.bossHealthFillEl.style.transition = 'none';
     this.bossHealthFillEl.style.width = '0%';
     if (mask) {
       mask.style.transition = 'none';
-      mask.style.left = '32.15%';
-      mask.style.width = '56.1%';
+      mask.style.left = '0%';
+      mask.style.width = '100%';
     }
     void this.bossHealthFillEl.offsetWidth;
     this.bossHealthPanelEl.classList.add('boss-health-reveal');
@@ -582,8 +582,8 @@ export class HUD {
     this.bossHealthFillEl.style.setProperty('--boss-health-color', healthFillColor(ratio));
     const mask = this.bossHealthPanelEl.querySelector<HTMLElement>('.boss-health-mask');
     if (mask) {
-      const barLeft = 32.15;
-      const barWidth = 56.1;
+      const barLeft = 0;
+      const barWidth = 100;
       mask.style.left = `${barLeft + barWidth * ratio}%`;
       mask.style.width = `${barWidth * (1 - ratio)}%`;
     }
@@ -602,8 +602,8 @@ export class HUD {
     this.bossHealthFillEl.style.width = '0%';
     const mask = this.bossHealthPanelEl.querySelector<HTMLElement>('.boss-health-mask');
     if (mask) {
-      mask.style.left = '32.15%';
-      mask.style.width = '56.1%';
+      mask.style.left = '0%';
+      mask.style.width = '100%';
     }
     this.bossHealthFillEl.style.removeProperty('--boss-health-color');
     const progress = this.bossHealthFillEl.parentElement;
@@ -622,6 +622,11 @@ export class HUD {
   }
 
   private openBossHealthPanel(): void {
+    const frame = this.bossHealthPanelEl.querySelector<HTMLImageElement>('.boss-hud-frame');
+    if (frame && !frame.getAttribute('src')) {
+      const source = frame.dataset.src;
+      if (source) frame.src = source;
+    }
     this.bossHealthPanelEl.hidden = false;
     this.bossHealthPanelEl.classList.remove('hidden');
   }

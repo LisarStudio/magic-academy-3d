@@ -3215,41 +3215,40 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 /* 0.0.37 visual repair: replace the baked, oversized boss image with live UI. */
 .boss-health-panel {
   position: fixed;
-  top: max(14px, env(safe-area-inset-top));
+  top: max(12px, env(safe-area-inset-top));
   right: auto;
   bottom: auto;
   left: 50%;
-  width: min(820px, calc(74vw - 24px));
-  aspect-ratio: 2048 / 576;
+  width: min(820px, calc(78vw - 24px));
+  aspect-ratio: 1916 / 540;
   padding: 0;
   box-sizing: border-box;
   transform: translateX(-50%);
   pointer-events: none;
-  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .55));
+  filter: drop-shadow(0 5px 12px rgba(0, 0, 0, .52));
 }
 .boss-hud-artwork { position: absolute; inset: 0; width: 100%; height: 100%; }
-.boss-hud-frame { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: fill; z-index: 1; }
+.boss-hud-frame { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 44%; mix-blend-mode: screen; z-index: 2; }
 .boss-health-track {
   position: absolute;
-  z-index: 2;
-  left: 25.4%;
-  top: 78.8%;
-  width: 69.8%;
-  height: 7.2%;
+  z-index: 3;
+  left: 31.1%;
+  top: 47.8%;
+  width: 59.1%;
+  height: 9.8%;
   overflow: hidden;
-  border: 1px solid rgba(255, 190, 87, .86);
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgba(30, 4, 13, .94), rgba(66, 8, 17, .92));
-  box-shadow: inset 0 1px 3px #000, 0 0 8px rgba(255, 62, 35, .5);
+  opacity: 1;
+  pointer-events: none;
 }
 .boss-health-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
   height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #ffab32 0%, #ff5a1f 46%, #ef172b 100%);
-  box-shadow: 0 0 8px rgba(255, 67, 35, .78), inset 0 1px 2px #fff9;
-  transition: width 260ms ease, background-color 260ms ease;
+  background: transparent;
+  transition: width 260ms ease;
 }
-.boss-health-mask { display: none !important; }
+.boss-health-mask { position: absolute; inset: 0 auto 0 0; z-index: 1; width: 100%; height: 100%; background: rgba(5, 2, 8, .84); transition: left 280ms ease, width 280ms ease; }
+.boss-health-panel.boss-health-reveal .boss-health-mask { transition-duration: 1250ms; transition-timing-function: cubic-bezier(.16,.78,.2,1); }
 
 /* A responsive cloud-shaped frame uses the shared NPC portrait and dialogue. */
 .dialogue-bubble-container {
@@ -3295,7 +3294,7 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
   .boss-health-panel {
     top: max(148px, calc(env(safe-area-inset-top, 0px) + 138px));
     right: auto; bottom: auto; left: 50%;
-    width: min(94vw, 650px); min-width: 0; min-height: 0;
+    width: min(94vw, 760px); min-width: 0; min-height: 0;
     transform: translateX(-50%);
   }
   .dialogue-bubble-container {
