@@ -662,7 +662,7 @@ export class AnimationController {
   /**
    * Transition to a new animation state with crossfade blending.
    */
-  public playState(newState: AnimationState, duration: number = 0.2): void {
+  public playState(newState: AnimationState, duration: number = 0.2, movementSpeedRatio = 1): void {
     // Don't interrupt one-shot animations
     if (this.isPlayingOneShot) return;
 
@@ -675,9 +675,10 @@ export class AnimationController {
     }
     this.idleCyclePhase = null;
 
-    // The same authored stride now matches the proportional +25% locomotion
-    // tuning. Sprint keeps its original cadence advantage over normal travel.
-    const movementTimeScale = newState === 'Sprint' ? 1.525 : (newState === 'Run' || newState === 'Walk') ? 1.25 : 1;
+    // Keep the standard run cycle at its brisk travel cadence; sprint doubles
+    // that cadence in step with the Shift speed so feet do not visibly skate.
+    const cadence = THREE.MathUtils.clamp(movementSpeedRatio, 0.42, 1);
+    const movementTimeScale = newState === 'Sprint' ? 2.5 * cadence : (newState === 'Run' || newState === 'Walk') ? 1.25 * cadence : 1;
 
     // Keep sprint cadence responsive even when movement state stays the same.
     if (this.currentState === newState && this.currentAction && this.currentAction.isRunning()) {

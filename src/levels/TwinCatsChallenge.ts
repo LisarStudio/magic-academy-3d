@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { AudioManager } from '../core/AudioManager';
 import type { InputManager } from '../core/InputManager';
 import type { PlayerController } from '../player/PlayerController';
+import type { CameraController } from '../camera/CameraController';
 import type { HUD } from '../ui/HUD';
 import { projectDialogueFocus } from '../ui/CinematicDialogueUI';
 
@@ -59,6 +60,7 @@ export class TwinCatsChallenge {
   private readonly input: InputManager;
   private readonly hud: HUD;
   private readonly audio: AudioManager;
+  private readonly cameraController: CameraController;
   public readonly position: THREE.Vector3;
   public readonly root = new THREE.Group();
   public readonly colliders: THREE.Mesh[] = [];
@@ -106,6 +108,7 @@ export class TwinCatsChallenge {
     input: InputManager,
     hud: HUD,
     audio: AudioManager,
+    cameraController: CameraController,
     onStateChange: (completed: boolean) => void,
     onRewardCollected: (collected: boolean) => void,
     rewardCollected = false
@@ -116,6 +119,7 @@ export class TwinCatsChallenge {
     this.input = input;
     this.hud = hud;
     this.audio = audio;
+    this.cameraController = cameraController;
     this.position = spawn.clone();
     this.onStateChange = onStateChange;
     this.onRewardCollected = onRewardCollected;
@@ -145,6 +149,9 @@ export class TwinCatsChallenge {
       this.scene.add(blocker);
     });
     this.loadCats();
+    // Start preparing the letter models before Wukong reaches the quest giver.
+    // The previous proximity-triggered Promise.all parsed all six assets at once.
+    void this.preloadLetters().catch(() => {});
   }
 
   /** Dims the existing roof-height cat fill with the shared day/night cycle. */
@@ -204,8 +211,18 @@ export class TwinCatsChallenge {
     if (this.letterAssetsReady) return Promise.resolve();
     if (this.preloading) return this.preloading;
     getLetterGlowTexture();
-    this.preloading = Promise.all(LETTERS.map(async (letter, index) => {
+    const yieldToIdle = (): Promise<void> => new Promise((resolve) => {
+      const idleWindow = window as Window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number };
+      if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(() => resolve(), { timeout: 4000 });
+      else window.setTimeout(resolve, 120);
+    });
+    this.preloading = (async () => {
+      for (let index = 0; index < LETTERS.length; index++) {
+      await yieldToIdle();
+      const letter = LETTERS[index];
+      const loadStarted = performance.now();
       const gltf = await this.loader.loadAsync(`${import.meta.env.BASE_URL}assets/letter-challenge/letter-${letter.toLowerCase()}.glb`);
+      const loadedAt = performance.now();
       const item = new THREE.Group();
       item.name = `Letra_Magica_${letter}`;
       item.add(gltf.scene);
@@ -287,7 +304,13 @@ export class TwinCatsChallenge {
       item.userData.magicHalo = halo;
       item.userData.magicGlow = glow;
       this.letterRoots[index] = item;
-    })).then(() => { this.letterAssetsReady = true; }).catch((error) => {
+      console.debug(`[TwinCats] Letter ${letter} prepared`, {
+        loadMs: Math.round(loadedAt - loadStarted),
+        setupMs: Math.round(performance.now() - loadedAt),
+      });
+      }
+      this.letterAssetsReady = true;
+    })().catch((error) => {
       this.preloading = null;
       console.error('[TwinCats] Letter challenge assets failed to preload.', error);
       throw error;
@@ -581,6 +604,8 @@ export class TwinCatsChallenge {
     this.activeLetterAge = 0;
     this.hudEntryElapsed = 0;
     this.state = 'STARTING';
+    this.cameraController.setTarget(this.player.mesh);
+    this.cameraController.snapBehindTarget();
     void this.audio.startSilvioMissionMusic();
     this.hud.showLetterChallenge();
     this.hud.updateLetterChallenge(60, this.collectedCount);
@@ -606,9 +631,6 @@ export class TwinCatsChallenge {
     this.updateBursts(safeDelta);
 
     const playerDistance = Math.hypot(playerPos.x - this.position.x, playerPos.z - this.position.z);
-    if (playerDistance < 24 && !this.letterAssetsReady && !this.preloading) {
-      void this.preloadLetters().catch(() => {});
-    }
 
     if (!gameplayActive || this.state === 'ACTIVE' && playerPos.y < -4) {
       this.cancel();
@@ -690,10 +712,7 @@ export class TwinCatsChallenge {
     const label = this.letterAssetsReady ? 'Hablar con Silvio' : 'Preparando el desafío de los gemelos…';
     this.hud.showInteractionPrompt(label);
     if (this.input.consumeInteractPress()) {
-      if (!this.letterAssetsReady) {
-        void this.preloadLetters().then(() => { if (this.state !== 'ACTIVE') this.showDialogue(); }).catch(() => {});
-        return;
-      }
+      if (!this.letterAssetsReady) return;
       this.showDialogue();
     }
   }

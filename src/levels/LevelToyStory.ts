@@ -150,7 +150,6 @@ export class LevelToyStory {
   private optionalArchitectureStarted = false;
   private optionalArchitectureLoading = false;
   private optionalHouseFloorCollider: THREE.Mesh | null = null;
-  private optionalHouseLightingGroup: THREE.Group | null = null;
   private readonly highHouseCenter = new THREE.Vector3(38, 0, -92);
   // The GLB has a walkable ground-floor plane at local Y=0.10 and an upper
   // deck at local Y=6.10. Its lowest vertex is Y=-0.0364, so these offsets
@@ -347,6 +346,7 @@ export class LevelToyStory {
   private bossEnemy!: EnemyController;
   private bossArenaRocks: THREE.Mesh[] = [];
   private bossEncounterActive = false;
+  private bossLastPlayerHitAt = Number.NEGATIVE_INFINITY;
 
   public stateFlags = {
     introCompleted: false,
@@ -782,6 +782,7 @@ export class LevelToyStory {
 
   /** Adds the pavilion and a subtle green ground texture as scenery only. */
   private async loadIntroEnvironmentAssets(): Promise<void> {
+    const environmentStartedAt = performance.now();
     const base = import.meta.env.BASE_URL + 'assets/environment/';
     const version = `?v=${__APP_VERSION__}`;
     // Phones and tablets need the mobile-authored scene assets even when the
@@ -800,6 +801,11 @@ export class LevelToyStory {
       loader.loadAsync(`${base}wukong-porcelain-lion.glb${version}`),
       loader.loadAsync(`${base}wukong-red-lamp.glb${version}`),
     ]);
+    console.info('[StartupPerf] Landmark GLBs ready', {
+      durationMs: +(performance.now() - environmentStartedAt).toFixed(1),
+      device: mobileTextures ? 'mobile' : 'desktop',
+      loaded: [pavilionResult, templeResult, lionResult, lampResult].filter((result) => result.status === 'fulfilled').length,
+    });
 
     // Life rewards do not participate in the first playable route. Keep their
     // model download and parse out of the critical path while preserving the
@@ -1012,6 +1018,7 @@ export class LevelToyStory {
     }
 
     if (lampResult.status === 'fulfilled') {
+      const lampPlacementStartedAt = performance.now();
       // Reuse the original lantern GLB. Determine the two eave footprints from
       // upward-facing triangles in the loaded temple mesh (rather than the
       // smaller collision footprint), then ray-check all eight corner anchors.
@@ -1042,7 +1049,9 @@ export class LevelToyStory {
       if (temple && templeBounds && templeHeight > 1) {
         const worldToTemple = temple.matrixWorld.clone().invert();
         const raycaster = new THREE.Raycaster();
-        const cornerInsetFractions = [0.92, 0.88, 0.84, 0.80, 0.76];
+      // Two geometry-derived probes keep a fallback for curved eaves while
+      // limiting raycasts over the high-poly temple mesh on phones.
+      const cornerInsetFractions = [0.84, 0.76];
         // Walk the original static mesh once and collect the two roof tiers.
         // Keeping this one-time audit to a single pass avoids a load-time hitch.
         temple.traverse((object) => {
@@ -1263,6 +1272,10 @@ export class LevelToyStory {
         this.dayNightCycle?.registerNightLight(light);
       });
       console.info(`[LevelToyStory] Placed ${placedLanterns} original red lanterns from measured roof geometry; ${roofCornerAnchors.size} corner anchors verified across both eaves.`);
+      console.info('[StartupPerf] Roof lantern placement complete', {
+        durationMs: +(performance.now() - lampPlacementStartedAt).toFixed(1),
+        lamps: placedLanterns,
+      });
     } else {
       console.warn('[LevelToyStory] Could not load the Chinese red lamp asset.', lampResult.reason);
     }
@@ -3123,7 +3136,17 @@ export class LevelToyStory {
         ];
         for (const mesh of meshes) {
           const relative = rootInverse.clone().multiply(mesh.matrixWorld);
-          const treeMaterials = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).map((sourceMaterial) => {
+          const sourceTreeMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          const foliageMaterialIndices = new Set<number>();
+          sourceTreeMaterials.forEach((sourceMaterial, index) => {
+            const standardMaterial = sourceMaterial as THREE.MeshStandardMaterial;
+            const color = standardMaterial.color;
+            if (/leaf|leaves|foliage|needle|hoja/i.test(sourceMaterial.name)
+              || (!!color && color.r > 0.68 && color.g > 0.68 && color.b > 0.68)) {
+              foliageMaterialIndices.add(index);
+            }
+          });
+          const treeMaterials = sourceTreeMaterials.map((sourceMaterial) => {
             const material = sourceMaterial.clone() as THREE.MeshStandardMaterial;
             const looksLikeFoliage = /leaf|leaves|foliage|needle|hoja|foliage/i.test(material.name)
               || (material.color.r > 0.68 && material.color.g > 0.68 && material.color.b > 0.68);
@@ -3166,6 +3189,36 @@ export class LevelToyStory {
           });
           qiCanopyTreePositions.forEach(([x, , z], routeIndex) => {
             const i = safePositions.length + routeIndex;
+            // The first tree is the tutorial landmark: keep its authored trunk
+            // visible but omit its blossom crown so the treehouse remains clear.
+            if (routeIndex === 0 && foliageMaterialIndices.size > 0) {
+              const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+              baseMatrices.push(hidden.clone());
+              instances.setMatrixAt(i, hidden);
+              if (instances.instanceColor) instances.setColorAt(i, new THREE.Color(0xffffff));
+
+              const trunkGroups = mesh.geometry.groups.filter((group) => !foliageMaterialIndices.has(group.materialIndex ?? 0));
+              if (Array.isArray(mesh.material) && trunkGroups.length > 0) {
+                const trunkGeometry = mesh.geometry.clone();
+                trunkGeometry.clearGroups();
+                trunkGroups.forEach((group) => trunkGeometry.addGroup(group.start, group.count, 0));
+                const trunkMaterialIndex = trunkGroups[0]!.materialIndex ?? 0;
+                const trunkMaterial = treeMaterials[trunkMaterialIndex]!;
+                const firstTreeTrunk = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, 1);
+                firstTreeTrunk.name = 'qi_canopy_tutorial_tree_trunk_only';
+                firstTreeTrunk.castShadow = false;
+                firstTreeTrunk.receiveShadow = false;
+                dummy.position.set(x, this.getTerrainHeight(x, z), z);
+                dummy.rotation.set(0, -0.35, 0);
+                dummy.scale.setScalar(0.64);
+                dummy.updateMatrix();
+                firstTreeTrunk.setMatrixAt(0, dummy.matrix.clone().multiply(relative));
+                firstTreeTrunk.instanceMatrix.needsUpdate = true;
+                firstTreeTrunk.computeBoundingSphere();
+                scene.add(firstTreeTrunk);
+              }
+              return;
+            }
             const ground = this.getTerrainHeight(x, z);
             // Slightly lighter/smaller crowns frame each landing rather than
             // engulfing the walkable boards, chest or key pickup.
@@ -4027,6 +4080,11 @@ export class LevelToyStory {
     const pivot = new THREE.Matrix4().makeTranslation(
       -sourceCenter.x, -sourceBounds.min.y, -sourceCenter.z,
     );
+    // The rendered boulders keep their authored 26k-triangle mesh and texture.
+    // Movement collision uses a compact ellipsoid instead: raycasting every
+    // triangle of the entire mountain ring on each sprint frame was a major CPU
+    // spike on phones and at the playable boundary.
+    const mountainCollisionProxyGeometry = new THREE.IcosahedronGeometry(1, 1);
     const mountainSurfaceColliders: THREE.InstancedMesh[] = [];
     const collisionChunkSize = 8;
     for (let meshIndex = 0; meshIndex < meshes.length; meshIndex++) {
@@ -4061,12 +4119,29 @@ export class LevelToyStory {
       // near Wukong instead of testing the entire mountain ring every frame.
       for (let start = 0; start < placements.length; start += collisionChunkSize) {
         const count = Math.min(collisionChunkSize, placements.length - start);
-        const collisionChunk = new THREE.InstancedMesh(sourceMesh.geometry, this.horizonRockCollisionMaterial, count);
+        const collisionChunk = new THREE.InstancedMesh(mountainCollisionProxyGeometry, this.horizonRockCollisionMaterial, count);
         collisionChunk.name = `horizon_mountain_surface_collision_${meshIndex + 1}_${Math.floor(start / collisionChunkSize) + 1}`;
         collisionChunk.userData.horizonMountainSurface = true;
         collisionChunk.frustumCulled = false;
+        const proxyPosition = new THREE.Vector3();
+        const proxyRotation = new THREE.Quaternion();
+        const proxyScale = new THREE.Vector3();
+        const proxyTransform = new THREE.Matrix4();
         for (let localIndex = 0; localIndex < count; localIndex++) {
-          collisionChunk.setMatrixAt(localIndex, placementMatrices[start + localIndex]!);
+          const placement = placements[start + localIndex]!;
+          proxyPosition.set(
+            placement.x,
+            placement.y + sourceSize.y * placement.scale * 0.5,
+            placement.z,
+          );
+          proxyRotation.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, placement.yaw);
+          proxyScale.set(
+            sourceSize.x * placement.scale * 0.46,
+            sourceSize.y * placement.scale * 0.49,
+            sourceSize.z * placement.scale * 0.46,
+          );
+          proxyTransform.compose(proxyPosition, proxyRotation, proxyScale);
+          collisionChunk.setMatrixAt(localIndex, proxyTransform);
         }
         collisionChunk.instanceMatrix.needsUpdate = true;
         collisionChunk.updateMatrixWorld(true);
@@ -5196,7 +5271,6 @@ export class LevelToyStory {
     const distBase = horizontal(route.base);
     if (!this.canopyTrialActivated && distBase < 18) {
       this.setCanopyRouteActive(true);
-      this.subtitleSystem.show('Desafío de las lianas', 'Sube a la primera casa del árbol y cruza las cuatro lianas para alcanzar el cofre final.');
     }
     if (this.canopyPlatformsMaterial && this.canopyTrialActivated && this.canopyActivationProgress < 1) {
       this.canopyActivationProgress = Math.min(1, this.canopyActivationProgress + delta * 2.8);
@@ -5214,8 +5288,7 @@ export class LevelToyStory {
     const hud = (window as any).gameInstance?.hud;
     if (!this.canopyTutorialShown && distBase < 20) {
       this.canopyTutorialShown = true;
-      this.cameraController.panToward(route.top.clone().add(new THREE.Vector3(0, 2.2, 0)), 1.3);
-      this.subtitleSystem.show('Ruta de las lianas', 'Sube las escaleras de madera. En cada plataforma, usa Acción para agarrar la liana y balancearte hasta el siguiente árbol.');
+      hud?.showInfoToast('Nueva habilidad', 'Sube por las escaleras para descubrir una nueva habilidad.', 4200, 2);
     }
     if (this.player.isControlsLocked || this.player.isMovementLocked || this.isCinematicPlaying) return;
 
@@ -6397,6 +6470,7 @@ export class LevelToyStory {
       this.inputManager,
       (window as any).gameInstance?.hud,
       this.audioManager,
+      this.cameraController,
       (completed) => {
         this.letterChallengeCompleted = completed;
         if (completed) (window as any).gameInstance?.saveGame(false);
@@ -6520,6 +6594,8 @@ export class LevelToyStory {
       }
 
       e.onAttackPlayer = (dmg) => {
+        const now = performance.now();
+        if (e.id === 'crab_boss' && now - this.bossLastPlayerHitAt < 350) return;
         if (!this.combatTutorialShown) {
           this.combatTutorialShown = true;
           this.showCombatControlsHint();
@@ -6533,7 +6609,16 @@ export class LevelToyStory {
           ? new THREE.Vector3(this.curiosityCryptSurface.x, this.curiosityCryptSurface.y + 0.2, this.curiosityCryptSurface.z + 3.0)
           : this.checkpointManager.getActiveCheckpointPosition();
         if (wasInsideCrypt && lethalHit) this.respawnFromCuriosityCrypt = true;
-        this.player.takeDamage(dmg, cp);
+        const damageApplied = this.player.takeDamage(dmg, cp);
+        if (e.id === 'crab_boss' && damageApplied) this.bossLastPlayerHitAt = now;
+        if (e.id === 'crab_boss' && !damageApplied && this.bossEncounterActive && !this.isCinematicPlaying) {
+          console.debug('[Nezha-X] Hit ignored by player protection state', {
+            invulnerable: this.player.isInvulnerable,
+            controlsLocked: this.player.isControlsLocked,
+            movementLocked: this.player.isMovementLocked,
+            dying: this.player.health <= 0,
+          });
+        }
         this.audioManager.playPlayerHurt();
         const hud = (window as any).gameInstance?.hud;
         if (hud) hud.triggerDamageFlash();
@@ -7424,9 +7509,6 @@ export class LevelToyStory {
     this.updateLifePickups(delta, playerPos);
     this.syncStructureColliders(playerPos);
     this.loadOptionalArchitectureNearPlayer(playerPos);
-    if (this.optionalHouseLightingGroup) {
-      this.optionalHouseLightingGroup.visible = playerPos.distanceToSquared(this.highHouseCenter) < 30 * 30;
-    }
     if (this.skyAnchor) this.skyAnchor.position.copy(playerPos);
     const interactionHud = (window as any).gameInstance?.hud;
     interactionHud?.beginInteractionFrame();
@@ -7934,12 +8016,20 @@ export class LevelToyStory {
     const loader = new GLTFLoader();
     const base = import.meta.env.BASE_URL + 'assets/environment/';
     loader.load(base + 'wukong-chinese-high-house-original.glb', async (gltf) => {
+      const parseReadyAt = performance.now();
+      console.info('[CabinPerf] Original cabin GLB received and parsed', {
+        elapsedMs: +(parseReadyAt - loadStartedAt).toFixed(1),
+        bytes: 25_292_044,
+      });
       const house = gltf.scene;
       house.name = 'chinese_high_house_wood_original';
       house.traverse((part) => {
         if ((part as THREE.Mesh).isMesh) {
           (part as THREE.Mesh).castShadow = false;
-          (part as THREE.Mesh).receiveShadow = true;
+          // The 330k-triangle original house is loaded only when explored.
+          // Receiving the level shadow map here forced another large shader
+          // variant compile at the same moment the building appeared.
+          (part as THREE.Mesh).receiveShadow = false;
           const mesh = part as THREE.Mesh;
           const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
           if (materials.some((material) => /floor|piso|suelo|deck|platform/i.test(material.name))) {
@@ -7970,6 +8060,7 @@ export class LevelToyStory {
       const stairZ = this.highHouseCenter.z - houseSize.z * 0.5 + wallThickness + 1.0;
       const stairClearance = 0.82;
       const houseMesh = house.children.find((part) => (part as THREE.Mesh).isMesh) as THREE.Mesh | undefined;
+      const geometryPrepStartedAt = performance.now();
       if (houseMesh?.geometry.index) {
         const sourceGeometry = houseMesh.geometry;
         const sourceIndex = sourceGeometry.index!;
@@ -7983,19 +8074,28 @@ export class LevelToyStory {
         const edge = new THREE.Vector3();
         const centroid = new THREE.Vector3();
         const upperY = this.getAbandonedHouseUpperFloorTopY();
-        const world = (index: number, target: THREE.Vector3) => target.fromBufferAttribute(positions, index).applyMatrix4(houseMesh.matrixWorld);
+        const worldToHouseLocal = houseMesh.matrixWorld.clone().invert();
+        const lowerMin = new THREE.Vector3(stairStartX - stairClearance, 0, stairZ - stairClearance).applyMatrix4(worldToHouseLocal);
+        const lowerMax = new THREE.Vector3(stairEndX + stairClearance, 0, stairZ + stairClearance).applyMatrix4(worldToHouseLocal);
+        const upperMin = new THREE.Vector3(stairEndX - stairClearance, 0, stairZ - stairClearance).applyMatrix4(worldToHouseLocal);
+        const upperMax = new THREE.Vector3(stairEndX + stairClearance, 0, stairZ + 6.0 + stairClearance).applyMatrix4(worldToHouseLocal);
+        const upperYLocal = new THREE.Vector3(this.highHouseCenter.x, upperY, this.highHouseCenter.z)
+          .applyMatrix4(worldToHouseLocal).y;
+        const normalMatrix = new THREE.Matrix3().getNormalMatrix(houseMesh.matrixWorld);
+        const localVertex = (index: number, target: THREE.Vector3) => target.fromBufferAttribute(positions, index);
         for (let i = 0; i < sourceIndex.count; i += 3) {
           const ia = sourceIndex.getX(i), ib = sourceIndex.getX(i + 1), ic = sourceIndex.getX(i + 2);
-          world(ia, a); world(ib, b); world(ic, c);
+          localVertex(ia, a); localVertex(ib, b); localVertex(ic, c);
           edge.subVectors(c, a);
           normal.subVectors(b, a).cross(edge).normalize();
+          normal.applyMatrix3(normalMatrix).normalize();
           centroid.copy(a).add(b).add(c).multiplyScalar(1 / 3);
-          const inLowerFlightWell = centroid.x > stairStartX - stairClearance && centroid.x < stairEndX + stairClearance &&
-            centroid.z > stairZ - stairClearance && centroid.z < stairZ + stairClearance;
-          const inUpperFlightWell = centroid.x > stairEndX - stairClearance && centroid.x < stairEndX + stairClearance &&
-            centroid.z > stairZ - stairClearance && centroid.z < stairZ + 6.0 + stairClearance;
+          const inLowerFlightWell = centroid.x > lowerMin.x && centroid.x < lowerMax.x &&
+            centroid.z > lowerMin.z && centroid.z < lowerMax.z;
+          const inUpperFlightWell = centroid.x > upperMin.x && centroid.x < upperMax.x &&
+            centroid.z > upperMin.z && centroid.z < upperMax.z;
           const inStairwell = inLowerFlightWell || inUpperFlightWell;
-          const upperDeckFace = Math.abs(normal.y) > 0.88 && Math.abs(centroid.y - upperY) < 0.58;
+          const upperDeckFace = Math.abs(normal.y) > 0.88 && Math.abs(centroid.y - upperYLocal) < 0.58;
           if (!(inStairwell && upperDeckFace)) {
             kept[keptCount++] = ia;
             kept[keptCount++] = ib;
@@ -8021,6 +8121,9 @@ export class LevelToyStory {
         cutGeometry.computeBoundingSphere();
         houseMesh.geometry = cutGeometry;
       }
+      console.info('[CabinPerf] Cabin stair opening prepared', {
+        durationMs: +(performance.now() - geometryPrepStartedAt).toFixed(1),
+      });
 
       // The architectural GLB is a visual asset (330k triangles), not a
       // physics mesh. Register a small set of boxes for collision instead of
@@ -8274,23 +8377,6 @@ export class LevelToyStory {
 
       this.levelColliders.push(collisionRoot, this.optionalHouseFloorCollider, ...upperSupports, lowerRamp, upperRamp, landing, topLandingSupport, stairStepSupports);
 
-      // Two restrained warm fills make the aged timber readable indoors.
-      // They cast no shadows and switch off outside the cabin's nearby region.
-      const cabinLighting = new THREE.Group();
-      cabinLighting.name = 'abandoned_house_warm_practical_lighting';
-      cabinLighting.visible = playerPos.distanceToSquared(this.highHouseCenter) < 30 * 30;
-      const lowerWarmFill = new THREE.PointLight(0xffb477, 1.7, 9, 2);
-      lowerWarmFill.name = 'abandoned_house_lower_warm_fill';
-      lowerWarmFill.position.set(this.highHouseCenter.x + 1.2, houseFloorTopY + 2.4, this.highHouseCenter.z + 1.0);
-      lowerWarmFill.castShadow = false;
-      const upperWarmFill = new THREE.PointLight(0xffc184, 1.5, 8, 2);
-      upperWarmFill.name = 'abandoned_house_upper_warm_fill';
-      upperWarmFill.position.set(stairEndX + 2.0, houseUpperFloorTopY + 2.1, stairZ + 4.5);
-      upperWarmFill.castShadow = false;
-      cabinLighting.add(lowerWarmFill, upperWarmFill);
-      this.sceneManager.scene.add(cabinLighting);
-      this.optionalHouseLightingGroup = cabinLighting;
-
       this.player.setColliders(this.levelColliders);
       this.cameraController.setCollisionObjects(this.levelColliders);
       this.optionalArchitectureStarted = true;
@@ -8507,6 +8593,7 @@ export class LevelToyStory {
     if (!cinematicCamera || !cameraController || !hud) return;
 
     this.bossEncounterActive = true;
+    this.bossLastPlayerHitAt = Number.NEGATIVE_INFINITY;
     void preloadKeyModel('key2_boss').catch((error) => console.warn('[KEY] Boss reward preload failed.', error));
     this.isCinematicPlaying = true;
     this.player.isControlsLocked = true;

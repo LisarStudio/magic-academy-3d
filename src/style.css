@@ -316,7 +316,7 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 .stamina-meter svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .stamina-meter.is-visible { opacity: .98; transform: translate(-50%, -50%) scale(1); }
 .stamina-meter.is-recovering { opacity: 0; transform: translate(-50%, -50%) scale(.93); transition-duration: 900ms; }
-.stamina-meter.is-paused, .stamina-meter.is-offscreen { opacity: 0 !important; }
+.stamina-meter.is-paused, .stamina-meter.is-offscreen, .stamina-meter.is-dialogue-hidden { opacity: 0 !important; }
 .stamina-arc-halo { fill: none; stroke: rgba(255, 174, 57, .25); stroke-width: 9; stroke-linecap: round; filter: url(#stamina-arc-glow); }
 .stamina-arc-track { fill: none; stroke: rgba(21, 12, 17, .78); stroke-width: 6.5; stroke-linecap: round; }
 .stamina-meter-fill { fill: none; stroke: url(#stamina-arc-gradient); stroke-width: 4; stroke-linecap: round; filter: url(#stamina-arc-glow); transition: stroke-dashoffset 100ms linear; }
@@ -579,8 +579,8 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 .letter-challenge-slots { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:5px; margin:5px 0; }
 .letter-challenge-slot { position:relative; height:38px; display:grid; place-items:center; overflow:visible; background:linear-gradient(150deg,rgba(20,25,36,.9),rgba(7,10,17,.8)); border:1px solid rgba(172,134,74,.42); border-radius:5px; box-shadow:inset 0 1px rgba(255,255,255,.035); transition:background .18s,border-color .18s,box-shadow .18s; }
 .letter-challenge-slot img { display:block; width:min(100%, 38px); height:calc(100% - 2px); max-width:100%; object-fit:contain; object-position:center; padding:0; box-sizing:border-box; filter:grayscale(.92) brightness(.52); opacity:.68; transition:filter .2s,opacity .2s,transform .2s; }
-.letter-challenge-slot.is-next { border-color:#d9ae62; box-shadow:inset 0 0 7px rgba(217,174,98,.12); }
-.letter-challenge-slot.is-next img { filter:saturate(1.06) brightness(1.04); opacity:1; }
+.letter-challenge-slot.is-next { border-color:rgba(172,134,74,.42); box-shadow:inset 0 1px rgba(255,255,255,.035); }
+.letter-challenge-slot.is-next img { filter:grayscale(.92) brightness(.52); opacity:.68; }
 .letter-challenge-slot.is-collected { background:linear-gradient(150deg,rgba(105,67,18,.72),rgba(56,32,13,.8)); border-color:#f1cb6c; animation:letter-pickup-flash .3s ease-out; }
 .letter-challenge-slot.is-collected img { filter:drop-shadow(0 0 5px rgba(255,194,56,.8)); opacity:1; transform:scale(1.035); }
 @keyframes letter-pickup-flash { 50% { box-shadow:inset 0 0 10px rgba(255,201,69,.55),0 0 7px rgba(255,195,65,.5); } }
@@ -3215,59 +3215,41 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 /* 0.0.37 visual repair: replace the baked, oversized boss image with live UI. */
 .boss-health-panel {
   position: fixed;
-  right: max(22px, env(safe-area-inset-right));
-  bottom: max(24px, env(safe-area-inset-bottom));
-  width: clamp(280px, 22vw, 420px);
-  aspect-ratio: auto;
-  min-height: 78px;
-  padding: 8px 12px 8px 8px;
+  top: max(14px, env(safe-area-inset-top));
+  right: auto;
+  bottom: auto;
+  left: 50%;
+  width: min(820px, calc(74vw - 24px));
+  aspect-ratio: 2048 / 576;
+  padding: 0;
   box-sizing: border-box;
-  border: 1px solid rgba(207, 60, 55, .7);
-  border-radius: 13px 7px 13px 7px;
-  background: linear-gradient(110deg, rgba(13, 13, 22, .94), rgba(42, 10, 17, .94) 62%, rgba(14, 12, 19, .95));
-  box-shadow: inset 0 0 0 1px rgba(238, 174, 83, .22), 0 6px 20px #0008, 0 0 14px #d62e3022;
+  transform: translateX(-50%);
+  pointer-events: none;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .55));
 }
-.boss-hud-artwork { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; height: 100%; }
-.boss-hud-sigil {
-  flex: 0 0 clamp(48px, 4vw, 60px);
-  width: clamp(48px, 4vw, 60px);
-  aspect-ratio: 1;
-  display: grid;
-  place-items: center;
-  border: 1px solid #e7b55d;
-  border-radius: 50%;
-  background: radial-gradient(circle, #57131b, #100d16 74%);
-  box-shadow: 0 0 0 3px #40141c, inset 0 0 12px #fa3d3428;
-}
-.boss-hud-sigil span { width: 16px; height: 16px; border: 2px solid #ff6470; border-radius: 50%; background: radial-gradient(circle, #fff0c3 0 12%, #ff384a 24% 46%, #700f20 64%); box-shadow: 0 0 8px #ff354c, 0 0 18px #f0183f66; }
-.boss-hud-content { min-width: 0; flex: 1; display: grid; gap: 8px; }
-.boss-hud-heading {
-  overflow: hidden;
-  color: #f2d9bd;
-  font: 700 clamp(10px, .72vw, 13px)/1.1 var(--font-title);
-  letter-spacing: .055em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-shadow: 0 1px 3px #000;
-}
+.boss-hud-artwork { position: absolute; inset: 0; width: 100%; height: 100%; }
+.boss-hud-frame { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: fill; z-index: 1; }
 .boss-health-track {
-  position: relative;
-  z-index: 1;
-  height: 13px;
+  position: absolute;
+  z-index: 2;
+  left: 25.4%;
+  top: 78.8%;
+  width: 69.8%;
+  height: 7.2%;
   overflow: hidden;
-  border: 1px solid #b88549;
+  border: 1px solid rgba(255, 190, 87, .86);
   border-radius: 999px;
-  background: #180b10;
-  box-shadow: inset 0 1px 3px #000, 0 0 5px #df4c3730;
+  background: linear-gradient(180deg, rgba(30, 4, 13, .94), rgba(66, 8, 17, .92));
+  box-shadow: inset 0 1px 3px #000, 0 0 8px rgba(255, 62, 35, .5);
 }
 .boss-health-fill {
   height: 100%;
   border-radius: inherit;
-  background: var(--boss-health-color, #39d461);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--boss-health-color, #39d461) 64%, transparent), inset 0 1px 2px #fff8;
+  background: linear-gradient(90deg, #ffab32 0%, #ff5a1f 46%, #ef172b 100%);
+  box-shadow: 0 0 8px rgba(255, 67, 35, .78), inset 0 1px 2px #fff9;
   transition: width 260ms ease, background-color 260ms ease;
 }
-.boss-hud-frame, .boss-health-mask { display: none !important; }
+.boss-health-mask { display: none !important; }
 
 /* A responsive cloud-shaped frame uses the shared NPC portrait and dialogue. */
 .dialogue-bubble-container {
@@ -3311,19 +3293,11 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
   .letter-challenge-slot img { width: min(100%, 24px); }
   .letter-challenge-footer { font-size: clamp(7px, 1.95vw, 8px); }
   .boss-health-panel {
-    top: max(158px, calc(env(safe-area-inset-top, 0px) + 150px));
-    right: 50%; bottom: auto; left: auto;
-    width: min(72vw, 300px); min-width: 218px; min-height: 58px;
-    padding: 6px 9px 6px 6px;
-    transform: translateX(50%);
-    border-radius: 10px 6px 10px 6px;
+    top: max(148px, calc(env(safe-area-inset-top, 0px) + 138px));
+    right: auto; bottom: auto; left: 50%;
+    width: min(94vw, 650px); min-width: 0; min-height: 0;
+    transform: translateX(-50%);
   }
-  .boss-hud-artwork { gap: 8px; }
-  .boss-hud-sigil { flex-basis: 43px; width: 43px; }
-  .boss-hud-content { gap: 5px; }
-  .boss-hud-heading { font-size: clamp(8px, 2.3vw, 10px); }
-  .boss-hud-sigil span { width: 12px; height: 12px; }
-  .boss-health-track { height: 10px; }
   .dialogue-bubble-container {
     width: calc(100vw - 16px);
     min-height: 0;

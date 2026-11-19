@@ -446,10 +446,8 @@ export class AssetManager {
         wukongDoubleJump,
         wukongFall,
         takeItem,
-        wukongKick,
         idleArmed,
         castSpellData,
-        hitReaction,
         staffModel
       ] = await Promise.all([
         // iddle_2.fbx is the calm second idle supplied for the gameplay loop.
@@ -460,16 +458,18 @@ export class AssetManager {
             import.meta.env.BASE_URL + 'assets/characters/wukong/iddle.fbx?v=startup-idle-fallback',
             'Idle_Unarmed', playerModel!, translationScaleFactor
           )),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Running.fbx', 'Run_Unarmed', playerModel, translationScaleFactor),
+        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Running.fbx', 'Run_Unarmed', playerModel, translationScaleFactor)
+          .then(async (clip) => clip || await this.loadAndRetargetClip(
+            import.meta.env.BASE_URL + 'assets/characters/Running_nowood.fbx',
+            'Run_Unarmed', playerModel!, translationScaleFactor
+          )),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Jumping.fbx', 'Jump_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong_no_wood_double_jumpFront Flip.fbx?v=7', 'Wukong_NoWood_DoubleJump', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_falling_air.fbx', 'Fall_Unarmed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Taking_item_nowood.fbx?v=7', 'TakeItem', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_kick.fbx', 'Wukong_NoWood_Kick', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle.fbx', 'Idle_Armed', playerModel, translationScaleFactor),
         this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_atack_baculo.fbx', 'atack_wood', playerModel, translationScaleFactor)
           .then(async (clip) => clip || (await this.loadAndRetargetGltfClip(import.meta.env.BASE_URL + 'assets/characters/atack_wood.glb', 'atack_wood', playerModel!))?.clip || null),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Reaction.fbx?v=20261029-reaction', 'Reaction', playerModel, translationScaleFactor),
         staffModelPromise
       ]);
 
@@ -493,7 +493,6 @@ export class AssetManager {
         clips.push(armedFallClip);
       }
       if (takeItem) clips.push(takeItem);
-      if (wukongKick) clips.push(wukongKick);
       if (idleArmed) clips.push(idleArmed);
       if (runArmed) clips.push(runArmed);
       if (jumpArmed) clips.push(jumpArmed);
@@ -505,8 +504,6 @@ export class AssetManager {
         aliasClip.name = 'CastSpell';
         clips.push(aliasClip);
       }
-      if (hitReaction?.tracks.length) clips.push(hitReaction);
-
       console.log(`[AssetManager] 🎬 Total clips loaded: ${clips.length} → [${clips.map((c) => c.name).join(', ')}]`);
 
       return { model: playerModel, clips, staffModel };
@@ -514,6 +511,36 @@ export class AssetManager {
       console.error('[AssetManager] Failed to load player model:', err);
       return { model: this.createProceduralPlayer(), clips: [], staffModel: null };
     }
+  }
+
+  /** Load cosmetic/reaction clips after the first playable scene is on screen. */
+  public async loadDeferredStartupClips(targetRoot: THREE.Object3D): Promise<THREE.AnimationClip[]> {
+    const specs: Array<[string, string, string]> = [
+      ['assets/characters/wukong/wukong_kick.fbx', 'Wukong_NoWood_Kick', '20261026-supplemental'],
+      ['assets/characters/wukong/Reaction.fbx', 'Reaction', '20261029-reaction'],
+    ];
+    const clips: THREE.AnimationClip[] = [];
+    for (const [path, name, version] of specs) {
+      await new Promise<void>((resolve) => {
+        const idleWindow = window as Window & {
+          requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+        };
+        if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(() => resolve(), { timeout: 30000 });
+        else window.setTimeout(resolve, 12000);
+      });
+      try {
+        const clip = await this.loadAndRetargetClip(
+          `${import.meta.env.BASE_URL}${path}?v=${version}`,
+          name,
+          targetRoot,
+          this.playerTranslationScale
+        );
+        if (clip?.tracks.length) clips.push(clip);
+      } catch (error) {
+        console.warn(`[AssetManager] Deferred animation ${name} could not be prepared.`, error);
+      }
+    }
+    return clips;
   }
 
   private async loadStaffModel(): Promise<THREE.Group | null> {

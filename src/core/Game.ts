@@ -50,6 +50,7 @@ export class Game {
   private gameplayPrepared = false;
   private gameplayPreparation: Promise<void> | null = null;
   private optionalSupportClipsScheduled = false;
+  private deferredStartupClipsScheduled = false;
   private pendingSaveTimer: number | null = null;
   private pendingSaveUsesIdleCallback = false;
   private frameTimeAverageMs = 16.67;
@@ -196,6 +197,7 @@ export class Game {
 
   private async prepareGameplay(): Promise<void> {
     if (this.gameplayPrepared) return;
+    const preparationStartedAt = performance.now();
     // 1. Load Player Model (GLB or Procedural Fallback)
     const playerLoadStartedAt = performance.now();
     const playerData = await this.assetManager.loadPlayerModel();
@@ -273,24 +275,16 @@ export class Game {
 
     // The continue pose is presentation-only. Do not hold the first playable
     // frame for another multi-megabyte FBX download and retarget pass.
+    const levelInitializationStartedAt = performance.now();
     await this.level01.init();
+    console.info('[StartupPerf] Level initialization ready', {
+      durationMs: +(performance.now() - levelInitializationStartedAt).toFixed(1),
+      totalMs: +(performance.now() - preparationStartedAt).toFixed(1),
+    });
 
-    // The crypt is already built and its source materials are loaded, but its
-    // room geometry is hidden beneath the terrain until the player enters.
-    // Compile those material variants now under the loading screen; otherwise
-    // Three.js compiles them on the first revealed frame while the transition
-    // is black, which looks like a frozen teleport on slower GPUs.
-    const cryptWarmupStartedAt = performance.now();
-    try {
-      await this.level01.precompileCuriosityCrypt(this.sceneManager.renderer, this.sceneManager.camera);
-      if (import.meta.env.DEV) {
-        console.info('[CuriosityVaultPerf] Startup crypt shader warmup completed', {
-          durationMs: +(performance.now() - cryptWarmupStartedAt).toFixed(1),
-        });
-      }
-    } catch (error) {
-      console.warn('[CuriosityVaultPerf] Startup crypt shader warmup failed; entry will use the normal renderer fallback.', error);
-    }
+    // The hidden crypt is not part of the opening route. Do not make every
+    // start compile its entire material set; the optional warmup is scheduled
+    // after play begins when the device has an idle window.
 
     // Optional traversal/continue clips are not required to enter the world:
     // the essential run/jump/idle clips are already part of loadPlayerModel.
@@ -301,48 +295,9 @@ export class Game {
     this.cameraController.setTarget(this.player.mesh);
     this.cameraController.snapBehindTarget(true);
 
-    // Prepare the first playable camera view while the loading overlay is
-    // still up. Previously the first interactive render compiled the temple,
-    // ground, sky and character material programs all at once, freezing the
-    // opening frame on slower mobile and integrated GPUs.
-    const firstViewCompileStartedAt = performance.now();
-    try {
-      await this.sceneManager.renderer.compileAsync(
-        this.sceneManager.scene,
-        this.sceneManager.camera,
-        this.sceneManager.scene,
-      );
-      console.info('[Startup] First-view shaders prepared', {
-        durationMs: +(performance.now() - firstViewCompileStartedAt).toFixed(1),
-        programs: this.sceneManager.renderer.info.programs?.length ?? null,
-      });
-    } catch (error) {
-      console.warn('[Startup] First-view shader preparation failed; the game will continue with renderer fallback.', error);
-    }
-
-    // The chest pickup mesh is intentionally detached/hidden until the reward
-    // cinematic. Compiling only the live scene therefore misses its material
-    // variants and could make the first chest opening pay GPU shader setup.
-    // Compile this tiny prebuilt prop asynchronously on every device before
-    // gameplay becomes interactive; this does not construct assets or touch
-    // the back/hand attachment transforms.
-    let staffWarmup: THREE.Group | null = null;
-    try {
-      const warmScene = new THREE.Scene();
-      staffWarmup = this.player.cloneStaffProp('staff_shader_warmup');
-      if (staffWarmup) {
-        warmScene.add(staffWarmup);
-        await this.sceneManager.renderer.compileAsync(warmScene, this.sceneManager.camera, this.sceneManager.scene);
-      }
-    } catch (error) {
-      console.warn('[Game] Staff shader warmup failed; the model remains loaded and usable.', error);
-    } finally {
-      staffWarmup?.removeFromParent();
-    }
-
-    // Avoid compiling the entire world after gameplay becomes interactive.
-    // The browser/GPU may still be busy with rendering and input, so even an
-    // idle callback can cause a visible hitch on mobile and integrated GPUs.
+    // Do not wait on GPU shader compilation during level startup. The staff
+    // material can use the renderer's normal lazy compilation if collected
+    // immediately; an optional warmup runs later during a browser idle window.
 
     // 6. Bind Player & HUD Status Callbacks
     this.player.onHealthChange = (hp, maxHp) => this.hud.setHealth(hp, maxHp);
@@ -736,6 +691,36 @@ export class Game {
         void this.level01.loadGrassInBackground();
       }
     }, 9000);
+    window.setTimeout(() => {
+      const warmStaffShader = async (): Promise<void> => {
+        let staffWarmup: THREE.Group | null = null;
+        try {
+          const warmScene = new THREE.Scene();
+          staffWarmup = this.player.cloneStaffProp('staff_shader_warmup');
+          if (!staffWarmup) return;
+          warmScene.add(staffWarmup);
+          await this.sceneManager.renderer.compileAsync(warmScene, this.sceneManager.camera, this.sceneManager.scene);
+        } catch (error) {
+          console.warn('[Game] Deferred staff shader warmup failed; using normal renderer fallback.', error);
+        } finally {
+          staffWarmup?.removeFromParent();
+        }
+      };
+      if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(() => { void warmStaffShader(); }, { timeout: 15000 });
+      else void warmStaffShader();
+    }, 10000);
+    if (!this.deferredStartupClipsScheduled) {
+      this.deferredStartupClipsScheduled = true;
+      window.setTimeout(() => {
+        const loadDeferred = () => {
+          void this.assetManager.loadDeferredStartupClips(this.player.mesh)
+            .then((clips) => this.animationController.addClips(clips))
+            .catch((error) => console.warn('[Game] Deferred startup animations could not be prepared.', error));
+        };
+        if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(loadDeferred, { timeout: 30000 });
+        else loadDeferred();
+      }, 20000);
+    }
     // Keep optional FBX parsing out of startup. Each clip loader is sequential
     // and yields between files; this work starts only after the player has had
     // time to enter the level, and failures do not affect the playable state.

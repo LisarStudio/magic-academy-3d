@@ -74,6 +74,7 @@ export class EnemyController {
   private bossAttackPhase: 'READY' | 'SEEK_ROCK' | 'TELEGRAPH' | 'EXECUTE' | 'RECOVERY' = 'READY';
   private bossPhaseTimer = 0;
   private bossAttackCooldown = 0;
+  private bossContactDamageCooldown = 0;
   private bossAttackHitApplied = false;
   private bossDefenseCueTimer = 0;
   private bossDefenseCueShown = false;
@@ -138,6 +139,7 @@ export class EnemyController {
   private static readonly BOSS_PROJECTILE_SEGMENT = new THREE.Vector3();
   private static readonly BOSS_PROJECTILE_TO_PLAYER = new THREE.Vector3();
   private static readonly BOSS_PROJECTILE_CLOSEST = new THREE.Vector3();
+  private static readonly BOSS_PLAYER_HIT_POINT = new THREE.Vector3();
   private static readonly HIT_FLASH_EMISSION = new THREE.Color(0xff2200);
   private static readonly BOSS_LEG_MESH_NAMES = ['Cube.005', 'Cube.006', 'Cube.007', 'Cube.008', 'Cube.009'];
 
@@ -1266,6 +1268,18 @@ export class EnemyController {
     }
 
     const distToPlayer = Math.hypot(this.mesh.position.x - playerPos.x, this.mesh.position.z - playerPos.z);
+    if (this.id === 'crab_boss') {
+      this.bossContactDamageCooldown = Math.max(0, this.bossContactDamageCooldown - delta);
+      // The boss has no animated hitbox. Keep a forgiving body-contact radius
+      // while it is alive; the cooldown prevents continuous frame-by-frame
+      // damage. A short encounter-level damage gate prevents a same-frame
+      // contact and attack hit from stacking.
+      if (distToPlayer <= 1.65 && this.bossContactDamageCooldown <= 0) {
+        this.bossContactDamageCooldown = 1.15;
+        this.onAttackPlayer?.(6);
+        this.debugBossEvent('BODY_CONTACT_HIT', { damage: 6, distance: +distToPlayer.toFixed(2) });
+      }
+    }
     if (this.id === 'crab_boss' && this.bossAttackCooldown > 0 && this.state !== 'ATTACK' && this.state !== 'STUNNED') {
       this.bossAttackCooldown = Math.max(0, this.bossAttackCooldown - delta);
     }
@@ -1513,6 +1527,7 @@ export class EnemyController {
     this.bossAttackPhase = 'READY';
     this.bossPhaseTimer = 0;
     this.bossAttackCooldown = 0;
+    this.bossContactDamageCooldown = 0;
     this.bossAttackHitApplied = false;
     this.clearBossProjectiles();
     this.restoreBossRock();
@@ -1683,7 +1698,9 @@ export class EnemyController {
       projectile.mesh.position.copy(this.mesh.position);
       projectile.mesh.position.y += 1.15;
       projectile.mesh.position.addScaledVector(this.bossAttackDirection, 1.45);
-      projectile.velocity.subVectors(playerPos, projectile.mesh.position);
+      EnemyController.BOSS_PLAYER_HIT_POINT.copy(playerPos);
+      EnemyController.BOSS_PLAYER_HIT_POINT.y += 0.92;
+      projectile.velocity.subVectors(EnemyController.BOSS_PLAYER_HIT_POINT, projectile.mesh.position);
       projectile.velocity.y = 0;
       this.safeNormalize(projectile.velocity, this.bossAttackDirection);
       projectile.velocity.multiplyScalar(9.0);
@@ -1707,11 +1724,13 @@ export class EnemyController {
       const start = EnemyController.BOSS_PROJECTILE_START.copy(projectile.mesh.position);
       const end = EnemyController.BOSS_PROJECTILE_END.copy(start).addScaledVector(projectile.velocity, delta);
       const segment = EnemyController.BOSS_PROJECTILE_SEGMENT.subVectors(end, start);
-      const toPlayer = EnemyController.BOSS_PROJECTILE_TO_PLAYER.subVectors(playerPos, start);
+      EnemyController.BOSS_PLAYER_HIT_POINT.copy(playerPos);
+      EnemyController.BOSS_PLAYER_HIT_POINT.y += 0.92;
+      const toPlayer = EnemyController.BOSS_PROJECTILE_TO_PLAYER.subVectors(EnemyController.BOSS_PLAYER_HIT_POINT, start);
       const segmentLengthSq = segment.lengthSq();
       const t = segmentLengthSq > 1e-8 ? THREE.MathUtils.clamp(toPlayer.dot(segment) / segmentLengthSq, 0, 1) : 0;
       const closest = EnemyController.BOSS_PROJECTILE_CLOSEST.copy(start).addScaledVector(segment, t);
-      if (closest.distanceToSquared(playerPos) <= 0.78 * 0.78) {
+      if (closest.distanceToSquared(EnemyController.BOSS_PLAYER_HIT_POINT) <= 1.12 * 1.12) {
         this.onAttackPlayer?.(6);
         this.debugBossEvent('VOLLEY_PROJECTILE_HIT', { damage: 6 });
         projectile.active = false;
@@ -1745,7 +1764,9 @@ export class EnemyController {
     const rock = this.bossRockTarget;
     if (!rock || this.bossRockInFlight) return;
     rock.position.y += 0.12;
-    this.bossRockVelocity.subVectors(playerPos, rock.position);
+    EnemyController.BOSS_PLAYER_HIT_POINT.copy(playerPos);
+    EnemyController.BOSS_PLAYER_HIT_POINT.y += 0.92;
+    this.bossRockVelocity.subVectors(EnemyController.BOSS_PLAYER_HIT_POINT, rock.position);
     this.bossRockVelocity.y += 2.2;
     this.safeNormalize(this.bossRockVelocity);
     this.bossRockVelocity.multiplyScalar(12.5);
@@ -1762,13 +1783,15 @@ export class EnemyController {
     this.bossRockVelocity.y -= 8.5 * delta;
     this.bossRockEnd.copy(this.bossRockStart).addScaledVector(this.bossRockVelocity, delta);
     this.bossRockSegment.subVectors(this.bossRockEnd, this.bossRockStart);
-    this.bossRockToPlayer.subVectors(playerPos, this.bossRockStart);
+    EnemyController.BOSS_PLAYER_HIT_POINT.copy(playerPos);
+    EnemyController.BOSS_PLAYER_HIT_POINT.y += 0.92;
+    this.bossRockToPlayer.subVectors(EnemyController.BOSS_PLAYER_HIT_POINT, this.bossRockStart);
     const lengthSq = this.bossRockSegment.lengthSq();
     const t = lengthSq > 1e-8
       ? THREE.MathUtils.clamp(this.bossRockToPlayer.dot(this.bossRockSegment) / lengthSq, 0, 1)
       : 0;
     this.bossRockClosest.copy(this.bossRockStart).addScaledVector(this.bossRockSegment, t);
-    const hit = !this.bossAttackHitApplied && this.bossRockClosest.distanceToSquared(playerPos) < 1.0;
+    const hit = !this.bossAttackHitApplied && this.bossRockClosest.distanceToSquared(EnemyController.BOSS_PLAYER_HIT_POINT) < 1.55 * 1.55;
     rock.position.copy(this.bossRockEnd);
     rock.rotation.x += delta * 6.0;
     rock.rotation.z += delta * 4.3;

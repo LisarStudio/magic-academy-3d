@@ -429,7 +429,9 @@ export class HUD {
   }
 
   public isDialogueOpen(): boolean {
-    return !this.dialogueBubbleEl.classList.contains('hidden');
+    const subtitleBox = document.getElementById('subtitle-box');
+    return !this.dialogueBubbleEl.classList.contains('hidden')
+      || !!subtitleBox && !subtitleBox.classList.contains('hidden');
   }
 
   public showDialogueChoices(
@@ -759,6 +761,13 @@ export class HUD {
    * the live camera projection rather than occupying the coin HUD. */
   public updateStaminaAnchor(player: THREE.Object3D, camera: THREE.Camera, canvas: HTMLCanvasElement): void {
     if (!this.staminaDisplayed || !this.staminaMeterEl) return;
+    const dialogueOpen = this.isDialogueOpen();
+    this.staminaMeterEl.classList.toggle('is-dialogue-hidden', dialogueOpen);
+    if (dialogueOpen) {
+      this.staminaMeterEl.setAttribute('aria-hidden', 'true');
+      return;
+    }
+    this.staminaMeterEl.setAttribute('aria-hidden', String(!this.staminaMeterEl.classList.contains('is-visible')));
     player.getWorldPosition(this.staminaAnchor);
     this.staminaAnchor.y += 1.05;
     camera.updateMatrixWorld(true);

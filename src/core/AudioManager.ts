@@ -1,5 +1,8 @@
 export class AudioManager {
   private ctx: AudioContext | null = null;
+  private musicSource: MediaElementAudioSourceNode | null = null;
+  private musicBassFilter: BiquadFilterNode | null = null;
+  private musicCompressor: DynamicsCompressorNode | null = null;
   private readonly bgmAudio = new Audio();
   private readonly musicPaths = {
     intro: 'assets/music/optimized/wukong-intro-theme-128.mp3',
@@ -95,7 +98,38 @@ export class AudioManager {
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
+    this.connectMusicToBalancedOutput(this.ctx);
     return this.ctx;
+  }
+
+  /** Tame excessive sub-bass/peaks without changing the music assets or UI gain. */
+  private connectMusicToBalancedOutput(ctx: AudioContext): void {
+    if (this.musicSource) return;
+    let source: MediaElementAudioSourceNode | null = null;
+    try {
+      source = ctx.createMediaElementSource(this.bgmAudio);
+      this.musicBassFilter = ctx.createBiquadFilter();
+      this.musicBassFilter.type = 'lowshelf';
+      this.musicBassFilter.frequency.value = 150;
+      this.musicBassFilter.gain.value = -5;
+      this.musicCompressor = ctx.createDynamicsCompressor();
+      this.musicCompressor.threshold.value = -12;
+      this.musicCompressor.knee.value = 8;
+      this.musicCompressor.ratio.value = 3;
+      this.musicCompressor.attack.value = 0.012;
+      this.musicCompressor.release.value = 0.22;
+      source.connect(this.musicBassFilter);
+      this.musicBassFilter.connect(this.musicCompressor);
+      this.musicCompressor.connect(ctx.destination);
+      this.musicSource = source;
+    } catch (error) {
+      // Keep HTMLAudioElement playback usable if a browser disallows routing.
+      if (source) {
+        try { source.connect(ctx.destination); } catch { /* browser already connected the source */ }
+        this.musicSource = source;
+      }
+      console.warn('[AudioManager] Balanced music output unavailable; using direct playback.', error);
+    }
   }
 
   public prepareMusic(): Promise<void> {
@@ -596,21 +630,22 @@ export class AudioManager {
     const now = ctx.currentTime;
     const vol = 0.95 * this.sfxVolume * this.masterVolume;
 
-    // 1. Sub-bass heavy impact pulse
+    // 1. Restrained impact body. The old 120→30 Hz, near-full-volume pulse
+    // produced excessive sub-bass on laptop speakers, TVs and headphones.
     const subOsc = ctx.createOscillator();
     const subGain = ctx.createGain();
 
     subOsc.type = 'sine';
-    subOsc.frequency.setValueAtTime(120, now);
-    subOsc.frequency.exponentialRampToValueAtTime(30, now + 0.35);
+    subOsc.frequency.setValueAtTime(92, now);
+    subOsc.frequency.exponentialRampToValueAtTime(48, now + 0.25);
 
-    subGain.gain.setValueAtTime(vol * 1.2, now);
-    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+    subGain.gain.setValueAtTime(vol * 0.28, now);
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
 
     subOsc.connect(subGain);
     subGain.connect(ctx.destination);
     subOsc.start(now);
-    subOsc.stop(now + 0.38);
+    subOsc.stop(now + 0.28);
 
     // 2. Surface-specific noise burst
     const bufferSize = ctx.sampleRate * 0.3;

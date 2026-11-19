@@ -9,11 +9,13 @@ import { type WeaponType, WEAPON_DEFINITIONS } from './WeaponConfig';
 
 export const PLAYER_NAME = 'LISAR';
 
-const BASE_WALK_SPEED = 5.2;
-const BASE_SPRINT_SPEED = 9.5;
+// Free movement uses the previous sprint's comfortable travel speed. Holding
+// Shift doubles it, so walking stays brisk and sprint remains clearly faster.
+const BASE_WALK_SPEED = 9.5;
+const BASE_SPRINT_SPEED = BASE_WALK_SPEED * 2;
 const LOCOMOTION_SPEED_SCALE = 1.25;
-const HORIZONTAL_ACCELERATION = 46;
-const HORIZONTAL_BRAKING = 58;
+const HORIZONTAL_ACCELERATION = 64;
+const HORIZONTAL_BRAKING = 86;
 
 export class PlayerController {
   /** Pickups may extend the current stock; keep the cap centralized for balance tuning. */
@@ -478,10 +480,10 @@ export class PlayerController {
     return true;
   }
 
-  public takeDamage(amount: number, respawnPos?: THREE.Vector3): void {
+  public takeDamage(amount: number, respawnPos?: THREE.Vector3): boolean {
     if (this.isDying || this.isInvulnerable || this.isControlsLocked || this.isMovementLocked) {
       // Immune while performing TakeItem animation or watching cinematics
-      return;
+      return false;
     }
     this.health = Math.max(0, this.health - amount);
     this.onHealthChange?.(this.health, this.maxHealth);
@@ -511,10 +513,11 @@ export class PlayerController {
         this.isMovementLocked = false;
         this.forceIdle();
       });
-      return;
+      return true;
     }
     this.damageFlinchRemaining = 0.28;
     this.animationController.playImpactReaction();
+    return true;
   }
 
   public reactToSnakeAmbush(onReactionStart: () => void = () => {}): void {
@@ -781,7 +784,11 @@ export class PlayerController {
       if (this.staffHandMesh && this.staffHandMesh.visible) this.staffHandMesh.visible = false;
     }
 
-    if (this.isControlsLocked) {
+    // A control lock must suppress player input, not suspend airborne physics.
+    // Returning here while airborne skipped the ground resolver and gravity
+    // integration altogether, leaving Wukong frozen in the air until the lock
+    // ended (which looked like zero gravity during jump/pickup transitions).
+    if (this.isControlsLocked && this.isGrounded) {
       cameraController.setSprintIntensity(0, false);
       this.animationController.update(animationDelta);
       return;
@@ -882,9 +889,9 @@ export class PlayerController {
       this.isGrounded = false;
       if (wasGroundedAtFrameStart) this.airApexY = this.mesh.position.y;
       else this.airApexY = Math.max(this.airApexY, this.mesh.position.y);
-      if (!this.isMovementLocked) {
-        this.velocity.y += this.gravity * delta;
-      }
+      // Gravity continues while gameplay input is locked. Scripted sequences
+      // can freeze horizontal control, but must not suspend a jump or fall.
+      this.velocity.y += this.gravity * delta;
     }
 
     // Bind dynamic onJumpPress
@@ -924,7 +931,7 @@ export class PlayerController {
     let moveX = 0;
     let moveZ = 0;
 
-    if (!this.isMovementLocked) {
+    if (!this.isMovementLocked && !this.isControlsLocked) {
       const touchMag = Math.hypot(input.touchAnalogX, input.touchAnalogZ);
       if (touchMag > 0.05) {
         moveX = input.touchAnalogX;
@@ -1375,7 +1382,8 @@ export class PlayerController {
       this.doubleJumpSpinTimer = Math.max(0, this.doubleJumpSpinTimer - delta);
     } else if (this.isGrounded && !this.isAttacking) {
       if (isMoving) {
-        this.animationController.playState(isSprinting ? 'Sprint' : 'Run');
+        const movementSpeedRatio = Math.hypot(this.velocity.x, this.velocity.z) / Math.max(0.01, currentSpeed);
+        this.animationController.playState(isSprinting ? 'Sprint' : 'Run', 0.2, movementSpeedRatio);
       } else {
         this.animationController.playState('Idle');
       }
