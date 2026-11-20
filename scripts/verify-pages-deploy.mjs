@@ -24,6 +24,8 @@ const criticalAssets = [
   'assets/ui/boss_nezha-x_hud.png',
   'assets/ui/boss_nezha-x_hud-transparent.png',
   'assets/music/Silvio_OST.mp3',
+  'assets/save-slots/empty-game.glb',
+  'assets/save-slots/saved-game.glb',
   ...missionAssets,
 ];
 

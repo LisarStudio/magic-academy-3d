@@ -41,6 +41,8 @@ for (const path of [
   'assets/ui/boss_nezha-x_hud.png',
   'assets/ui/boss_nezha-x_hud-transparent.png',
   'assets/music/Silvio_OST.mp3',
+  'assets/save-slots/empty-game.glb',
+  'assets/save-slots/saved-game.glb',
   ...missionAssets,
 ]) {
   await access(join(root, path));
@@ -55,5 +57,5 @@ console.log(JSON.stringify({
   builtAtUTC: manifest.builtAtUTC,
   dirtyWorkingTree: manifest.dirtyWorkingTree,
   bundledFiles,
-  criticalAssets: 7 + missionAssets.length,
+  criticalAssets: 10 + missionAssets.length,
 }, null, 2));
