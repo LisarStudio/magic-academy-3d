@@ -696,9 +696,7 @@ export class PlayerController {
   }
 
   public forceIdle(): void {
-    // Reset any active one-shot animation locks in the mixer so we don't freeze in rigid pose
-    (this.animationController as any).isPlayingOneShot = false;
-    this.animationController.playState('Idle', 0.1);
+    this.animationController.forceIdle();
     this.velocity.set(0, 0, 0);
   }
 

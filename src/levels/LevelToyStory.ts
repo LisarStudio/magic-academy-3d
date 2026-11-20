@@ -30,7 +30,7 @@ import { ConstellationSystem } from '../world/ConstellationSystem';
 import { VolcanicDragonRun } from './VolcanicDragonRun';
 import { PowerOrbSystem, type StaffUpgradeInfo } from '../collectibles/PowerOrbSystem';
 import { TreeSnakeEnemy } from '../enemies/TreeSnakeEnemy';
-import { getKeyAsset, loadKeyModel, preloadKeyModel } from '../collectibles/KeyAssetCatalog';
+import { getKeyAsset, LEVEL_PROGRESS_KEY_IDS, loadKeyModel, preloadKeyModel } from '../collectibles/KeyAssetCatalog';
 import { TwinCatsChallenge } from './TwinCatsChallenge';
 import { projectDialogueFocus } from '../ui/CinematicDialogueUI';
 
@@ -2348,11 +2348,13 @@ export class LevelToyStory {
     // than clipping it to a fixed 16 m square. The roof eaves are wider, so
     // this keeps the finish inside the building while covering its walkable
     // interior without a second drop at the stair landing.
-    // Match the deck mesh itself (about ±5.2 source units), not the wider
-    // eaves or guessed wall footprint. This closes the walkable deck without
-    // laying a visible slab over the stairs, grass or exterior foundation.
-    const floorWidth = temple ? 2 * 5.02 * Math.abs(temple.scale.x) : 16;
-    const floorDepth = temple ? 2 * 5.02 * Math.abs(temple.scale.z) : 16;
+    // Carry the visible tiled finish all the way to the inner edge of the
+    // stone foundation (±5.4 source units). The previous ±5.02 plane stopped
+    // short and exposed a strip of grass between the deck and front fascia.
+    // The deck samples above stay inset so they still measure the authored
+    // top surface, while this small perimeter extension closes that seam.
+    const floorWidth = temple ? 2 * 5.4 * Math.abs(temple.scale.x) : 16;
+    const floorDepth = temple ? 2 * 5.4 * Math.abs(temple.scale.z) : 16;
     floorCenterZ = temple ? (frontZ + rearZ) * 0.5 : -40;
     this.centralTempleFloorWidth = floorWidth;
     this.centralTempleFloorDepth = floorDepth;
@@ -2460,19 +2462,27 @@ export class LevelToyStory {
         const frontRight = toWorld(halfEntranceWidthLocal, firstTreadInnerLocal.z, firstTreadTopY + 0.004);
         const bridgeGeometry = new THREE.BufferGeometry();
         bridgeGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
-          ...backLeft.toArray(), ...frontRight.toArray(), ...frontLeft.toArray(),
-          ...backLeft.toArray(), ...backRight.toArray(), ...frontRight.toArray()
+          // Keep the triangles wound toward +Y. The previous order produced
+          // downward-facing normals, so the visible bridge was back-face
+          // culled from the player's approach and the grass seam remained.
+          ...backLeft.toArray(), ...frontLeft.toArray(), ...frontRight.toArray(),
+          ...backLeft.toArray(), ...frontRight.toArray(), ...backRight.toArray()
         ], 3));
         const backV = 1;
         const frontV = 1 + (bridgeRunLocal * Math.abs(temple.scale.z)) / floorDepth;
         bridgeGeometry.setAttribute('uv', new THREE.Float32BufferAttribute([
-          0, backV, entranceWidth / floorWidth, frontV, 0, frontV,
-          0, backV, entranceWidth / floorWidth, backV, entranceWidth / floorWidth, frontV
+          0, backV, 0, frontV, entranceWidth / floorWidth, frontV,
+          0, backV, entranceWidth / floorWidth, frontV, entranceWidth / floorWidth, backV
         ], 2));
         bridgeGeometry.computeVertexNormals();
         bridgeGeometry.computeBoundingSphere();
         const bridge = new THREE.Mesh(bridgeGeometry, floorMaterial);
         bridge.name = 'central_temple_entrance_stone_transition';
+        // Retain the join even when the source GLB's local winding differs
+        // between desktop/mobile exports; the corrected normals above still
+        // provide the intended lighting from the upper side.
+        floorMaterial.side = THREE.DoubleSide;
+        floorMaterial.needsUpdate = true;
         bridge.receiveShadow = true;
         bridge.renderOrder = 1;
         this.sceneManager.scene.add(bridge);
@@ -6898,14 +6908,60 @@ export class LevelToyStory {
     (window as any).gameInstance?.hud?.setCollectedKeys(this.getCollectedKeyIds(), false);
   }
 
-  public showAvailableKeysCelebrationIfReady(): void {
+  public showAvailableKeysCelebrationIfReady(suppress = false): void {
+    if (suppress) return;
     if (this.markAvailableKeysCelebrated()) {
-      this.subtitleSystem.show('LISAR', '¡Felicidades, has conseguido todas las llaves disponibles en este nivel!');
+      this.subtitleSystem.hide();
+      this.showAvailableKeysDecision();
     }
   }
 
+  public hasAllAvailableLevelKeys(): boolean {
+    return LEVEL_PROGRESS_KEY_IDS.every((id) => this.collectedKeys[id]);
+  }
+
+  /** The continue flow calls this after twenty seconds of active play even if
+   * an older save already recorded the normal final-key celebration. */
+  public showAllKeysContinueDecision(): boolean {
+    if (!this.hasAllAvailableLevelKeys()) return false;
+    const hud = (window as any).gameInstance?.hud;
+    if (!hud || hud.isDialogueOpen?.()) return false;
+    this.stateFlags.availableKeysCelebrated = true;
+    this.showAvailableKeysDecision();
+    return true;
+  }
+
+  private showAvailableKeysDecision(): void {
+    const game = (window as any).gameInstance;
+    const hud = game?.hud;
+    if (!hud) return;
+    this.subtitleSystem.hide();
+    this.player.velocity.set(0, 0, 0);
+    this.player.isControlsLocked = true;
+    this.player.isMovementLocked = true;
+    this.player.forceIdle();
+    hud.showDialogueChoices(
+      'LISAR',
+      '¡Felicidades, has conseguido todas las llaves disponibles en este nivel! ¿Qué deseas hacer?',
+      [
+        { label: 'Seguir explorando', value: 'accept' },
+        { label: 'Volver al menú de inicio', value: 'decline' },
+      ],
+      (choice: 'accept' | 'decline') => {
+        if (choice === 'decline') {
+          game.returnToMainMenu?.();
+          return;
+        }
+        this.player.isControlsLocked = false;
+        this.player.isMovementLocked = false;
+        game.saveGame?.(false);
+      },
+      { placement: 'top', type: 'reward' },
+    );
+  }
+
   private markAvailableKeysCelebrated(): boolean {
-    if (this.totalKeysCount < AVAILABLE_LEVEL_KEY_COUNT || this.stateFlags.availableKeysCelebrated) return false;
+    if (!this.hasAllAvailableLevelKeys() || this.stateFlags.availableKeysCelebrated) return false;
     this.stateFlags.availableKeysCelebrated = true;
     return true;
   }
@@ -6940,17 +6996,21 @@ export class LevelToyStory {
     if (keyId === 'key6_qi_celestial') keyName = getKeyAsset(keyId)?.name ?? 'Llave del Qi Celestial';
     if (keyId === 'key5_pots') keyName = 'Llave de Destrucción (Gemas)';
 
-    const displayedKeyCount = Math.min(this.totalKeysCount, AVAILABLE_LEVEL_KEY_COUNT);
-    this.subtitleSystem.show('LISAR', `¡Has obtenido la ${keyName}! (${displayedKeyCount}/${AVAILABLE_LEVEL_KEY_COUNT} llaves disponibles)`);
+    const displayedKeyCount = LEVEL_PROGRESS_KEY_IDS.filter((id) => this.collectedKeys[id]).length;
+    if (celebrateAvailableKeys) {
+      // Replace the short pickup subtitle with a persistent choice panel so
+      // the final reward and next step cannot be missed or overwritten.
+      this.subtitleSystem.hide();
+    } else {
+      this.subtitleSystem.show('LISAR', `¡Has obtenido la ${keyName}! (${displayedKeyCount}/${AVAILABLE_LEVEL_KEY_COUNT} llaves disponibles)`);
+    }
 
     // The exit still unlocks at its existing four-key gameplay requirement.
     if (this.totalKeysCount >= 4 && this.exitDoor && !this.exitDoor.isOpen) {
       this.exitDoor.open();
       this.subtitleSystem.show('LISAR', '¡PORTÓN ABIERTO! Has reunido las 4 llaves místicas. El portal de salida en el castillo está desbloqueado.');
     }
-    if (celebrateAvailableKeys) {
-      this.subtitleSystem.show('LISAR', '¡Felicidades, has conseguido todas las llaves disponibles en este nivel!');
-    }
+    if (celebrateAvailableKeys) this.showAvailableKeysDecision();
     return true;
   }
 

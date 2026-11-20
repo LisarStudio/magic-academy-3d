@@ -190,6 +190,9 @@ export class AnimationController {
 
     // Start playing Idle_Unarmed
     this.playState('Idle');
+    // Evaluate the bind/idle blend before the model can be shown by the first
+    // gameplay frame. This prevents a one-frame (or stuck) T-pose at spawn.
+    this.update(0);
   }
 
   private registerClip(clip: THREE.AnimationClip): void {
@@ -210,6 +213,29 @@ export class AnimationController {
   public hasClip(name: string): boolean { return this.allActions.has(name); }
   public getClipDuration(name: string): number { return this.allActions.get(name)?.getClip().duration ?? 1.2; }
   public isOneShotPlaying(): boolean { return this.isPlayingOneShot; }
+
+  /** Restart a clean idle state after a spawn, restore, or gameplay transition. */
+  public forceIdle(): void {
+    this.pendingReaction = null;
+    this.cancelActiveStaffAttack?.();
+    this.cancelActiveStaffAttack = null;
+    if (this.oneShotFinishedListener && this.mixer) {
+      this.mixer.removeEventListener('finished', this.oneShotFinishedListener as any);
+      this.oneShotFinishedListener = null;
+    }
+    this.oneShotAction?.stop();
+    this.oneShotAction = null;
+    this.oneShotOnMarker = null;
+    this.oneShotMarkerTime = -1;
+    this.oneShotMarkerFired = false;
+    this.isPlayingOneShot = false;
+    this.idleCyclePhase = null;
+    this.currentAction?.stop();
+    this.currentAction = null;
+    this.currentState = 'Idle';
+    this.playIdleClip(this.resolveClipName('Idle'), 'base', 0);
+    this.update(0);
+  }
 
   /** A fresh player command may cancel only the hit flinch. Other one-shots
    * (pickup, attacks, death and cinematics) keep their existing gameplay locks. */
@@ -737,7 +763,9 @@ export class AnimationController {
       return;
     }
     this.restoreFallbackBindPose();
-    if (this.currentAction && this.currentAction !== next) this.currentAction.crossFadeTo(next, fadeDuration, false);
+    const previousAction = this.currentAction;
+    const hasPreviousAction = !!previousAction && previousAction !== next;
+    if (hasPreviousAction) previousAction!.crossFadeTo(next, fadeDuration, false);
     if (phase === 'base') {
       this.idleCyclesUntilDecision = 2 + Math.floor(Math.random() * 3);
       next.reset().setLoop(THREE.LoopRepeat, Infinity).setEffectiveWeight(1).setEffectiveTimeScale(1);
@@ -746,7 +774,8 @@ export class AnimationController {
       next.reset().setLoop(THREE.LoopOnce, 1).setEffectiveWeight(1).setEffectiveTimeScale(1);
       next.clampWhenFinished = true;
     }
-    if (this.currentAction !== next) next.fadeIn(fadeDuration);
+    if (hasPreviousAction) next.fadeIn(fadeDuration);
+    else next.stopFading().setEffectiveWeight(1);
     next.play();
     this.currentAction = next;
     this.currentState = 'Idle';

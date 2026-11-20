@@ -9,6 +9,16 @@ export type ProgressKeyId =
   | 'key5_pots'
   | 'key6_qi_celestial';
 
+/** The five progression rewards displayed for the introductory level. The
+ * optional pot key is deliberately excluded from the five level slots. */
+export const LEVEL_PROGRESS_KEY_IDS = [
+  'key4_curiosity',
+  'key1_gekko',
+  'key2_boss',
+  'key6_qi_celestial',
+  'key3_platform',
+] as const satisfies readonly ProgressKeyId[];
+
 export interface KeyAssetDefinition {
   name: string;
   /** Fixed visual slot in the progression HUD; never based on pickup order. */

@@ -846,8 +846,13 @@ export class TwinCatsChallenge {
     this.audio.playMagicLetterPickup();
     this.createMagicBurst(pickedPosition, 20);
     this.hud.setManekiNekoOwned(true, true);
+    this.hud.showRewardToast(
+      'RECOMPENSA OBTENIDA',
+      'Maneki Neko · Amuleto del Gato de la Abundancia',
+      `${import.meta.env.BASE_URL}assets/quest/maneki_neko.png`,
+      8200,
+    );
     this.onRewardCollected(true);
-    this.showShortDialogue('¡Cuídalo mucho, Wukong! Ojalá su pequeña patita te recuerde que siempre habrá amigos deseándote suerte, estés donde estés.');
   }
 
   public cancel(): void {

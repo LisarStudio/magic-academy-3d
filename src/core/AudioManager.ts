@@ -811,6 +811,43 @@ export class AudioManager {
     osc.stop(now + 0.3);
   }
 
+  /** Tiny synthesized coin shimmer for the level-progress counter. */
+  public playProgressCoinTick(index: number): void {
+    if (this.sfxVolume * this.masterVolume <= 0.001) return;
+    try {
+      const ctx = this.initCtx();
+      const now = ctx.currentTime;
+      const scale = [659.25, 783.99, 987.77, 1174.66, 1318.51];
+      const frequency = scale[index % scale.length]!;
+      const master = ctx.createGain();
+      master.gain.setValueAtTime(0.0001, now);
+      master.gain.exponentialRampToValueAtTime(0.035 * this.sfxVolume * this.masterVolume, now + 0.006);
+      master.gain.exponentialRampToValueAtTime(0.0001, now + 0.065);
+      master.connect(ctx.destination);
+
+      const fundamental = ctx.createOscillator();
+      fundamental.type = 'sine';
+      fundamental.frequency.setValueAtTime(frequency, now);
+      fundamental.frequency.exponentialRampToValueAtTime(frequency * 1.04, now + 0.045);
+      fundamental.connect(master);
+      fundamental.start(now);
+      fundamental.stop(now + 0.07);
+
+      const sparkle = ctx.createOscillator();
+      sparkle.type = 'triangle';
+      sparkle.frequency.setValueAtTime(frequency * 2.01, now);
+      const sparkleGain = ctx.createGain();
+      sparkleGain.gain.setValueAtTime(0.18, now);
+      sparkleGain.connect(master);
+      sparkle.connect(sparkleGain);
+      sparkle.start(now);
+      sparkle.stop(now + 0.045);
+      window.setTimeout(() => { try { master.disconnect(); } catch { /* already disconnected */ } }, 100);
+    } catch (error) {
+      console.debug('[AudioManager] Progress coin tick was skipped.', error);
+    }
+  }
+
   public playFrogPickup(): void {
     const ctx = this.initCtx();
     const now = ctx.currentTime;

@@ -3,8 +3,12 @@ import type { SpellType } from '../spells/SpellProjectile';
 import { EquipmentViewer } from './EquipmentViewer';
 import { MobileTouchControls } from './MobileTouchControls';
 import { usesTouchControls } from '../core/ControlMode';
-import { KEY_ASSETS, type ProgressKeyId } from '../collectibles/KeyAssetCatalog';
+import { KEY_ASSETS, LEVEL_PROGRESS_KEY_IDS, type ProgressKeyId } from '../collectibles/KeyAssetCatalog';
 import { CinematicDialogueUI, type CinematicDialogueOptions } from './CinematicDialogueUI';
+
+// The introductory level has five key slots. The pot reward is a separate,
+// optional key asset and must not add a sixth locked socket to this HUD row.
+const LEVEL_HUD_KEY_IDS: readonly ProgressKeyId[] = LEVEL_PROGRESS_KEY_IDS;
 
 export class HUD {
   private hudTopLeftEl: HTMLElement;
@@ -94,13 +98,15 @@ export class HUD {
   private lastObjectiveText: string = '';
   private interactionPromptRequested = false;
   private infoToastEl: HTMLElement;
+  private infoToastIconEl: HTMLImageElement;
+  private infoToastContentEl: HTMLElement;
   private infoToastSpeakerEl: HTMLElement;
   private infoToastTextEl: HTMLElement;
   private infoToastTimer: number | null = null;
   private infoToastHideTimer: number | null = null;
   private infoToastPriority = 0;
   private infoToastVisible = false;
-  private queuedInfoToast: { speaker: string; text: string; durationMs: number; priority: number } | null = null;
+  private queuedInfoToast: { speaker: string; text: string; durationMs: number; priority: number; iconSrc?: string } | null = null;
 
   public isDebugMode = false;
 
@@ -170,11 +176,18 @@ export class HUD {
     this.infoToastEl.setAttribute('role', 'status');
     this.infoToastEl.setAttribute('aria-live', 'polite');
     this.infoToastEl.setAttribute('aria-hidden', 'true');
+    this.infoToastIconEl = document.createElement('img');
+    this.infoToastIconEl.className = 'hud-info-toast-icon';
+    this.infoToastIconEl.alt = '';
+    this.infoToastIconEl.hidden = true;
+    this.infoToastContentEl = document.createElement('span');
+    this.infoToastContentEl.className = 'hud-info-toast-content';
     this.infoToastSpeakerEl = document.createElement('strong');
     this.infoToastSpeakerEl.className = 'hud-info-toast-speaker';
     this.infoToastTextEl = document.createElement('span');
     this.infoToastTextEl.className = 'hud-info-toast-text';
-    this.infoToastEl.append(this.infoToastSpeakerEl, this.infoToastTextEl);
+    this.infoToastContentEl.append(this.infoToastSpeakerEl, this.infoToastTextEl);
+    this.infoToastEl.append(this.infoToastIconEl, this.infoToastContentEl);
     document.getElementById('ui-overlay')?.appendChild(this.infoToastEl);
     this.createLetterChallengeSlots();
     if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('hudDebug')) {
@@ -833,16 +846,17 @@ export class HUD {
 
   public setCollectedKeys(ids: string[], animateNewlyAcquired = true): void {
     if (!this.collectedKeysEl) return;
-    const uniqueIds = [...new Set(ids)].filter((id) => !!KEY_ASSETS[id as ProgressKeyId]);
+    const levelKeyIds = new Set<string>(LEVEL_HUD_KEY_IDS);
+    const uniqueIds = [...new Set(ids)].filter((id) => levelKeyIds.has(id) && !!KEY_ASSETS[id as ProgressKeyId]);
     this.collectedKeysEl.replaceChildren();
     this.collectedKeysEl.setAttribute('aria-label', uniqueIds.length
       ? `Llaves obtenidas: ${uniqueIds.map((id) => KEY_ASSETS[id as ProgressKeyId]!.name).join(', ')}`
       : 'Todavía no has obtenido llaves');
 
     const acquired = new Set(uniqueIds);
-    const ordered = Object.entries(KEY_ASSETS)
-      .filter((entry): entry is [ProgressKeyId, NonNullable<typeof entry[1]>] => !!entry[1])
-      .sort((a, b) => a[1].slotIndex - b[1].slotIndex);
+    const ordered = LEVEL_HUD_KEY_IDS
+      .map((id) => [id, KEY_ASSETS[id]] as const)
+      .filter((entry): entry is readonly [ProgressKeyId, NonNullable<typeof entry[1]>] => !!entry[1]);
     ordered.forEach(([id, asset]) => {
       const slot = document.createElement('span');
       const unlocked = acquired.has(id);
@@ -998,7 +1012,12 @@ export class HUD {
     this.displayInfoToast(message);
   }
 
-  private displayInfoToast(message: { speaker: string; text: string; durationMs: number; priority: number }): void {
+  /** Show a readable collectible card using the supplied in-game artwork. */
+  public showRewardToast(speaker: string, text: string, iconSrc: string, durationMs = 7600): void {
+    this.displayInfoToast({ speaker, text, iconSrc, durationMs, priority: 4 });
+  }
+
+  private displayInfoToast(message: { speaker: string; text: string; durationMs: number; priority: number; iconSrc?: string }): void {
     if (this.infoToastTimer !== null) window.clearTimeout(this.infoToastTimer);
     if (this.infoToastHideTimer !== null) window.clearTimeout(this.infoToastHideTimer);
     this.infoToastTimer = null;
@@ -1007,6 +1026,11 @@ export class HUD {
     this.infoToastVisible = true;
     this.infoToastSpeakerEl.textContent = message.speaker;
     this.infoToastTextEl.textContent = message.text;
+    this.infoToastEl.classList.toggle('has-artwork', !!message.iconSrc);
+    this.infoToastIconEl.hidden = !message.iconSrc;
+    if (message.iconSrc && this.infoToastIconEl.getAttribute('src') !== message.iconSrc) {
+      this.infoToastIconEl.src = message.iconSrc;
+    }
     this.infoToastEl.classList.remove('hidden', 'is-visible', 'is-right');
     this.infoToastEl.setAttribute('aria-hidden', 'false');
     const leftOverlaps = this.infoToastOverlapsVisibleUI('left');

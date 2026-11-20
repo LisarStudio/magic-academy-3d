@@ -72,6 +72,10 @@ export class Game {
   private staffChargeStartedAt = 0;
   private staffChargeActive = false;
   private pendingStaffDamageMultiplier = 1;
+  private continueAllKeysPromptPending = false;
+  private continueAllKeysPromptElapsed = 0;
+  private suppressProgressWrites = false;
+  private pauseProgressTransitionActive = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.sceneManager = new SceneManager(canvas);
@@ -128,7 +132,22 @@ export class Game {
       onTransitionComplete: async (mode, slotId) => {
         this.mainMenu.setInGameLoadingIndeterminate('Cargando a Wukong…');
         await this.ensureGameplayPrepared();
-        this.beginGameplay(mode, slotId);
+        if (mode === 'continue') {
+          this.suppressProgressWrites = true;
+          let loaded = false;
+          try { loaded = this.loadGame(slotId, true); }
+          finally { this.suppressProgressWrites = false; }
+          if (!loaded) throw new Error(`No se pudo restaurar la partida ${slotId + 1}.`);
+          const save = getSaveSlots()[slotId];
+          if (!save) throw new Error(`La ranura ${slotId + 1} dejó de estar disponible.`);
+          await this.mainMenu.presentLevelProgress(save, slotId, (selectedSlot) => {
+            const before = getSaveSlots()[selectedSlot]?.timestamp ?? 0;
+            this.saveGameNow(false, selectedSlot);
+            const written = getSaveSlots()[selectedSlot];
+            return !!written && written.slotId === selectedSlot && (Number(written.timestamp) || 0) >= before;
+          });
+          this.beginGameplay(mode, slotId, true);
+        } else this.beginGameplay(mode, slotId);
         this.sceneManager.render();
       },
       onSaveSlotAction: (mode, slotId) => {
@@ -159,6 +178,7 @@ export class Game {
         this.sceneManager.renderer.setSize(window.innerWidth, window.innerHeight);
       },
       onSelect: () => this.audioManager.playMenuSelect(),
+      onProgressCoinTick: (index) => this.audioManager.playProgressCoinTick(index),
       onReturnToMenu: () => { void this.audioManager.startIntroMusic(); }
     });
     this.assetManager.onProgress = (loaded, total, url) => this.mainMenu.setInGameLoadingProgress(loaded, total, url, 'Cargando a Wukong');
@@ -231,10 +251,11 @@ export class Game {
       idleAvailable: playerData.clips.some((clip) => clip.name === 'Idle_Unarmed' || clip.name === 'Idle_Armed'),
       runAvailable: playerData.clips.some((clip) => clip.name === 'Run_Unarmed' || clip.name === 'Run_Armed'),
     });
-    this.sceneManager.scene.add(playerData.model);
-
-    // 2. Setup AnimationController & PlayerController
+    // 2. Apply the first idle pose before the model becomes renderable. The
+    // bind pose is a T-pose on this rig, so adding it to the scene first caused
+    // the spawn flash users reported on slower devices.
     this.animationController = new AnimationController(playerData.model, playerData.clips);
+    this.sceneManager.scene.add(playerData.model);
     this.player = new PlayerController(playerData.model as THREE.Group, this.animationController, playerData.staffModel);
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
@@ -588,12 +609,6 @@ export class Game {
     document.getElementById('btn-life-abandon')?.addEventListener('click', () => this.abandonAfterGameOver());
     this.inputManager.onPauseToggle = () => {
       if (this.menuState !== 'Playing') return;
-      const returnConfirmation = document.getElementById('pause-return-confirm');
-      if (this.isPaused && returnConfirmation && !returnConfirmation.classList.contains('hidden')) {
-        returnConfirmation.classList.add('hidden');
-        document.getElementById('btn-pause-main-menu')?.focus();
-        return;
-      }
       this.togglePause();
     };
 
@@ -603,27 +618,12 @@ export class Game {
     document.getElementById('btn-pause-equipment')?.addEventListener('click', () => {
       this.showPausePanel('equipment');
     });
-    const returnConfirmation = document.getElementById('pause-return-confirm');
-    const returnToMenuButton = document.getElementById('btn-pause-main-menu');
-    returnToMenuButton?.addEventListener('click', () => {
-      returnConfirmation?.classList.remove('hidden');
-      document.getElementById('btn-pause-save-and-menu')?.focus();
+    document.getElementById('btn-pause-main-menu')?.addEventListener('click', () => {
+      void this.leavePauseThroughProgress('main-menu');
     });
-    document.getElementById('btn-pause-cancel-menu')?.addEventListener('click', () => {
-      returnConfirmation?.classList.add('hidden');
-      returnToMenuButton?.focus();
+    document.getElementById('btn-pause-level-select')?.addEventListener('click', () => {
+      void this.leavePauseThroughProgress('level-select');
     });
-    const leaveForMainMenu = (): void => {
-      this.isPaused = false;
-      this.inputManager.resetInputs();
-      this.hud.showPauseMenu(false);
-      void this.mainMenu.returnToMainMenu();
-    };
-    document.getElementById('btn-pause-save-and-menu')?.addEventListener('click', () => {
-      this.saveGameNow(false);
-      leaveForMainMenu();
-    });
-    document.getElementById('btn-pause-discard-and-menu')?.addEventListener('click', leaveForMainMenu);
 
     btnReplay?.addEventListener('click', () => {
       window.location.reload();
@@ -650,13 +650,15 @@ export class Game {
     }, { passive: false });
   }
 
-  private beginGameplay(mode: StartMode, slotId = this.activeSaveSlot): void {
+  private beginGameplay(mode: StartMode, slotId = this.activeSaveSlot, alreadyLoaded = false): void {
     this.activeSaveSlot = slotId;
     this.hud.hideBossHealth();
     this.audioManager.resume();
     this.audioManager.startGameplayMusic();
     this.inputManager.resetInputs();
     this.gameOverActive = false;
+    this.continueAllKeysPromptPending = false;
+    this.continueAllKeysPromptElapsed = 0;
     if (mode === 'new') {
       this.playTimeBaseSeconds = 0;
       this.sessionPlayTimeSeconds = 0;
@@ -667,7 +669,8 @@ export class Game {
     }
 
     if (mode === 'continue') {
-      this.loadGame(slotId);
+      if (!alreadyLoaded && !this.loadGame(slotId, true)) throw new Error(`No se pudo restaurar la partida ${slotId + 1}.`);
+      this.continueAllKeysPromptPending = this.level01.hasAllAvailableLevelKeys();
     } else {
       this.player.mesh.position.set(0, 0.2, 10);
       this.player.mesh.rotation.set(0, Math.PI, 0);
@@ -900,8 +903,64 @@ export class Game {
     if (messageElement) messageElement.textContent = message;
   }
 
+  private async leavePauseThroughProgress(destination: 'main-menu' | 'level-select'): Promise<void> {
+    if (this.pauseProgressTransitionActive || !this.isPaused) return;
+    const snapshot = this.createCurrentSaveData();
+    if (!snapshot) {
+      this.setPauseContext('Progreso no disponible', 'No se pudo leer el estado de la partida. Puedes reanudar y volver a intentarlo.');
+      this.showPausePanel('home');
+      return;
+    }
+
+    this.pauseProgressTransitionActive = true;
+    // Freeze any deferred autosave so the player's explicit "Salir sin
+    // guardar" choice remains meaningful. The live snapshot is read-only.
+    if (this.pendingSaveTimer !== null) {
+      const idleWindow = window as Window & { cancelIdleCallback?: (id: number) => void };
+      if (this.pendingSaveUsesIdleCallback) idleWindow.cancelIdleCallback?.(this.pendingSaveTimer);
+      else window.clearTimeout(this.pendingSaveTimer);
+      this.pendingSaveTimer = null;
+    }
+    this.inputManager.resetInputs();
+    this.hud.showPauseMenu(false);
+
+    try {
+      await this.mainMenu.presentLevelProgress(snapshot, this.activeSaveSlot, (slotId) => {
+        if (slotId !== this.activeSaveSlot) return false;
+        const before = getSaveSlots()[slotId]?.timestamp ?? 0;
+        this.saveGameNow(false, slotId);
+        const written = getSaveSlots()[slotId];
+        return !!written && written.slotId === slotId && (Number(written.timestamp) || 0) >= before;
+      }, destination);
+      this.isPaused = false;
+      this.inputManager.resetInputs();
+      this.hud.hideDialogue();
+      this.hud.showPauseMenu(false);
+      this.hud.hideBossHealth();
+      await this.mainMenu.returnToMainMenu();
+      if (destination === 'level-select') this.mainMenu.showLevelSelector();
+    } catch (error) {
+      console.error('[Game] Could not open the pause progress route.', error);
+      this.hud.showPauseMenu(true);
+      this.showPausePanel('home');
+    } finally {
+      this.pauseProgressTransitionActive = false;
+    }
+  }
+
   public updatePauseAudioPreferences(music: number, effects: number): void {
     this.mainMenu.updateAudioPreferences(music, effects);
+  }
+
+  /** Save progress and return to the existing start menu. */
+  public returnToMainMenu(): void {
+    this.saveGameNow(false);
+    this.isPaused = false;
+    this.inputManager.resetInputs();
+    this.hud.hideDialogue();
+    this.hud.showPauseMenu(false);
+    this.hud.hideBossHealth();
+    void this.mainMenu.returnToMainMenu();
   }
 
   public showStartupError(error: unknown): void {
@@ -924,6 +983,13 @@ export class Game {
     if (this.menuState === 'Playing' && !document.hidden) {
       this.diagnostics.recordFrame(elapsed * 1000, this.sceneManager.renderer, this.menuState, this.isPaused, elapsed);
       if (!this.isPaused) this.sessionPlayTimeSeconds += elapsed;
+      if (!this.isPaused && this.continueAllKeysPromptPending) {
+        this.continueAllKeysPromptElapsed += elapsed;
+        if (this.continueAllKeysPromptElapsed >= 20 && !this.gameOverActive && this.player.health > 0 &&
+            this.level01.showAllKeysContinueDecision()) {
+          this.continueAllKeysPromptPending = false;
+        }
+      }
     }
     this.updateAdaptiveResolution(elapsed);
     this.hud.mobileControls?.setGameplayEnabled(this.menuState === 'Playing' && !this.isPaused);
@@ -1120,6 +1186,7 @@ export class Game {
     // those writes outside the interaction frame so JSON serialization and
     // synchronous localStorage I/O cannot hitch the pickup animation.
     if (!showNotification) {
+      if (this.suppressProgressWrites) return;
       this.scheduleProgressSave();
       return;
     }
@@ -1158,8 +1225,15 @@ export class Game {
   }
 
   private writeSaveGame(showNotification: boolean): void {
-    if (!this.gameplayPrepared || !this.player || !this.level01) return;
-    const saveData = {
+    const saveData = this.createCurrentSaveData();
+    if (!saveData) return;
+    setSaveSlot(this.activeSaveSlot, saveData);
+    if (showNotification) this.subtitleSystem.show('Guardado', '¡Partida guardada exitosamente!');
+  }
+
+  private createCurrentSaveData(): SaveData | null {
+    if (!this.gameplayPrepared || !this.player || !this.level01) return null;
+    return {
       version: 8,
       slotId: this.activeSaveSlot,
       levelId: 'magic-academy-3d',
@@ -1195,11 +1269,9 @@ export class Game {
       playTimeSeconds: Math.floor(this.playTimeBaseSeconds + this.sessionPlayTimeSeconds),
       timestamp: Date.now()
     };
-    setSaveSlot(this.activeSaveSlot, saveData);
-    if (showNotification) this.subtitleSystem.show('Guardado', '¡Partida guardada exitosamente!');
   }
 
-  public loadGame(slotId = this.activeSaveSlot): boolean {
+  public loadGame(slotId = this.activeSaveSlot, suppressAvailableKeysCelebration = false): boolean {
     const data = getSaveSlots()[slotId] as SaveData | null;
     if (!data) {
       this.subtitleSystem.show('Guardado', 'No se encontró ninguna partida guardada.');
@@ -1277,7 +1349,7 @@ export class Game {
       this.playTimeBaseSeconds = Math.max(0, Number(data.playTimeSeconds) || 0);
       this.sessionPlayTimeSeconds = 0;
       this.subtitleSystem.show('Cargado', '¡Partida cargada exitosamente!');
-      this.level01.showAvailableKeysCelebrationIfReady();
+      this.level01.showAvailableKeysCelebrationIfReady(suppressAvailableKeysCelebration);
       console.log('[SaveSystem] Game loaded:', data);
       return true;
     } catch (e) {

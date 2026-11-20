@@ -286,6 +286,7 @@
                 <button id="btn-pause-options" class="pause-action" type="button" aria-pressed="false"><svg class="pause-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="M13 3h6l1 4 3 1 3-2 4 5-3 3v4l3 3-4 5-4-2-3 1-1 4h-6l-1-4-3-1-4 2-4-5 3-3v-4l-3-3 4-5 4 2 3-1z"/><circle cx="16" cy="16" r="5"/></svg><span>Opciones</span></button>
                 <button id="btn-save-game" class="pause-action" type="button" aria-pressed="false"><svg class="pause-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 3h19l5 5v21H3V3zM9 3v9h14V3M9 29V18h14v11M12 6h6v4h-6z"/></svg><span>Guardar partida</span></button>
                 <button id="btn-load-game" class="pause-action" type="button" aria-pressed="false"><svg class="pause-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="M3 8h11l3 4h12v16H3zM3 8V4h10l3 4"/></svg><span>Cargar partida</span></button>
+                <button id="btn-pause-level-select" class="pause-action" type="button"><svg class="pause-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 28 9v14l-12 6L4 23V9zM4 9l12 6 12-6M16 15v14M10 6l12 6"/></svg><span>Ir a selección de nivel</span></button>
                 <button id="btn-pause-main-menu" class="pause-action" type="button"><svg class="pause-icon" viewBox="0 0 32 32" aria-hidden="true"><path d="M19 5h9v22h-9M16 10l7 6-7 6M23 16H4"/></svg><span>Volver al men&uacute;</span></button>
               </nav>
 
@@ -446,6 +447,18 @@
                 <div class="dialog-actions"><button id="btn-cancel-new" class="dialog-button" type="button">Volver</button><button id="btn-confirm-new" class="dialog-button dialog-button-danger" type="button">Empezar de nuevo</button></div>
               </div>
               <p id="dialog-error" class="dialog-error hidden" role="alert"></p>
+              <div id="level-selector-content" class="dialog-content level-selector-content hidden" aria-labelledby="dialog-title">
+                <p class="level-selector-intro">Elige un nivel desbloqueado para continuar tu aventura.</p>
+                <button id="btn-level-1-select" class="level-selector-card" type="button">
+                  <span class="level-selector-card-kicker">REINO CELESTIAL</span>
+                  <strong>NIVEL 1</strong>
+                  <span>Nivel introductorio</span>
+                  <small id="level-selector-progress">Sin partida guardada</small>
+                </button>
+                <div class="dialog-actions">
+                  <button id="btn-level-selector-back" class="dialog-button" type="button">Volver al menú principal</button>
+                </div>
+              </div>
             </div>
           </div>
         </section>

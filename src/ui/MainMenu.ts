@@ -1,6 +1,8 @@
 import { getControlModePreference, setControlModePreference, type ControlModePreference } from '../core/ControlMode';
-import { getSaveSlots } from '../core/SaveSlotStore';
-import { SaveSlotMenu, type SaveSlotMenuMode } from './SaveSlotMenu';
+import { getActiveSaveSlot, getSaveSlots } from '../core/SaveSlotStore';
+import type { SaveData } from '../core/SaveSlotStore';
+import { getSaveProgress } from '../core/GameProgress';
+import { SaveSlotMenu, type ProgressExitDestination, type SaveSlotMenuMode } from './SaveSlotMenu';
 
 export type MenuState = 'Loading' | 'Intro' | 'MenuIdle' | 'StartingGame' | 'Playing';
 export type StartMode = 'new' | 'continue';
@@ -21,6 +23,7 @@ interface MainMenuCallbacks {
   onSaveSlotClosed?: () => void;
   onPreferences: (preferences: MenuPreferences) => void;
   onSelect: () => void;
+  onProgressCoinTick?: (index: number) => void;
   onReturnToMenu?: () => void;
 }
 
@@ -43,7 +46,8 @@ export class MainMenu {
   private readonly creditsActions = document.querySelector('.credits-actions')!;
   private readonly confirmContent = document.getElementById('confirm-content')!;
   private readonly dialogError = document.getElementById('dialog-error')!;
-  private readonly saveSlotMenu = new SaveSlotMenu();
+  private readonly levelSelectorContent = document.getElementById('level-selector-content')!;
+  private readonly saveSlotMenu: SaveSlotMenu;
   private readonly continueButton = document.getElementById('btn-continue') as HTMLButtonElement;
   private readonly newGameButton = document.getElementById('btn-new-game') as HTMLButtonElement;
   private readonly menuButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.menu-actions button'));
@@ -72,6 +76,7 @@ export class MainMenu {
 
   constructor(callbacks: MainMenuCallbacks) {
     this.callbacks = callbacks;
+    this.saveSlotMenu = new SaveSlotMenu((index) => callbacks.onProgressCoinTick?.(index));
     const base = import.meta.env.BASE_URL;
     const mobileMedia = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
     const introPath = mobileMedia
@@ -519,6 +524,11 @@ export class MainMenu {
     document.getElementById('btn-options')!.addEventListener('click', () => this.openDialog('options'));
     document.getElementById('btn-credits')!.addEventListener('click', () => this.openDialog('credits'));
     document.getElementById('btn-dialog-close')!.addEventListener('click', () => this.closeDialog());
+    document.getElementById('btn-level-selector-back')!.addEventListener('click', () => this.closeDialog());
+    document.getElementById('btn-level-1-select')!.addEventListener('click', () => {
+      this.closeDialog();
+      this.openSaveSlots(this.hasValidSave() ? 'continue' : 'new');
+    });
     document.getElementById('btn-credits-back')!.addEventListener('click', () => this.closeDialog());
     document.getElementById('btn-cancel-new')!.addEventListener('click', () => this.closeDialog());
     document.getElementById('btn-confirm-new')!.addEventListener('click', () => {
@@ -627,6 +637,34 @@ export class MainMenu {
       this.refreshContinueButton();
       this.callbacks.onSaveSlotClosed?.();
     });
+  }
+
+  public presentLevelProgress(
+    save: SaveData,
+    slotId: number,
+    saveAction: (slotId: number) => boolean,
+    exitDestination: ProgressExitDestination | null = null,
+  ): Promise<boolean> {
+    return this.saveSlotMenu.presentLevelProgress(save, slotId, saveAction, exitDestination);
+  }
+
+  /** Show the implemented level selection entry and route into the slot flow. */
+  public showLevelSelector(): void {
+    this.openDialog('options');
+    this.optionsContent.classList.add('hidden');
+    this.levelSelectorContent.classList.remove('hidden');
+    this.dialogTitle.textContent = 'Selector de niveles';
+    const saves = getSaveSlots();
+    const selected = saves[getActiveSaveSlot()] ?? saves.find((save) => save !== null) ?? null;
+    const progress = document.getElementById('level-selector-progress');
+    const action = document.getElementById('btn-level-1-select');
+    if (progress) progress.textContent = selected
+      ? `Progreso guardado · ${getSaveProgress(selected).levelPercent}%`
+      : 'Sin partida guardada';
+    if (action) action.setAttribute('aria-label', selected
+      ? 'Continuar Nivel 1 desde una partida guardada'
+      : 'Empezar una partida nueva en el Nivel 1');
+    this.levelSelectorContent.querySelector<HTMLButtonElement>('#btn-level-1-select')?.focus();
   }
 
   private async prepareStartVideo(): Promise<void> {
@@ -888,6 +926,7 @@ export class MainMenu {
     this.creditsContent.classList.toggle('hidden', view !== 'credits');
     this.creditsActions.classList.toggle('hidden', view !== 'credits');
     this.confirmContent.classList.toggle('hidden', view !== 'confirm');
+    this.levelSelectorContent.classList.add('hidden');
     this.dialogTitle.textContent = view === 'options' ? 'Opciones' : view === 'credits' ? 'Créditos' : 'Nueva partida';
     this.dialogError.classList.add('hidden');
     document.getElementById('btn-dialog-retry')?.classList.add('hidden');
@@ -899,6 +938,7 @@ export class MainMenu {
   private closeDialog(): void {
     this.dialog.classList.add('hidden');
     this.dialogError.classList.add('hidden');
+    this.levelSelectorContent.classList.add('hidden');
     document.getElementById('btn-dialog-retry')?.classList.add('hidden');
     document.getElementById('btn-new-game')?.focus();
   }

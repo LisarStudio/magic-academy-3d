@@ -18,6 +18,21 @@ export class AssetManager {
   public onProgress?: (loaded: number, total: number, url: string) => void;
   private playerTranslationScale = 0.01;
 
+  /** Let the loading screen paint between CPU-heavy FBX parse/retarget passes. */
+  private yieldToNextFrame(): Promise<void> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(fallback);
+        resolve();
+      };
+      const fallback = window.setTimeout(finish, 80);
+      window.requestAnimationFrame(finish);
+    });
+  }
+
   private async withAssetTimeout<T>(load: Promise<T>, url: string): Promise<T> {
     let timeoutId = 0;
     const timeoutMs = isLowPowerDevice() ? 25_000 : 45_000;
@@ -106,12 +121,20 @@ export class AssetManager {
         void hipsBoneKey; // suppress unused warning
 
         // 4. Retarget
+        const clipDuration = Math.max(0.05, rawClip.duration);
+        const sourceSamplingFps = rawClip.tracks.reduce(
+          (max, track) => Math.max(max, track.times.length / clipDuration),
+          0
+        );
         let retargeted = SkeletonUtils.retargetClip(targetClone, fbx, rawClip, {
           // @ts-ignore
           preserveBonePositions: true, 
           hip: sourceHipName,
           getBoneName: targetToSourceBoneName,
-          scale: translationScale
+          scale: translationScale,
+          // 24 sampled keys per second is smooth after Three.js interpolation
+          // and substantially reduces main-thread work for multi-second FBXs.
+          fps: Math.max(2 / clipDuration, Math.min(24, sourceSamplingFps))
         });
 
         retargeted.name = clipName;
@@ -149,15 +172,18 @@ export class AssetManager {
           const nodeName = separator >= 0 ? track.name.slice(0, separator) : '';
           return targetBoneNames.has(nodeName);
         });
-        if (clipName.startsWith('Idle_')) {
+        if (clipName.startsWith('Idle_') || clipName.startsWith('Run_')) {
           const animatedNames = retargeted.tracks.map((track) => {
             const separator = track.name.lastIndexOf('.');
             return (separator >= 0 ? track.name.slice(0, separator) : '').toLowerCase().replace(/[^a-z]/g, '');
           });
           const hasLeftArmPose = animatedNames.some((name) => name.endsWith('leftarm') || name.endsWith('leftforearm'));
           const hasRightArmPose = animatedNames.some((name) => name.endsWith('rightarm') || name.endsWith('rightforearm'));
-          if (!hasLeftArmPose || !hasRightArmPose) {
-            console.warn(`[AssetManager] Rejected '${clipName}' from ${url}: it does not animate both arms, so it would leave Wukong in a T-pose.`);
+          const hasLeftLegPose = animatedNames.some((name) => name.endsWith('leftupleg') || name.endsWith('leftleg') || name.endsWith('leftfoot'));
+          const hasRightLegPose = animatedNames.some((name) => name.endsWith('rightupleg') || name.endsWith('rightleg') || name.endsWith('rightfoot'));
+          if ((clipName.startsWith('Idle_') && (!hasLeftArmPose || !hasRightArmPose)) ||
+              (clipName.startsWith('Run_') && (!hasLeftArmPose || !hasRightArmPose || !hasLeftLegPose || !hasRightLegPose))) {
+            console.warn(`[AssetManager] Rejected '${clipName}' from ${url}: required limb tracks are missing; keeping the safe idle/run fallback.`);
             return null;
           }
         }
@@ -438,40 +464,37 @@ export class AssetManager {
 
       // ── 3. Player staff prop is managed authoritatively by PlayerController via StaffFactory ──
 
-      // ── 4. Load and retarget ALL animation clips in parallel (Instant Fast Startup) ──
-      const [
-        idleUnarmed,
-        runUnarmed,
-        jumpUnarmed,
-        wukongDoubleJump,
-        wukongFall,
-        takeItem,
-        idleArmed,
-        castSpellData,
-        staffModel
-      ] = await Promise.all([
-        // iddle_2.fbx is the calm second idle supplied for the gameplay loop.
-        // Keep the first iddle.fbx as its decorative kick variation; the
-        // separate wukong_kick.fbx remains exclusively the player attack.
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/iddle_2.fbx?v=20261025-idle2', 'Idle_Unarmed', playerModel, translationScaleFactor)
-          .then(async (clip) => clip || await this.loadAndRetargetClip(
-            import.meta.env.BASE_URL + 'assets/characters/wukong/iddle.fbx?v=startup-idle-fallback',
-            'Idle_Unarmed', playerModel!, translationScaleFactor
-          )),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Running.fbx', 'Run_Unarmed', playerModel, translationScaleFactor)
-          .then(async (clip) => clip || await this.loadAndRetargetClip(
-            import.meta.env.BASE_URL + 'assets/characters/Running_nowood.fbx',
-            'Run_Unarmed', playerModel!, translationScaleFactor
-          )),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/Jumping.fbx', 'Jump_Unarmed', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong_no_wood_double_jumpFront Flip.fbx?v=7', 'Wukong_NoWood_DoubleJump', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_falling_air.fbx', 'Fall_Unarmed', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Taking_item_nowood.fbx?v=7', 'TakeItem', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/Idle.fbx', 'Idle_Armed', playerModel, translationScaleFactor),
-        this.loadAndRetargetClip(import.meta.env.BASE_URL + 'assets/characters/wukong/wukong_atack_baculo.fbx', 'atack_wood', playerModel, translationScaleFactor)
-          .then(async (clip) => clip || (await this.loadAndRetargetGltfClip(import.meta.env.BASE_URL + 'assets/characters/atack_wood.glb', 'atack_wood', playerModel!))?.clip || null),
-        staffModelPromise
-      ]);
+      // Load only the animations needed for the first controllable frames.
+      // FBXLoader parsing and retargeting are CPU-bound; doing eight at once
+      // blocked rendering just as the level became playable, especially on
+      // phones. Yield between each essential clip and load optional moves later.
+      const idleUnarmed = await this.loadAndRetargetClip(
+        import.meta.env.BASE_URL + 'assets/characters/wukong/iddle_2.fbx?v=20261025-idle2',
+        'Idle_Unarmed', playerModel, translationScaleFactor
+      ) || await (async () => {
+        await this.yieldToNextFrame();
+        return this.loadAndRetargetClip(
+          import.meta.env.BASE_URL + 'assets/characters/wukong/iddle.fbx?v=startup-idle-fallback',
+          'Idle_Unarmed', playerModel!, translationScaleFactor
+        );
+      })();
+      await this.yieldToNextFrame();
+      const runUnarmed = await this.loadAndRetargetClip(
+        import.meta.env.BASE_URL + 'assets/characters/wukong/Running.fbx?v=run-cycle-v2',
+        'Run_Unarmed', playerModel, translationScaleFactor
+      ) || await (async () => {
+        await this.yieldToNextFrame();
+        return this.loadAndRetargetClip(
+          import.meta.env.BASE_URL + 'assets/characters/Running_nowood.fbx?v=run-cycle-fallback-v2',
+          'Run_Unarmed', playerModel!, translationScaleFactor
+        );
+      })();
+      await this.yieldToNextFrame();
+      const jumpUnarmed = await this.loadAndRetargetClip(
+        import.meta.env.BASE_URL + 'assets/characters/wukong/Jumping.fbx?v=jump-cycle-v2',
+        'Jump_Unarmed', playerModel, translationScaleFactor
+      );
+      const staffModel = await staffModelPromise;
 
       // Armed and unarmed movement use the same source FBX clips. Clone the
       // already retargeted actions instead of downloading and retargeting the
@@ -485,25 +508,8 @@ export class AssetManager {
       if (idleUnarmed) clips.push(idleUnarmed);
       if (runUnarmed) clips.push(runUnarmed);
       if (jumpUnarmed) clips.push(jumpUnarmed);
-      if (wukongDoubleJump) clips.push(wukongDoubleJump);
-      if (wukongFall) {
-        clips.push(wukongFall);
-        const armedFallClip = wukongFall.clone();
-        armedFallClip.name = 'Fall_Armed';
-        clips.push(armedFallClip);
-      }
-      if (takeItem) clips.push(takeItem);
-      if (idleArmed) clips.push(idleArmed);
       if (runArmed) clips.push(runArmed);
       if (jumpArmed) clips.push(jumpArmed);
-
-      if (castSpellData) {
-        clips.push(castSpellData);
-        // Keep the game-facing CastSpell name while the source action remains atack_wood.
-        const aliasClip = castSpellData.clone();
-        aliasClip.name = 'CastSpell';
-        clips.push(aliasClip);
-      }
       console.log(`[AssetManager] 🎬 Total clips loaded: ${clips.length} → [${clips.map((c) => c.name).join(', ')}]`);
 
       return { model: playerModel, clips, staffModel };
@@ -515,12 +521,17 @@ export class AssetManager {
 
   /** Load the damage reaction first so combat does not start without hit feedback. */
   public async loadDeferredStartupClips(targetRoot: THREE.Object3D): Promise<THREE.AnimationClip[]> {
-    const specs: Array<[string, string, string]> = [
+    const specs: Array<[string, string, string, boolean?]> = [
       ['assets/characters/wukong/Reaction.fbx', 'Reaction', '20261029-reaction'],
       ['assets/characters/wukong/wukong_kick.fbx', 'Wukong_NoWood_Kick', '20261026-supplemental'],
+      ['assets/characters/wukong_no_wood_double_jumpFront Flip.fbx', 'Wukong_NoWood_DoubleJump', 'double-jump-v8'],
+      ['assets/characters/wukong/wukong_falling_air.fbx', 'Fall_Unarmed', 'fall-cycle-v2'],
+      ['assets/characters/Taking_item_nowood.fbx', 'TakeItem', 'pickup-v8'],
+      ['assets/characters/Idle.fbx', 'Idle_Armed', 'armed-idle-v2'],
+      ['assets/characters/wukong/wukong_atack_baculo.fbx', 'atack_wood', 'staff-attack-v2', true],
     ];
     const clips: THREE.AnimationClip[] = [];
-    for (const [path, name, version] of specs) {
+    for (const [path, name, version, hasGltfFallback] of specs) {
       await new Promise<void>((resolve) => {
         const idleWindow = window as Window & {
           requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
@@ -529,13 +540,30 @@ export class AssetManager {
         else window.setTimeout(resolve, 450);
       });
       try {
-        const clip = await this.loadAndRetargetClip(
+        let clip = await this.loadAndRetargetClip(
           `${import.meta.env.BASE_URL}${path}?v=${version}`,
           name,
           targetRoot,
           this.playerTranslationScale
         );
+        if (!clip && hasGltfFallback) {
+          clip = (await this.loadAndRetargetGltfClip(
+            import.meta.env.BASE_URL + 'assets/characters/atack_wood.glb',
+            name,
+            targetRoot
+          ))?.clip ?? null;
+        }
         if (clip?.tracks.length) clips.push(clip);
+        if (name === 'atack_wood' && clip?.tracks.length) {
+          const castAlias = clip.clone();
+          castAlias.name = 'CastSpell';
+          clips.push(castAlias);
+        }
+        if (name === 'Fall_Unarmed' && clip?.tracks.length) {
+          const armedFall = clip.clone();
+          armedFall.name = 'Fall_Armed';
+          clips.push(armedFall);
+        }
       } catch (error) {
         console.warn(`[AssetManager] Deferred animation ${name} could not be prepared.`, error);
       }
