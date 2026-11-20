@@ -3139,12 +3139,6 @@ export class LevelToyStory {
           [-25, 0, -90], [25, 0, -90], [-40, 0, -80], [45, 0, -80], [0, 0, -105],
           [-35, 0, -10], [35, 0, -15], [-20, 0, -84], [20, 0, -84], [-50, 0, -45]
         ];
-        // The Qi route uses the exact same authored blossom trees as the rest
-        // of the map. Keep these as visual-only instances so the established
-        // staircase, perches and liana collision remain untouched.
-        const qiCanopyTreePositions: [number, number, number][] = [
-          [30, 0, 0], [38, 0, -10], [46, 0, 1], [54, 0, -9], [62, 0, 0],
-        ];
         // The paths are built synchronously before these async assets resolve.
         // Do not let a trunk or its collider intrude into a walkable corridor.
         const safePositions = positions.filter(([x, , z]) => !this.isVegetationNearPath(x, z, 3.2));
@@ -3199,7 +3193,7 @@ export class LevelToyStory {
             return material;
           });
           const treeMaterial = Array.isArray(mesh.material) ? treeMaterials : treeMaterials[0];
-          const instances = new THREE.InstancedMesh(mesh.geometry, treeMaterial, safePositions.length + qiCanopyTreePositions.length);
+          const instances = new THREE.InstancedMesh(mesh.geometry, treeMaterial, safePositions.length);
           instances.name = 'original_pinus_tree_instances';
           instances.castShadow = false;
           instances.receiveShadow = false;
@@ -3215,51 +3209,6 @@ export class LevelToyStory {
             baseMatrices.push(baseMatrix.clone());
             instances.setMatrixAt(i, baseMatrix);
             instances.setColorAt(i, blossomPalette[Math.floor(rand() * blossomPalette.length)]!);
-          });
-          qiCanopyTreePositions.forEach(([x, , z], routeIndex) => {
-            const i = safePositions.length + routeIndex;
-            // The first tree is the tutorial landmark: keep its authored trunk
-            // visible but omit its blossom crown so the treehouse remains clear.
-            if (routeIndex === 0 && foliageMaterialIndices.size > 0) {
-              const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
-              baseMatrices.push(hidden.clone());
-              instances.setMatrixAt(i, hidden);
-              if (instances.instanceColor) instances.setColorAt(i, new THREE.Color(0xffffff));
-
-              const trunkGroups = mesh.geometry.groups.filter((group) => !foliageMaterialIndices.has(group.materialIndex ?? 0));
-              if (Array.isArray(mesh.material) && trunkGroups.length > 0) {
-                const trunkGeometry = mesh.geometry.clone();
-                trunkGeometry.clearGroups();
-                trunkGroups.forEach((group) => trunkGeometry.addGroup(group.start, group.count, 0));
-                const trunkMaterialIndex = trunkGroups[0]!.materialIndex ?? 0;
-                const trunkMaterial = treeMaterials[trunkMaterialIndex]!;
-                const firstTreeTrunk = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, 1);
-                firstTreeTrunk.name = 'qi_canopy_tutorial_tree_trunk_only';
-                firstTreeTrunk.castShadow = false;
-                firstTreeTrunk.receiveShadow = false;
-                dummy.position.set(x, this.getTerrainHeight(x, z), z);
-                dummy.rotation.set(0, -0.35, 0);
-                dummy.scale.setScalar(0.64);
-                dummy.updateMatrix();
-                firstTreeTrunk.setMatrixAt(0, dummy.matrix.clone().multiply(relative));
-                firstTreeTrunk.instanceMatrix.needsUpdate = true;
-                firstTreeTrunk.computeBoundingSphere();
-                scene.add(firstTreeTrunk);
-              }
-              return;
-            }
-            const ground = this.getTerrainHeight(x, z);
-            // Slightly lighter/smaller crowns frame each landing rather than
-            // engulfing the walkable boards, chest or key pickup.
-            const scale = 0.64 + (routeIndex % 3) * 0.025;
-            dummy.position.set(x, ground, z);
-            dummy.rotation.set(0, [-0.35, 0.65, 1.15, -0.8, 0.25][routeIndex]!, 0);
-            dummy.scale.setScalar(scale);
-            dummy.updateMatrix();
-            const baseMatrix = dummy.matrix.clone().multiply(relative);
-            baseMatrices.push(baseMatrix.clone());
-            instances.setMatrixAt(i, baseMatrix);
-            instances.setColorAt(i, blossomPalette[(routeIndex + 1) % blossomPalette.length]!);
           });
           instances.instanceMatrix.needsUpdate = true;
           if (instances.instanceColor) instances.instanceColor.needsUpdate = true;
@@ -4944,6 +4893,28 @@ export class LevelToyStory {
       emissive: 0x201302, emissiveIntensity: 0.16, transparent: true, opacity: 0,
     });
     this.canopyPlatformsMaterial = platformMat;
+
+    // Restore the original authored oak trees for the Qi challenge. The broad,
+    // leafy silhouette and warm green material are part of the approved tree
+    // route; the generic blossom pines remain reserved for the surrounding map.
+    // This lightweight GLTF is cloned across the five route anchors, while the
+    // stair, landings, lianas and chest keep their existing colliders/rewards.
+    void new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}assets/environment/tree_oak.gltf?v=canopy-oak-1`)
+      .then(({ scene: oak }) => {
+        treeBases.forEach((treeBase, i) => {
+          const tree = oak.clone(true);
+          tree.name = `qi_canopy_oak_${i + 1}`;
+          tree.position.copy(treeBase);
+          tree.scale.setScalar([1.42, 1.12, 1.27, 1.05, 1.35][i]!);
+          tree.rotation.y = [-0.35, 0.65, 1.15, -0.8, 0.25][i]!;
+          tree.traverse((node) => {
+            const mesh = node as THREE.Mesh;
+            if (mesh.isMesh) { mesh.castShadow = true; mesh.receiveShadow = true; }
+          });
+          scene.add(tree);
+        });
+      })
+      .catch((error) => console.warn('[CanopyTrial] Could not load bundled oak model.', error));
 
     const addRouteMesh = (mesh: THREE.Mesh, name: string, collider = false) => {
       mesh.name = name;
