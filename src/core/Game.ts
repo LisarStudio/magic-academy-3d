@@ -51,7 +51,6 @@ export class Game {
   private gameplayPrepared = false;
   private gameplayPreparation: Promise<void> | null = null;
   private optionalSupportClipsScheduled = false;
-  private deferredStartupClipsScheduled = false;
   private pendingSaveTimer: number | null = null;
   private pendingSaveUsesIdleCallback = false;
   private activeSaveSlot = getActiveSaveSlot();
@@ -79,6 +78,10 @@ export class Game {
 
   constructor(canvas: HTMLCanvasElement) {
     this.sceneManager = new SceneManager(canvas);
+    // Start phones and lower-power computers with some GPU headroom instead of
+    // waiting for the first slow gameplay frames to trigger adaptive scaling.
+    this.renderScale = isMobileDevice() ? 0.88 : isLowPowerDevice() ? 0.92 : 1;
+    this.applyRenderResolution();
     this.diagnostics = new RuntimeDiagnostics();
     this.diagnostics.attachRenderer(canvas);
     window.addEventListener('pagehide', () => {
@@ -260,6 +263,10 @@ export class Game {
     // Prepare the chest pickup animation alongside level initialization. Loading
     // or retargeting its FBX on the first chest interaction caused a visible hitch.
     const staffPickupClipPromise = this.assetManager.loadStaffPickupClip(this.player.mesh);
+    // Core combat/traversal clips are part of readiness. Parse them while the
+    // loading transition is still covering the world so the first attacks,
+    // jumps and hit reactions never compete with live gameplay frames.
+    const gameplayClipsPromise = this.assetManager.loadDeferredStartupClips(this.player.mesh);
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
     this.player.onLivesChange = (lives) => this.hud.setLives(lives);
@@ -327,6 +334,8 @@ export class Game {
     await this.level01.init();
     const staffPickupClip = await staffPickupClipPromise;
     if (staffPickupClip?.tracks.length) this.animationController.addClips([staffPickupClip]);
+    const gameplayClips = await gameplayClipsPromise;
+    this.animationController.addClips(gameplayClips);
     console.info('[StartupPerf] Level initialization ready', {
       durationMs: +(performance.now() - levelInitializationStartedAt).toFixed(1),
       totalMs: +(performance.now() - preparationStartedAt).toFixed(1),
@@ -336,10 +345,8 @@ export class Game {
     // start compile its entire material set; the optional warmup is scheduled
     // after play begins when the device has an idle window.
 
-    // Optional traversal/continue clips are not required to enter the world:
-    // the essential run/jump/idle clips are already part of loadPlayerModel.
-    // Loading five FBX files serially here kept the loading screen up even
-    // though the player could already move. Prepare them later in idle time.
+    // Optional traversal/continue clips stay out of readiness; core gameplay
+    // clips above are prepared before the loading screen gives control back.
 
     // Focus camera on target AFTER the level is initialized and player is spawned at Checkpoint 0!
     this.cameraController.setTarget(this.player.mesh);
@@ -707,31 +714,19 @@ export class Game {
     document.getElementById('pause-screen')?.classList.add('hidden');
     this.hud.showGameplayHUD();
     if (mode === 'new') this.saveGameNow(false, slotId);
-    // Keep the first few seconds of gameplay responsive on phones and weaker
-    // GPUs. The authored grass remains intact, but its download/instancing now
-    // begins only when the browser has an idle window (or after a short delay).
+    // Keep startup interaction clear of the authored grass download, shader
+    // compilation and instance creation burst. The field builds only in idle
+    // time after the player has had a generous opening window to explore.
     const idleWindow = window as Window & {
       requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
     };
     window.setTimeout(() => {
       if (idleWindow.requestIdleCallback) {
-        idleWindow.requestIdleCallback(() => { void this.level01.loadGrassInBackground(); }, { timeout: 12000 });
+        idleWindow.requestIdleCallback(() => { void this.level01.loadGrassInBackground(); }, { timeout: 45000 });
       } else {
         void this.level01.loadGrassInBackground();
       }
-    }, 9000);
-    if (!this.deferredStartupClipsScheduled) {
-      this.deferredStartupClipsScheduled = true;
-      window.setTimeout(() => {
-        const loadDeferred = () => {
-          void this.assetManager.loadDeferredStartupClips(this.player.mesh)
-            .then((clips) => this.animationController.addClips(clips))
-            .catch((error) => console.warn('[Game] Deferred startup animations could not be prepared.', error));
-        };
-        if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(loadDeferred, { timeout: 1200 });
-        else loadDeferred();
-      }, 1800);
-    }
+    }, 25000);
     // Keep optional FBX parsing out of startup. Each clip loader is sequential
     // and yields between files; this work starts only after the player has had
     // time to enter the level, and failures do not affect the playable state.
@@ -743,9 +738,9 @@ export class Game {
             .then((clips) => this.animationController.addClips(clips))
             .catch((error) => console.warn('[Game] Optional support animations could not be prepared.', error));
         };
-        if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(loadSupportClips, { timeout: 15000 });
+        if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(loadSupportClips, { timeout: 45000 });
         else loadSupportClips();
-      }, 12000);
+      }, 60000);
     }
   }
 
@@ -1038,10 +1033,10 @@ export class Game {
   private updateAdaptiveResolution(elapsed: number): void {
     if (this.menuState !== 'Playing' || elapsed <= 0) return;
     const frameMs = Math.min(250, elapsed * 1000);
-    this.frameTimeAverageMs += (frameMs - this.frameTimeAverageMs) * 0.06;
+    this.frameTimeAverageMs += (frameMs - this.frameTimeAverageMs) * 0.14;
     this.performanceSampleElapsed += elapsed;
     this.performanceAdjustCooldown = Math.max(0, this.performanceAdjustCooldown - elapsed);
-    if (this.performanceSampleElapsed < 1 || this.performanceAdjustCooldown > 0) return;
+    if (this.performanceSampleElapsed < 0.5 || this.performanceAdjustCooldown > 0) return;
     this.performanceSampleElapsed = 0;
 
     const lowPowerDevice = isLowPowerDevice();
@@ -1053,10 +1048,10 @@ export class Game {
     // roughly 1.14x on common high-DPR phones (and ~0.95x on low-power phones),
     // while giving the GPU a meaningful recovery path instead of a fake knob.
     const minRenderScale = mobileDevice ? 0.76 : (lowPowerDevice ? 0.72 : 0.78);
-    if (this.frameTimeAverageMs > 17.5 && this.renderScale > minRenderScale) {
-      this.renderScale = Math.max(minRenderScale, this.renderScale - 0.08);
+    if (this.frameTimeAverageMs > 17 && this.renderScale > minRenderScale) {
+      this.renderScale = Math.max(minRenderScale, this.renderScale - 0.12);
       this.fastFrameSeconds = 0;
-      this.performanceAdjustCooldown = mobileDevice ? 1.25 : 1.5;
+      this.performanceAdjustCooldown = mobileDevice ? 0.75 : 0.9;
       this.applyRenderResolution();
       console.info(`[Performance] Frame time ${this.frameTimeAverageMs.toFixed(1)} ms; lowering render resolution to ${this.renderScale.toFixed(2)}x.`);
     } else if (this.frameTimeAverageMs < 15.5 && this.renderScale < 1) {
