@@ -697,6 +697,10 @@ export class AnimationController {
     // Run and Sprint share one compatible clip. Change cadence in place to
     // avoid restarting the stride or blending the character back to idle.
     if (this.currentAction === newAction) {
+      if (newState === 'Sprint' || newState === 'Run' || newState === 'Walk') {
+        newAction.setLoop(THREE.LoopRepeat, Infinity);
+        newAction.clampWhenFinished = false;
+      }
       newAction.setEffectiveTimeScale(movementTimeScale);
       newAction.play();
       this.currentState = newState;
@@ -708,7 +712,14 @@ export class AnimationController {
       this.currentAction.fadeOut(duration);
     }
 
-    newAction.reset().setEffectiveTimeScale(movementTimeScale).setEffectiveWeight(1).fadeIn(duration).play();
+    newAction.reset();
+    if (newState === 'Sprint' || newState === 'Run' || newState === 'Walk') {
+      // FBX actions may arrive with authored one-shot loop metadata. Force a
+      // continuous locomotion cycle so the run cannot freeze on its last pose.
+      newAction.setLoop(THREE.LoopRepeat, Infinity);
+      newAction.clampWhenFinished = false;
+    }
+    newAction.setEffectiveTimeScale(movementTimeScale).setEffectiveWeight(1).fadeIn(duration).play();
     this.currentAction = newAction;
     this.currentState = newState;
   }

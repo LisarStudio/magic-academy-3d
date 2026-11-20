@@ -16,8 +16,11 @@ const BASE_SPRINT_SPEED = BASE_WALK_SPEED * 2;
 const LOCOMOTION_SPEED_SCALE = 1.25;
 // Preserve the brisk walk while reducing the former sprint top speed by 25%.
 const SPRINT_SPEED_SCALE = LOCOMOTION_SPEED_SCALE * 0.75;
-const HORIZONTAL_ACCELERATION = 64;
-const HORIZONTAL_BRAKING = 86;
+// Strong, bounded acceleration makes the controller answer the player's
+// direction immediately; firmer ground braking removes the long foot-slide
+// that was visible after releasing or changing direction.
+const HORIZONTAL_ACCELERATION = 96;
+const HORIZONTAL_BRAKING = 180;
 const DOUBLE_JUMP_DESCENT_GRAVITY = -30;
 
 export class PlayerController {
@@ -998,7 +1001,13 @@ export class PlayerController {
       while (diff > Math.PI) diff -= Math.PI * 2;
       this.mesh.rotation.y += diff * Math.min(1.0, delta * 15.0);
     } else {
-      if (this.isGrounded) this.approachHorizontalVelocity(0, 0, HORIZONTAL_BRAKING * delta);
+      if (this.isGrounded) {
+        this.approachHorizontalVelocity(0, 0, HORIZONTAL_BRAKING * delta);
+        if (Math.hypot(this.velocity.x, this.velocity.z) < 0.12) {
+          this.velocity.x = 0;
+          this.velocity.z = 0;
+        }
+      }
       else {
         this.velocity.x *= 0.85;
         this.velocity.z *= 0.85;
@@ -1390,9 +1399,12 @@ export class PlayerController {
         (this.doubleJumpPivot.rotation.x + spinRate * delta) % (Math.PI * 2);
       this.doubleJumpSpinTimer = Math.max(0, this.doubleJumpSpinTimer - delta);
     } else if (this.isGrounded && !this.isAttacking) {
-      if (isMoving) {
-        const movementSpeedRatio = Math.hypot(this.velocity.x, this.velocity.z) / Math.max(0.01, currentSpeed);
-        this.animationController.playState(isSprinting ? 'Sprint' : 'Run', 0.2, movementSpeedRatio);
+      const actualHorizontalSpeed = Math.hypot(this.velocity.x, this.velocity.z);
+      // Animate the short, controlled deceleration too. Selecting Idle from
+      // input alone made the model stop running while momentum still moved it.
+      if (isMoving || actualHorizontalSpeed > 0.2) {
+        const movementSpeedRatio = actualHorizontalSpeed / Math.max(0.01, currentSpeed);
+        this.animationController.playState(isSprinting ? 'Sprint' : 'Run', 0.12, movementSpeedRatio);
       } else {
         this.animationController.playState('Idle');
       }

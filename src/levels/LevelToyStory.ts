@@ -881,6 +881,12 @@ export class LevelToyStory {
       applyGoldenTempleLut(routeTemple);
       this.addTempleCollision(routeTemple);
       this.addTempleStoneFloor(routeTemple);
+      const templePortal = this.portalManager.getPortalById('Portal_A_StaffTemple');
+      if (templePortal && this.centralTempleFloorTopY !== null) {
+        templePortal.position.y = this.centralTempleFloorTopY + 0.025;
+        templePortal.mesh.position.copy(templePortal.position);
+      }
+      this.keepTempleApproachCrabsOutside(routeTemple);
       this.addTempleInteriorLighting(routeTemple);
       this.addExteriorMoonlightEffects();
     } else {
@@ -2280,7 +2286,6 @@ export class LevelToyStory {
     let localFrontZ = -5.4;
     let localCenterX = 0;
     let localCenterZ = 0;
-    let mainStairHalfWidth = 4.8;
     if (temple) {
       temple.updateMatrixWorld(true);
       const footprint = temple.userData.templeLocalFootprint;
@@ -2390,7 +2395,6 @@ export class LevelToyStory {
     // the invisible ramp overshoot the visible steps and create a bad landing.
     if (temple) {
       const stairWidth = Math.max(7.2, Math.min(9.6, 6.1 * temple.scale.x));
-      mainStairHalfWidth = stairWidth * 0.5;
       const stairTop = temple.localToWorld(new THREE.Vector3(localCenterX, 0, localFrontZ));
       const stairFoot = temple.localToWorld(new THREE.Vector3(localCenterX, 0, localFrontZ - 2.15));
       const footY = this.getTerrainHeight(stairFoot.x, stairFoot.z) + 0.015;
@@ -2487,25 +2491,38 @@ export class LevelToyStory {
     }
 
     // Coins are created before environment GLBs finish loading. Re-seat temple
-    // coins after the actual stair/deck height is known so none are buried.
+    // coins against the finished deck and actual stair triangles so later
+    // asynchronous architecture placement cannot leave them beneath steps.
     const stairRay = new THREE.Raycaster();
     const stairOrigin = new THREE.Vector3();
     const down = new THREE.Vector3(0, -1, 0);
+    const templeBounds = temple ? new THREE.Box3().setFromObject(temple) : null;
     for (const item of this.collectibleSystem.collectibles) {
       if (item.type !== 'COIN' || item.isCollected) continue;
       const pos = item.mesh.position;
       if (pos.x >= floorCenterX - floorWidth * 0.5 && pos.x <= floorCenterX + floorWidth * 0.5 &&
           pos.z >= floorCenterZ - floorDepth * 0.5 && pos.z <= floorCenterZ + floorDepth * 0.5) {
         pos.y = topY + 0.6;
-      } else if (temple && Math.abs(pos.x - floorCenterX) <= mainStairHalfWidth + 0.25 && pos.z >= frontZ - 1 && pos.z <= frontZ + 10) {
-        stairOrigin.set(pos.x, groundY + 8, pos.z);
+      } else if (temple && templeBounds && pos.x >= templeBounds.min.x - 1.5 && pos.x <= templeBounds.max.x + 1.5 &&
+          pos.z >= templeBounds.min.z - 1.5 && pos.z <= templeBounds.max.z + 1.5) {
+        stairOrigin.set(pos.x, Math.max(topY, this.getTerrainHeight(pos.x, pos.z)) + 12, pos.z);
         stairRay.set(stairOrigin, down);
-        stairRay.far = 10;
+        stairRay.far = 28;
         const stairHit = stairRay.intersectObject(temple, true).find((hit) =>
           !!hit.face && hit.face.normal.clone().transformDirection(hit.object.matrixWorld).y > 0.82 &&
-          hit.point.y >= groundY - 0.15 && hit.point.y <= topY + 0.2
+          hit.point.y >= this.getTerrainHeight(pos.x, pos.z) - 0.15 && hit.point.y <= topY + 2.8
         );
-        pos.y = (stairHit?.point.y ?? this.getTerrainHeight(pos.x, pos.z)) + 0.6;
+        if (stairHit) {
+          pos.y = stairHit.point.y + 0.62;
+        } else {
+          // If a collectible falls inside the temple's covered footprint but
+          // has no walkable surface below it, move it just beyond the eave to
+          // visible ground instead of leaving it hidden under the structure.
+          const side = pos.x < floorCenterX ? -1 : 1;
+          pos.x = templeBounds.max.x + 2.1;
+          if (side < 0) pos.x = templeBounds.min.x - 2.1;
+          pos.y = this.getTerrainHeight(pos.x, pos.z) + 0.62;
+        }
       }
     }
 
@@ -5575,7 +5592,9 @@ export class LevelToyStory {
     // The existing PortalPair_01 connects this sanctuary to the Palace Atrium.
     // Manifest the temple endpoint over the center of the existing yin-yang.
     const staffPortalX = 0, staffPortalZ = -40;
-    const staffPortalY = this.getTerrainHeight(staffPortalX, staffPortalZ) + 0.16;
+    // The sanctuary disk sits on the raised, ray-measured interior deck. Using
+    // outdoor terrain here sunk the portal's rings/runes below the yin-yang.
+    const staffPortalY = (this.centralTempleFloorTopY ?? this.getTerrainHeight(staffPortalX, staffPortalZ)) + 0.025;
     const portalA = new RunicPortal({
       id: 'Portal_A_StaffTemple',
       pairId: 'PortalPair_01',
@@ -6667,6 +6686,37 @@ export class LevelToyStory {
         }
       };
     });
+  }
+
+  /** Keep the two old temple guards on walkable exterior ground, outside the
+   * measured building footprint. Their prior coordinates landed under the
+   * rear eaves, where they looked as if they were below the temple floor. */
+  private keepTempleApproachCrabsOutside(temple: THREE.Object3D): void {
+    temple.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(temple);
+    const centerZ = bounds.getCenter(new THREE.Vector3()).z;
+    const placements = [
+      { id: 'crab_second_floor_1', x: bounds.min.x - 1.8 },
+      { id: 'crab_second_floor_2', x: bounds.max.x + 1.8 },
+    ];
+    for (const placement of placements) {
+      const enemy = this.enemies.find((candidate) => candidate.id === placement.id);
+      if (!enemy) continue;
+      const x = placement.x;
+      const z = centerZ + 1.5;
+      const y = this.getTerrainHeight(x, z);
+      enemy.mesh.position.set(x, y, z);
+      enemy.patrolWaypoints = [
+        new THREE.Vector3(x, y, z - 3.0),
+        new THREE.Vector3(x, y, z + 3.0),
+      ];
+      // The world-space clamp prevents chase logic from steering either crab
+      // back beneath the eaves when Wukong approaches the sanctuary.
+      enemy.movementBounds = new THREE.Box2(
+        new THREE.Vector2(x - 1.2, z - 3.2),
+        new THREE.Vector2(x + 1.2, z + 3.2),
+      );
+    }
   }
 
   public spawn3DKey(id: string, pos: THREE.Vector3, showMagicEffects = true, transientSeconds = 0): void {
