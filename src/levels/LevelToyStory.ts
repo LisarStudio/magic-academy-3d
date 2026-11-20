@@ -1565,10 +1565,13 @@ export class LevelToyStory {
     addRail('pavilion_rear_railing_collision', railHalfWidth * 2, railThickness, center.x, railBackZ);
     for (const side of [-1, 1]) {
       addRail(`pavilion_side_railing_collision_${side < 0 ? 'west' : 'east'}`, railThickness, railFrontZ - railBackZ, center.x + side * railHalfWidth, center.z);
-      // Preserve the central opening aligned with the authored front stairs.
-      const frontSegmentWidth = Math.max(0, railHalfWidth - 1.15);
+      // Keep a generous opening aligned with the authored front stairs.
+      // The previous narrow proxy opening trapped Wukong against an invisible
+      // rail when stepping back down from the pavilion deck.
+      const entranceHalfWidth = Math.min(2.1, Math.max(0, railHalfWidth - 0.16));
+      const frontSegmentWidth = Math.max(0, railHalfWidth - entranceHalfWidth);
       addRail(`pavilion_front_railing_collision_${side < 0 ? 'west' : 'east'}`, frontSegmentWidth, railThickness,
-        center.x + side * (1.15 + frontSegmentWidth * 0.5), railFrontZ);
+        center.x + side * (entranceHalfWidth + frontSegmentWidth * 0.5), railFrontZ);
     }
     this.sceneManager.scene.add(root);
     this.structureColliderCandidates.push({
@@ -8063,8 +8066,8 @@ export class LevelToyStory {
           this.energyItems.splice(i, 1);
 
           this.audioManager.playPotionPickup();
-          this.player.heal(35);
-          this.subtitleSystem.show('Manzana Celestial', '¡Has recogido una Manzana Celestial! (+35 de salud)', 2000);
+          this.player.heal(20);
+          this.subtitleSystem.show('Manzana Celestial', '¡Has recogido una Manzana Celestial! (+20 de salud)', 2000);
         }
       }
     }

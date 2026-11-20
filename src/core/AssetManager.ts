@@ -526,7 +526,6 @@ export class AssetManager {
       ['assets/characters/wukong/wukong_kick.fbx', 'Wukong_NoWood_Kick', '20261026-supplemental'],
       ['assets/characters/wukong_no_wood_double_jumpFront Flip.fbx', 'Wukong_NoWood_DoubleJump', 'double-jump-v8'],
       ['assets/characters/wukong/wukong_falling_air.fbx', 'Fall_Unarmed', 'fall-cycle-v2'],
-      ['assets/characters/Taking_item_nowood.fbx', 'TakeItem', 'pickup-v8'],
       ['assets/characters/Idle.fbx', 'Idle_Armed', 'armed-idle-v2'],
       ['assets/characters/wukong/wukong_atack_baculo.fbx', 'atack_wood', 'staff-attack-v2', true],
     ];
@@ -569,6 +568,22 @@ export class AssetManager {
       }
     }
     return clips;
+  }
+
+  /** Load the chest pickup clip before gameplay so opening the staff chest
+   * never starts an FBX download or retarget pass on a playable frame. */
+  public async loadStaffPickupClip(targetRoot: THREE.Object3D): Promise<THREE.AnimationClip | null> {
+    try {
+      return await this.loadAndRetargetClip(
+        `${import.meta.env.BASE_URL}assets/characters/Taking_item_nowood.fbx?v=pickup-v9`,
+        'TakeItem',
+        targetRoot,
+        this.playerTranslationScale
+      );
+    } catch (error) {
+      console.warn('[AssetManager] Staff pickup animation could not be prepared before gameplay.', error);
+      return null;
+    }
   }
 
   private async loadStaffModel(): Promise<THREE.Group | null> {

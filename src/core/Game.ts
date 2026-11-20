@@ -257,6 +257,9 @@ export class Game {
     this.animationController = new AnimationController(playerData.model, playerData.clips);
     this.sceneManager.scene.add(playerData.model);
     this.player = new PlayerController(playerData.model as THREE.Group, this.animationController, playerData.staffModel);
+    // Prepare the chest pickup animation alongside level initialization. Loading
+    // or retargeting its FBX on the first chest interaction caused a visible hitch.
+    const staffPickupClipPromise = this.assetManager.loadStaffPickupClip(this.player.mesh);
     this.player.isControlsLocked = true;
     this.player.isMovementLocked = true;
     this.player.onLivesChange = (lives) => this.hud.setLives(lives);
@@ -322,6 +325,8 @@ export class Game {
     // frame for another multi-megabyte FBX download and retarget pass.
     const levelInitializationStartedAt = performance.now();
     await this.level01.init();
+    const staffPickupClip = await staffPickupClipPromise;
+    if (staffPickupClip?.tracks.length) this.animationController.addClips([staffPickupClip]);
     console.info('[StartupPerf] Level initialization ready', {
       durationMs: +(performance.now() - levelInitializationStartedAt).toFixed(1),
       totalMs: +(performance.now() - preparationStartedAt).toFixed(1),
@@ -340,9 +345,22 @@ export class Game {
     this.cameraController.setTarget(this.player.mesh);
     this.cameraController.snapBehindTarget(true);
 
-    // Do not wait on GPU shader compilation during level startup. The staff
-    // material can use the renderer's normal lazy compilation if collected
-    // immediately; an optional warmup runs later during a browser idle window.
+    // Warm the equipped staff's shader while the loading UI is still visible.
+    // This keeps the first chest pickup from triggering a shader compilation
+    // during active gameplay.
+    let staffWarmup: THREE.Group | null = null;
+    try {
+      const warmScene = new THREE.Scene();
+      staffWarmup = this.player.cloneStaffProp('staff_shader_warmup');
+      if (staffWarmup) {
+        warmScene.add(staffWarmup);
+        await this.sceneManager.renderer.compileAsync(warmScene, this.sceneManager.camera, this.sceneManager.scene);
+      }
+    } catch (error) {
+      console.warn('[Game] Staff shader warmup failed during loading; renderer fallback remains available.', error);
+    } finally {
+      staffWarmup?.removeFromParent();
+    }
 
     // 6. Bind Player & HUD Status Callbacks
     this.player.onHealthChange = (hp, maxHp) => this.hud.setHealth(hp, maxHp);
@@ -513,7 +531,8 @@ export class Game {
             const playerPos = this.player.mesh.position;
             const forwardDir = new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.mesh.quaternion);
             this.level01.reactToTreeKick(playerPos, forwardDir);
-            this.level01.damageTreeSnakes(playerPos, forwardDir, 2.8, 1);
+            const staffDamage = this.player.isArmed() ? this.level01.getStaffDamage(1) : 1;
+            this.level01.damageTreeSnakes(playerPos, forwardDir, 2.8, staffDamage);
 
             this.level01.enemies.forEach(enemy => {
               if (enemy.isAlive() && enemy.isBossVulnerable) {
@@ -531,7 +550,7 @@ export class Game {
                   const dot = forwardDir.dot(dirToEnemy);
                   if (dot > 0.20 || dist < 1.8 || enemy.id === 'crab_boss') {
                     try {
-                      enemy.takeHit(playerPos, 1);
+                      enemy.takeHit(playerPos, staffDamage);
                       this.audioManager.playHitImpact();
                       this.spellSystem.createImpactParticles(enemyPos.clone().add(new THREE.Vector3(0, 0.5, 0)), 0xffa500);
                     } catch (err) {
@@ -701,24 +720,6 @@ export class Game {
         void this.level01.loadGrassInBackground();
       }
     }, 9000);
-    window.setTimeout(() => {
-      const warmStaffShader = async (): Promise<void> => {
-        let staffWarmup: THREE.Group | null = null;
-        try {
-          const warmScene = new THREE.Scene();
-          staffWarmup = this.player.cloneStaffProp('staff_shader_warmup');
-          if (!staffWarmup) return;
-          warmScene.add(staffWarmup);
-          await this.sceneManager.renderer.compileAsync(warmScene, this.sceneManager.camera, this.sceneManager.scene);
-        } catch (error) {
-          console.warn('[Game] Deferred staff shader warmup failed; using normal renderer fallback.', error);
-        } finally {
-          staffWarmup?.removeFromParent();
-        }
-      };
-      if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(() => { void warmStaffShader(); }, { timeout: 15000 });
-      else void warmStaffShader();
-    }, 10000);
     if (!this.deferredStartupClipsScheduled) {
       this.deferredStartupClipsScheduled = true;
       window.setTimeout(() => {
@@ -755,7 +756,8 @@ export class Game {
     this.animationController.playAirAttack(() => {
       const origin = this.player.mesh.position;
       const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.mesh.quaternion);
-      this.level01.damageTreeSnakes(origin, forward, 2.8, 1);
+      const staffDamage = this.player.isArmed() ? this.level01.getStaffDamage(1) : 1;
+      this.level01.damageTreeSnakes(origin, forward, 2.8, staffDamage);
       for (const enemy of this.level01.enemies) {
         if (!enemy.isAlive() || !enemy.isBossVulnerable) continue;
         const target = enemy.getPosition();
@@ -763,7 +765,7 @@ export class Game {
         const distance = enemy.id === 'crab_boss' ? enemy.distanceToBossHurtbox(origin) : toTarget.length();
         toTarget.y = 0;
         if (distance < 2.8 && (toTarget.lengthSq() < 0.001 || forward.dot(toTarget.normalize()) > 0.05)) {
-          enemy.takeHit(origin, this.player.isArmed() ? this.level01.getStaffDamage(1) : 1);
+          enemy.takeHit(origin, staffDamage);
           this.audioManager.playHitImpact();
           this.spellSystem.createImpactParticles(target.add(new THREE.Vector3(0, 0.5, 0)), 0xffc45c);
         }

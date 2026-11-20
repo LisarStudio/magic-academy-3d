@@ -19,7 +19,9 @@ export class PowerOrbSystem {
   private readonly scene: THREE.Scene;
   private readonly onChange: (count: number) => void;
   private readonly pickups: Array<{ mesh: THREE.Group; value: number; phase: number; baseY: number }> = [];
-  private readonly multipliers = [1, 1.1, 1.2, 1.35, 1.5];
+  // Each level is a clear combat upgrade: small crabs need 3, 2, 2, 1 and 1
+  // uncharged staff hits respectively; the same scaling shortens boss fights.
+  private readonly multipliers = [1, 1.5, 2, 3, 4];
   private readonly costs = [100, 250, 500, 900];
   public count = 0;
   public staffLevel = 1;
