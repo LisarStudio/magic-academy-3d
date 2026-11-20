@@ -186,14 +186,9 @@ export class AudioManager {
       if (!response.ok) throw new Error(`Could not load music asset: ${path} (${response.status})`);
       const url = URL.createObjectURL(await response.blob());
       this.musicUrls.set('gameplayB', url);
-      try {
-        await this.preflightTrack(url);
-        this.preparedGameplayTracks.add('gameplayB');
-      } catch (error) {
-        URL.revokeObjectURL(url);
-        this.musicUrls.delete('gameplayB');
-        throw error;
-      }
+      // Do not decode a hidden duplicate while the current song is playing.
+      // This was competing with gameplay audio/rendering on lower-power devices.
+      this.preparedGameplayTracks.add('gameplayB');
     }).finally(() => { this.gameplayMusicPreparation = null; });
     return this.gameplayMusicPreparation;
   }
@@ -247,13 +242,6 @@ export class AudioManager {
         if (!response.ok) throw new Error(`Could not load Silvio mission music (${response.status}).`);
         const url = URL.createObjectURL(await response.blob());
         this.musicUrls.set('silvioMission', url);
-        try {
-          await this.preflightTrack(url);
-        } catch (error) {
-          URL.revokeObjectURL(url);
-          this.musicUrls.delete('silvioMission');
-          throw error;
-        }
       })
       .finally(() => { this.silvioMusicPreparation = null; });
     return this.silvioMusicPreparation;
@@ -351,17 +339,6 @@ export class AudioManager {
     }
   }
 
-  private preflightTrack(url: string): Promise<void> {
-    const probe = new Audio();
-    probe.preload = 'auto';
-    probe.src = url;
-    return this.waitForMediaReady(probe).finally(() => {
-      probe.pause();
-      probe.removeAttribute('src');
-      probe.load();
-    });
-  }
-
   private prepareBossMusicAsset(): Promise<void> {
     if (this.musicUrls.has('crabBoss')) return Promise.resolve();
     if (this.bossMusicPreparation) return this.bossMusicPreparation;
@@ -371,7 +348,6 @@ export class AudioManager {
         if (!response.ok) throw new Error(`Could not load crab music (${response.status}).`);
         const url = URL.createObjectURL(await response.blob());
         this.musicUrls.set('crabBoss', url);
-        await this.preflightTrack(url);
       })
       .catch((error: unknown) => {
         const url = this.musicUrls.get('crabBoss');
