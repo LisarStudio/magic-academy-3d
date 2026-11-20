@@ -7874,10 +7874,21 @@ export class LevelToyStory {
     // Update enemies (including DYING state for death VFX execution and memory cleanup)
     this.enemies.forEach(e => {
       if (e.state !== 'DEAD' && e.state !== 'DEFEATED') {
-        if (e.id.startsWith('crypt_crab_guard_') && !this.isInsideCuriosityCrypt) {
+        const isCryptGuardian = e.id.startsWith('crypt_crab_guard_');
+        // The crypt is a separate underground space. Surface crabs were left
+        // visible above its ceiling because the planar AI distance check does
+        // not account for the floor separation. Keep each enemy set in its
+        // own world layer so no crab is rendered or can attack through the roof.
+        if (isCryptGuardian !== this.isInsideCuriosityCrypt) {
           e.mesh.visible = false;
+          // Death cleanup still needs to run even when the enemy belongs to
+          // the other space; this never advances combat or applies damage.
+          if (e.state === 'DYING' || e.state === 'DISSOLVING') {
+            e.update(delta, playerPos, this.levelColliders);
+          }
           return;
         }
+        if (e.state !== 'DYING' && e.state !== 'DISSOLVING') e.mesh.visible = true;
         // Enemy AI uses planar distance; keep surface enemies from aggroing or
         // dealing damage through the ground while Wukong explores the crypt.
         // Continue DYING sequences everywhere so their cleanup/VFX still finish.
