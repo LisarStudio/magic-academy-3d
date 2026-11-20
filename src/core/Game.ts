@@ -19,6 +19,7 @@ import { MobileTouchControls } from '../ui/MobileTouchControls';
 import { MainMenu, type MenuState, type StartMode } from '../ui/MainMenu';
 import { isLowPowerDevice, isMobileDevice, renderPixelRatio } from './DevicePerformance';
 import { RuntimeDiagnostics } from './RuntimeDiagnostics';
+import { getActiveSaveSlot, getSaveSlots, setSaveSlot, type SaveData } from './SaveSlotStore';
 
 export class Game {
   private sceneManager: SceneManager;
@@ -53,6 +54,9 @@ export class Game {
   private deferredStartupClipsScheduled = false;
   private pendingSaveTimer: number | null = null;
   private pendingSaveUsesIdleCallback = false;
+  private activeSaveSlot = getActiveSaveSlot();
+  private playTimeBaseSeconds = 0;
+  private sessionPlayTimeSeconds = 0;
   private frameTimeAverageMs = 16.67;
   private renderScale = 1;
   private performanceSampleElapsed = 0;
@@ -109,7 +113,8 @@ export class Game {
         }
       },
       onStartIntroMusic: () => this.audioManager.startIntroMusic(),
-      onBeginTransition: () => {
+      onBeginTransition: (_mode, slotId) => {
+        this.activeSaveSlot = slotId;
         this.hud.hideBossHealth();
         this.audioManager.resume();
         this.inputManager.resetInputs();
@@ -120,11 +125,30 @@ export class Game {
           console.error('[Game] Gameplay preparation failed during the start cinematic:', error);
         });
       },
-      onTransitionComplete: async (mode) => {
+      onTransitionComplete: async (mode, slotId) => {
         this.mainMenu.setInGameLoadingIndeterminate('Cargando a Wukong…');
         await this.ensureGameplayPrepared();
-        this.beginGameplay(mode);
+        this.beginGameplay(mode, slotId);
         this.sceneManager.render();
+      },
+      onSaveSlotAction: (mode, slotId) => {
+        try {
+          if (mode === 'save') {
+            this.saveGameNow(false, slotId);
+            this.subtitleSystem.show('Guardado', `Partida ${slotId + 1} guardada correctamente.`);
+            return true;
+          }
+          this.activeSaveSlot = slotId;
+          const loaded = this.loadGame(slotId);
+          if (loaded) this.setPauseContext('Partida cargada', `Se restauró la Partida ${slotId + 1}.`);
+          return loaded;
+        } catch (error) {
+          console.error('[SaveSystem] Slot action failed:', error);
+          return false;
+        }
+      },
+      onSaveSlotClosed: () => {
+        if (this.menuState === 'Playing' && this.isPaused) this.showPausePanel('home');
       },
       onPreferences: ({ music, effects, quality }) => {
         this.audioManager.setMusicVolume(music);
@@ -311,29 +335,8 @@ export class Game {
     };
 
     // Bind Pause Menu Save / Load buttons
-    document.getElementById('btn-save-game')?.addEventListener('click', () => {
-      const screen = document.getElementById('pause-screen');
-      if (screen) screen.dataset.contextAction = 'save';
-      this.showPausePanel('context');
-      try {
-        this.saveGameNow(false);
-        this.setPauseContext('Partida guardada', 'Tu progreso se guardó en este dispositivo.');
-        this.subtitleSystem.show('Guardado', '¡Partida guardada exitosamente!');
-      } catch (error) {
-        console.error('[SaveSystem] Pause-menu save failed:', error);
-        this.setPauseContext('No se pudo guardar', 'El almacenamiento local no pudo guardar la partida.');
-      }
-    });
-    document.getElementById('btn-load-game')?.addEventListener('click', () => {
-      const screen = document.getElementById('pause-screen');
-      if (screen) screen.dataset.contextAction = 'load';
-      this.showPausePanel('context');
-      const loaded = this.loadGame();
-      this.setPauseContext(
-        loaded ? 'Partida cargada' : 'No hay una partida disponible',
-        loaded ? 'Se restauró el progreso guardado.' : 'Guarda una partida durante esta aventura para poder cargarla aquí.',
-      );
-    });
+    document.getElementById('btn-save-game')?.addEventListener('click', () => this.mainMenu.openSaveSlots('save'));
+    document.getElementById('btn-load-game')?.addEventListener('click', () => this.mainMenu.openSaveSlots('load'));
 
     // 7. Bind Input Actions
     this.inputManager.onLeftClick = () => {
@@ -647,13 +650,16 @@ export class Game {
     }, { passive: false });
   }
 
-  private beginGameplay(mode: StartMode): void {
+  private beginGameplay(mode: StartMode, slotId = this.activeSaveSlot): void {
+    this.activeSaveSlot = slotId;
     this.hud.hideBossHealth();
     this.audioManager.resume();
     this.audioManager.startGameplayMusic();
     this.inputManager.resetInputs();
     this.gameOverActive = false;
     if (mode === 'new') {
+      this.playTimeBaseSeconds = 0;
+      this.sessionPlayTimeSeconds = 0;
       this.player.lives = 3;
       this.hud.setLives(3);
       this.level01.resetLifePickups();
@@ -661,7 +667,7 @@ export class Game {
     }
 
     if (mode === 'continue') {
-      this.loadGame();
+      this.loadGame(slotId);
     } else {
       this.player.mesh.position.set(0, 0.2, 10);
       this.player.mesh.rotation.set(0, Math.PI, 0);
@@ -678,6 +684,7 @@ export class Game {
     this.isPaused = false;
     document.getElementById('pause-screen')?.classList.add('hidden');
     this.hud.showGameplayHUD();
+    if (mode === 'new') this.saveGameNow(false, slotId);
     // Keep the first few seconds of gameplay responsive on phones and weaker
     // GPUs. The authored grass remains intact, but its download/instancing now
     // begins only when the browser has an idle window (or after a short delay).
@@ -916,6 +923,7 @@ export class Game {
     this.lastFrameTime = currentTime;
     if (this.menuState === 'Playing' && !document.hidden) {
       this.diagnostics.recordFrame(elapsed * 1000, this.sceneManager.renderer, this.menuState, this.isPaused, elapsed);
+      if (!this.isPaused) this.sessionPlayTimeSeconds += elapsed;
     }
     this.updateAdaptiveResolution(elapsed);
     this.hud.mobileControls?.setGameplayEnabled(this.menuState === 'Playing' && !this.isPaused);
@@ -932,7 +940,8 @@ export class Game {
     // HTML video owns the Loading, Intro, MenuIdle and StartingGame screens.
     // Redrawing an empty/covered WebGL scene at 60 Hz competes with video
     // decoding on phones; render continuously only after gameplay begins.
-    if (this.menuState === 'Playing' && !document.hidden) {
+    const saveSlotMenuOpen = !document.getElementById('save-slot-screen')?.classList.contains('hidden');
+    if (this.menuState === 'Playing' && !document.hidden && !saveSlotMenuOpen) {
       this.sceneManager.render();
     }
 
@@ -1118,7 +1127,8 @@ export class Game {
   }
 
   /** Explicit menu saves flush immediately; automatic progress saves are deferred. */
-  public saveGameNow(showNotification = false): void {
+  public saveGameNow(showNotification = false, slotId = this.activeSaveSlot): void {
+    this.activeSaveSlot = slotId;
     if (this.pendingSaveTimer !== null) {
       const idleWindow = window as Window & { cancelIdleCallback?: (id: number) => void };
       if (this.pendingSaveUsesIdleCallback) idleWindow.cancelIdleCallback?.(this.pendingSaveTimer);
@@ -1150,7 +1160,8 @@ export class Game {
   private writeSaveGame(showNotification: boolean): void {
     if (!this.gameplayPrepared || !this.player || !this.level01) return;
     const saveData = {
-      version: 7,
+      version: 8,
+      slotId: this.activeSaveSlot,
       levelId: 'magic-academy-3d',
       playerPos: { x: this.player.mesh.position.x, y: this.player.mesh.position.y, z: this.player.mesh.position.z },
       playerRotY: this.player.mesh.rotation.y,
@@ -1180,25 +1191,25 @@ export class Game {
         bossDefeated: this.level01.stateFlags.bossDefeated,
         introKeysCelebrated: this.level01.stateFlags.introKeysCelebrated
       },
+      playTimeSeconds: Math.floor(this.playTimeBaseSeconds + this.sessionPlayTimeSeconds),
       timestamp: Date.now()
     };
-    localStorage.setItem('lisar_savegame', JSON.stringify(saveData));
+    setSaveSlot(this.activeSaveSlot, saveData);
     if (showNotification) this.subtitleSystem.show('Guardado', '¡Partida guardada exitosamente!');
   }
 
-  public loadGame(): boolean {
-    const raw = localStorage.getItem('lisar_savegame');
-    if (!raw) {
+  public loadGame(slotId = this.activeSaveSlot): boolean {
+    const data = getSaveSlots()[slotId] as SaveData | null;
+    if (!data) {
       this.subtitleSystem.show('Guardado', 'No se encontró ninguna partida guardada.');
       return false;
     }
     try {
-      const data = JSON.parse(raw);
-      if (data.version !== undefined && ![1, 2, 3, 4, 5, 6, 7].includes(data.version)) throw new Error('Versión de partida no compatible.');
-      if (Number.isFinite(data.lives)) this.player.lives = THREE.MathUtils.clamp(Math.floor(data.lives), 0, PlayerController.MAX_LIVES);
+      if (data.version !== undefined && ![1, 2, 3, 4, 5, 6, 7, 8].includes(data.version as number)) throw new Error('Versión de partida no compatible.');
+      if (typeof data.lives === 'number' && Number.isFinite(data.lives)) this.player.lives = THREE.MathUtils.clamp(Math.floor(data.lives), 0, PlayerController.MAX_LIVES);
       this.hud.setLives(this.player.lives);
       if (data.playerPos) {
-        this.player.mesh.position.set(data.playerPos.x, data.playerPos.y, data.playerPos.z);
+        this.player.mesh.position.set(data.playerPos.x ?? 0, data.playerPos.y ?? 0, data.playerPos.z ?? 0);
       }
       if (data.playerRotY !== undefined) {
         this.player.mesh.rotation.y = data.playerRotY;
@@ -1261,6 +1272,9 @@ export class Game {
         this.level01.awardKey('key2_boss');
       }
       this.level01.stateFlags.introCompleted = true;
+      this.activeSaveSlot = slotId;
+      this.playTimeBaseSeconds = Math.max(0, Number(data.playTimeSeconds) || 0);
+      this.sessionPlayTimeSeconds = 0;
       this.subtitleSystem.show('Cargado', '¡Partida cargada exitosamente!');
       console.log('[SaveSystem] Game loaded:', data);
       return true;

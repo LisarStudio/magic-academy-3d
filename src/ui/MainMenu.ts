@@ -1,4 +1,6 @@
 import { getControlModePreference, setControlModePreference, type ControlModePreference } from '../core/ControlMode';
+import { getSaveSlots } from '../core/SaveSlotStore';
+import { SaveSlotMenu, type SaveSlotMenuMode } from './SaveSlotMenu';
 
 export type MenuState = 'Loading' | 'Intro' | 'MenuIdle' | 'StartingGame' | 'Playing';
 export type StartMode = 'new' | 'continue';
@@ -12,15 +14,16 @@ export interface MenuPreferences {
 interface MainMenuCallbacks {
   onStateChange: (state: MenuState) => void;
   onStartIntroMusic: () => Promise<boolean>;
-  onBeginTransition: (mode: StartMode) => void;
+  onBeginTransition: (mode: StartMode, slotId: number) => void;
   onTransitionVideoReady?: () => void;
-  onTransitionComplete: (mode: StartMode) => Promise<void> | void;
+  onTransitionComplete: (mode: StartMode, slotId: number) => Promise<void> | void;
+  onSaveSlotAction?: (mode: 'save' | 'load', slotId: number) => boolean;
+  onSaveSlotClosed?: () => void;
   onPreferences: (preferences: MenuPreferences) => void;
   onSelect: () => void;
   onReturnToMenu?: () => void;
 }
 
-const SAVE_KEY = 'lisar_savegame';
 const PREFERENCES_KEY = 'lisar_menu_preferences_v2';
 const LEGACY_PREFERENCES_KEY = 'lisar_menu_preferences_v1';
 
@@ -40,11 +43,13 @@ export class MainMenu {
   private readonly creditsActions = document.querySelector('.credits-actions')!;
   private readonly confirmContent = document.getElementById('confirm-content')!;
   private readonly dialogError = document.getElementById('dialog-error')!;
+  private readonly saveSlotMenu = new SaveSlotMenu();
   private readonly continueButton = document.getElementById('btn-continue') as HTMLButtonElement;
   private readonly newGameButton = document.getElementById('btn-new-game') as HTMLButtonElement;
   private readonly menuButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.menu-actions button'));
   private state: MenuState = 'Loading';
   private startMode: StartMode = 'new';
+  private startSlotId = 0;
   private preferences: MenuPreferences = { music: 0.5, effects: 0.8, quality: 1 };
   private errorRetry: (() => void) | null = null;
   private loadingRetry: () => void = () => window.location.reload();
@@ -518,9 +523,7 @@ export class MainMenu {
     document.getElementById('btn-cancel-new')!.addEventListener('click', () => this.closeDialog());
     document.getElementById('btn-confirm-new')!.addEventListener('click', () => {
       this.closeDialog();
-      try { localStorage.removeItem(SAVE_KEY); } catch { /* Storage may be disabled. */ }
-      this.refreshContinueButton();
-      this.beginTransition('new');
+      this.openSaveSlots('new');
     });
 
     const retryButton = document.createElement('button');
@@ -557,6 +560,7 @@ export class MainMenu {
     });
 
     window.addEventListener('keydown', (event) => {
+      if (this.saveSlotMenu.isOpen()) return;
       if (event.code === 'Enter' && this.state === 'Intro') {
         event.preventDefault();
         void this.skipIntro();
@@ -598,14 +602,31 @@ export class MainMenu {
     if (!this.startVideoReady) return;
     if (mode === 'continue') {
       if (!this.hasValidSave()) { this.refreshContinueButton(); return; }
-      this.beginTransition('continue');
+      this.openSaveSlots('continue');
       return;
     }
     if (this.hasValidSave()) {
       this.openDialog('confirm');
       return;
     }
-    this.beginTransition('new');
+    this.openSaveSlots('new');
+  }
+
+  /** The same three-slot selector serves title-screen start/continue and the
+   * pause-menu save/load actions, while gameplay persistence stays in Game. */
+  public openSaveSlots(mode: SaveSlotMenuMode): void {
+    this.saveSlotMenu.open(mode, (selectedMode, slotId) => {
+      if (selectedMode === 'new' || selectedMode === 'continue') {
+        this.beginTransition(selectedMode, slotId);
+        return true;
+      }
+      const result = this.callbacks.onSaveSlotAction?.(selectedMode, slotId) ?? false;
+      if (result) this.refreshContinueButton();
+      return result;
+    }, () => {
+      this.refreshContinueButton();
+      this.callbacks.onSaveSlotClosed?.();
+    });
   }
 
   private async prepareStartVideo(): Promise<void> {
@@ -659,13 +680,14 @@ export class MainMenu {
     return this.startVideoPreparation;
   }
 
-  private async beginTransition(mode: StartMode): Promise<void> {
+  private async beginTransition(mode: StartMode, slotId = this.startSlotId): Promise<void> {
     if (this.transitionStarted) return;
     this.transitionStarted = true;
     this.startMode = mode;
+    this.startSlotId = slotId;
     this.setState('StartingGame');
     document.getElementById('cinematic-backdrop')?.classList.remove('is-menu-idle');
-    this.callbacks.onBeginTransition(mode);
+    this.callbacks.onBeginTransition(mode, slotId);
     this.startVideo.currentTime = 0;
 
     try {
@@ -798,7 +820,7 @@ export class MainMenu {
     this.startVideo.currentTime = 0;
     try {
       await this.prepareStartVideo();
-      await this.beginTransition(mode);
+      await this.beginTransition(mode, this.startSlotId);
     } catch {
       this.showDialogError('El vídeo de inicio sigue sin estar disponible. Comprueba la conexión e inténtalo otra vez.', () => void this.retryStartTransition(mode));
     }
@@ -810,7 +832,7 @@ export class MainMenu {
     this.hideIntroSkip();
     try {
       this.showInGameLoading();
-      await this.callbacks.onTransitionComplete(this.startMode);
+      await this.callbacks.onTransitionComplete(this.startMode, this.startSlotId);
     } catch (error) {
       console.error('[MainMenu] Could not enter gameplay after the transition:', error);
       this.failInGameLoading('No se pudo preparar la partida. Reintenta para volver a intentarlo.');
@@ -844,17 +866,7 @@ export class MainMenu {
   }
 
   private hasValidSave(): boolean {
-    try {
-      const raw = localStorage.getItem(SAVE_KEY);
-      if (!raw) return false;
-      const data = JSON.parse(raw) as { version?: number; playerPos?: { x?: number; y?: number; z?: number }; timestamp?: number };
-      const pos = data.playerPos;
-      return (data.version === undefined || data.version === 1) &&
-        !!pos && [pos.x, pos.y, pos.z].every((value) => typeof value === 'number' && Number.isFinite(value)) &&
-        Math.abs(pos.x!) < 10000 && Math.abs(pos.y!) < 10000 && Math.abs(pos.z!) < 10000;
-    } catch {
-      return false;
-    }
+    return getSaveSlots().some((slot) => slot !== null);
   }
 
   private refreshContinueButton(): void {

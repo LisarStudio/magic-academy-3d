@@ -1816,6 +1816,79 @@ html, body, #app { width: 100%; height: 100%; min-height: 100%; overflow: hidden
 }
 @media (prefers-reduced-motion: reduce) { .pause-imperial, .pause-action { animation-duration: .01ms; transition-duration: .01ms; } }
 
+/* Three independent save destinations with a single shared 3D book viewport. */
+.save-slot-screen {
+  position: fixed; z-index: 10000; inset: 0; display: grid; place-items: center;
+  padding: max(18px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  overflow: auto; background: radial-gradient(ellipse at 50% 38%, rgba(45, 29, 40, .76), rgba(3, 7, 18, .92)), rgba(3, 7, 18, .7);
+  -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px); pointer-events: auto;
+}
+.save-slot-screen.hidden { display: none; }
+.save-slot-panel {
+  position: relative; width: min(1120px, 96vw); max-height: min(900px, 94dvh); overflow: auto;
+  padding: clamp(20px, 3vw, 42px); color: #fff1c9; border: 1px solid rgba(222, 168, 79, .82); border-radius: 20px;
+  background: linear-gradient(145deg, rgba(40, 15, 14, .97), rgba(10, 14, 28, .98) 72%);
+  box-shadow: 0 24px 90px #000c, inset 0 0 40px rgba(186, 108, 28, .11);
+}
+.save-slot-header { text-align: center; margin: 0 0 clamp(16px, 3vh, 28px); }
+.save-slot-kicker { color: #edbc5b; font: 700 12px/1.2 var(--font-title); letter-spacing: .22em; }
+.save-slot-header h2 { margin: 7px 0 6px; color: #ffe095; font: 800 clamp(25px, 4vw, 40px)/1.12 var(--font-title); text-shadow: 0 3px 10px #000; }
+.save-slot-header p { margin: 0; color: #f2dfbd; font: 500 clamp(13px, 1.2vw, 16px)/1.5 var(--font-title); }
+.save-slot-grid { position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(10px, 1.6vw, 20px); min-height: 390px; }
+#save-slot-preview-canvas { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.save-slot-card { position: relative; z-index: 0; display: flex; flex-direction: column; min-width: 0; padding: 12px 15px 14px; overflow: hidden; border: 1px solid rgba(194, 143, 57, .52); border-radius: 14px; background: linear-gradient(155deg, rgba(37, 28, 33, .92), rgba(10, 14, 27, .93)); box-shadow: inset 0 1px rgba(255,255,255,.04), 0 7px 22px #0005; transition: border-color .2s, transform .2s, box-shadow .2s; }
+.save-slot-card:focus-within { border-color: #ffd875; box-shadow: 0 0 18px rgba(255, 177, 43, .25), inset 0 0 18px rgba(255, 182, 61, .08); transform: translateY(-2px); }
+.save-slot-model-frame { position: relative; z-index: 2; flex: 0 0 clamp(145px, 19vw, 210px); display: grid; place-items: center; color: rgba(255, 222, 150, .52); font: 600 12px var(--font-title); text-shadow: 0 1px 4px #000; pointer-events: none; }
+.save-slot-model-loading { padding: 4px 8px; border-radius: 9px; background: rgba(11, 11, 18, .4); }
+.save-slot-card-heading { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(210, 157, 61, .48); }
+.save-slot-card-heading h3 { margin: 0; color: #ffdf92; font: 800 clamp(14px, 1.5vw, 18px)/1.15 var(--font-title); }
+.save-slot-badge { padding: 4px 7px; border: 1px solid rgba(224, 169, 76, .55); border-radius: 999px; color: #ffe29a; font: 700 9px/1 var(--font-title); letter-spacing: .1em; }
+.save-slot-details { position: relative; z-index: 2; min-height: 112px; padding: 9px 1px 3px; color: #ded4c1; font: 500 11px/1.45 var(--font-title); }
+.save-slot-details p { display: flex; align-items: baseline; justify-content: space-between; gap: 7px; margin: 3px 0; }
+.save-slot-details strong { flex: 0 0 auto; color: #ffdc7d; font-size: 12px; }
+.save-slot-details .save-slot-level { display: block; min-height: 30px; color: #fff0c4; font-size: 12px; font-weight: 700; }
+.save-slot-details .save-slot-empty-title { justify-content: center; margin: 18px 0 4px; color: #f7e5c5; font-weight: 800; letter-spacing: .05em; }
+.save-slot-details .save-slot-empty-subtitle { justify-content: center; color: #c8a967; font-size: 10px; letter-spacing: .16em; }
+.save-slot-progress { height: 5px; margin: 8px 0 0; overflow: hidden; border: 1px solid rgba(220, 165, 64, .6); border-radius: 999px; background: #100b12; }
+.save-slot-progress span { display: block; height: 100%; background: linear-gradient(90deg,#bd5220,#ffd56a); box-shadow: 0 0 8px #ffb342; }
+.save-slot-card-actions { position: relative; z-index: 2; display: flex; align-items: center; gap: 8px; margin-top: auto; }
+.save-slot-button { min-height: 38px; padding: 8px 13px; border: 1px solid #bc8737; border-radius: 8px; color: #ffebba; background: linear-gradient(180deg, #452019, #210c0c); font: 700 12px/1.2 var(--font-title); cursor: pointer; touch-action: manipulation; }
+.save-slot-button:hover, .save-slot-button:focus-visible { outline: 2px solid #ffdc7d; outline-offset: 2px; color: #fff6d7; background: linear-gradient(180deg,#875021,#4a1710); }
+.save-slot-button:disabled { opacity: .42; cursor: not-allowed; }
+.save-slot-primary { flex: 1; border-color: #edbd56; color: #fff0c5; background: linear-gradient(180deg,#7a3516,#3a100d); }
+.save-slot-delete { min-height: 34px; padding: 5px 9px; border: 1px solid rgba(199, 104, 73, .55); border-radius: 7px; color: #efb6a2; background: rgba(61, 20, 20, .62); font: 600 10px var(--font-title); cursor: pointer; }
+.save-slot-delete:hover, .save-slot-delete:focus-visible { outline: 2px solid #db8f74; outline-offset: 2px; color: white; }
+.save-slot-confirm { position: absolute; z-index: 5; inset: auto 10% 78px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; border: 1px solid #f0bd59; border-radius: 12px; background: rgba(18, 9, 11, .97); box-shadow: 0 10px 34px #000b; }
+.save-slot-confirm.hidden { display: none; }
+.save-slot-confirm p { margin: 0; color: #fff0cb; font: 600 13px/1.45 var(--font-title); }
+.save-slot-confirm-actions { flex: 0 0 auto; display: flex; gap: 7px; }
+.save-slot-button.is-danger { border-color: #eb9a6b; color: #ffe0c4; background: linear-gradient(180deg,#812e1e,#3b100d); }
+.save-slot-status { min-height: 20px; margin: 10px 0 0; color: #f8d77c; text-align: center; font: 600 12px/1.4 var(--font-title); }
+.save-slot-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 10px; padding-top: 12px; border-top: 1px solid rgba(201, 148, 58, .35); color: #c8bca7; font: 500 10px/1.4 var(--font-title); }
+.save-slot-back { flex: 0 0 auto; min-width: 110px; }
+.pause-screen.save-slot-paused { visibility: hidden; }
+@media (max-width: 720px) {
+  .save-slot-screen { align-items: start; padding-top: max(10px, env(safe-area-inset-top)); padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  .save-slot-panel { width: min(560px, 100%); max-height: 96dvh; padding: 15px 12px; border-radius: 14px; }
+  .save-slot-header { margin-bottom: 12px; }
+  .save-slot-header h2 { font-size: clamp(23px, 6vw, 30px); }
+  .save-slot-header p { font-size: 12px; }
+  .save-slot-grid { grid-template-columns: minmax(0,1fr); gap: 8px; min-height: 0; }
+  .save-slot-card { display: grid; grid-template-columns: 104px minmax(0,1fr); grid-template-rows: auto 1fr auto; column-gap: 10px; padding: 8px; }
+  .save-slot-model-frame { grid-column: 1; grid-row: 1 / 4; min-height: 112px; height: 100%; }
+  .save-slot-card-heading { grid-column: 2; grid-row: 1; }
+  .save-slot-details { grid-column: 2; grid-row: 2; min-height: 0; padding: 5px 0; font-size: 9px; }
+  .save-slot-details .save-slot-level { min-height: 0; font-size: 10px; }
+  .save-slot-details .save-slot-empty-title { margin: 10px 0 3px; }
+  .save-slot-card-actions { grid-column: 2; grid-row: 3; }
+  .save-slot-button { min-height: 34px; padding: 7px 9px; font-size: 11px; }
+  .save-slot-delete { min-height: 30px; }
+  .save-slot-confirm { inset: auto 8px 74px; flex-direction: column; align-items: stretch; gap: 10px; padding: 12px; }
+  .save-slot-confirm-actions { justify-content: flex-end; }
+  .save-slot-footer { align-items: flex-end; font-size: 9px; }
+  .save-slot-back { min-width: 88px; }
+}
+
 /* Pause-menu composition pass: reserve a real header and footer lane so the
    title, navigation and frame ornaments never compete for the same space. */
 .pause-imperial {
