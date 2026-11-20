@@ -1189,7 +1189,8 @@ export class Game {
         gekkoTalked: this.level01.stateFlags.gekkoTalked,
         bossCinematicPlayed: this.level01.stateFlags.bossCinematicPlayed,
         bossDefeated: this.level01.stateFlags.bossDefeated,
-        introKeysCelebrated: this.level01.stateFlags.introKeysCelebrated
+        introKeysCelebrated: this.level01.stateFlags.introKeysCelebrated,
+        availableKeysCelebrated: this.level01.stateFlags.availableKeysCelebrated
       },
       playTimeSeconds: Math.floor(this.playTimeBaseSeconds + this.sessionPlayTimeSeconds),
       timestamp: Date.now()
@@ -1276,6 +1277,7 @@ export class Game {
       this.playTimeBaseSeconds = Math.max(0, Number(data.playTimeSeconds) || 0);
       this.sessionPlayTimeSeconds = 0;
       this.subtitleSystem.show('Cargado', '¡Partida cargada exitosamente!');
+      this.level01.showAvailableKeysCelebrationIfReady();
       console.log('[SaveSystem] Game loaded:', data);
       return true;
     } catch (e) {

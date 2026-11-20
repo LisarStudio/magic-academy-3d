@@ -36,6 +36,7 @@ import { projectDialogueFocus } from '../ui/CinematicDialogueUI';
 
 const keyHaloGeometry = new THREE.TorusGeometry(0.27, 0.012, 6, 24);
 const keySparkGeometry = new THREE.OctahedronGeometry(0.026, 0);
+const AVAILABLE_LEVEL_KEY_COUNT = 5;
 
 export class LevelToyStory {
   private sceneManager: SceneManager;
@@ -355,7 +356,8 @@ export class LevelToyStory {
     bossCinematicPlayed: false,
     bossDefeated: false,
     levelCompleted: false,
-    introKeysCelebrated: false
+    introKeysCelebrated: false,
+    availableKeysCelebrated: false
   };
 
   constructor(
@@ -6896,6 +6898,18 @@ export class LevelToyStory {
     (window as any).gameInstance?.hud?.setCollectedKeys(this.getCollectedKeyIds(), false);
   }
 
+  public showAvailableKeysCelebrationIfReady(): void {
+    if (this.markAvailableKeysCelebrated()) {
+      this.subtitleSystem.show('LISAR', '¡Felicidades, has conseguido todas las llaves disponibles en este nivel!');
+    }
+  }
+
+  private markAvailableKeysCelebrated(): boolean {
+    if (this.totalKeysCount < AVAILABLE_LEVEL_KEY_COUNT || this.stateFlags.availableKeysCelebrated) return false;
+    this.stateFlags.availableKeysCelebrated = true;
+    return true;
+  }
+
   // Spawns the sparkles and unlocks the key
   public awardKey(keyId: keyof typeof this.collectedKeys, spawnPos?: THREE.Vector3): boolean {
     if (!this.collectedKeys.hasOwnProperty(keyId) || this.collectedKeys[keyId]) return false;
@@ -6913,6 +6927,7 @@ export class LevelToyStory {
 
     // Increment keys count
     this.totalKeysCount++;
+    const celebrateAvailableKeys = this.markAvailableKeysCelebrated();
     const hud = (window as any).gameInstance?.hud;
     if (hud) hud.setCollectedKeys(this.getCollectedKeyIds());
     (window as any).gameInstance?.saveGame(false);
@@ -6925,12 +6940,16 @@ export class LevelToyStory {
     if (keyId === 'key6_qi_celestial') keyName = getKeyAsset(keyId)?.name ?? 'Llave del Qi Celestial';
     if (keyId === 'key5_pots') keyName = 'Llave de Destrucción (Gemas)';
 
-    this.subtitleSystem.show('LISAR', `¡Has obtenido la ${keyName}! (${this.totalKeysCount}/4 Requeridas)`);
+    const displayedKeyCount = Math.min(this.totalKeysCount, AVAILABLE_LEVEL_KEY_COUNT);
+    this.subtitleSystem.show('LISAR', `¡Has obtenido la ${keyName}! (${displayedKeyCount}/${AVAILABLE_LEVEL_KEY_COUNT} llaves disponibles)`);
 
-    // Check if exit door is now unlocked (STRICT VALIDATION: EXACTLY 3 OR MORE KEYS REQUIRED)
+    // The exit still unlocks at its existing four-key gameplay requirement.
     if (this.totalKeysCount >= 4 && this.exitDoor && !this.exitDoor.isOpen) {
       this.exitDoor.open();
       this.subtitleSystem.show('LISAR', '¡PORTÓN ABIERTO! Has reunido las 4 llaves místicas. El portal de salida en el castillo está desbloqueado.');
+    }
+    if (celebrateAvailableKeys) {
+      this.subtitleSystem.show('LISAR', '¡Felicidades, has conseguido todas las llaves disponibles en este nivel!');
     }
     return true;
   }
